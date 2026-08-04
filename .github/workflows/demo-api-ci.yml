@@ -1,0 +1,99 @@
+name: Demo API CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    name: Test and build demo API
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: apps/demo-api
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/demo-api/go.mod
+          cache: false
+
+      - name: Display tool versions
+        run: |
+          echo "Go version:"
+          go version
+
+          echo "Docker version:"
+          docker version --format '{{.Client.Version}}'
+
+      - name: Check Go formatting
+        run: |
+          unformatted_files="$(gofmt -l .)"
+
+          if [ -n "$unformatted_files" ]; then
+            echo "::error::The following Go files are not formatted:"
+            echo "$unformatted_files"
+            exit 1
+          fi
+
+          echo "All Go files are correctly formatted."
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Run automated tests
+        run: go test ./... -v -count=1
+
+      - name: Build Docker image
+        env:
+          IMAGE_NAME: zero-to-prod-demo-api
+        run: |
+          image="${IMAGE_NAME}:${GITHUB_SHA}"
+
+          echo "Building image: ${image}"
+
+          docker build \
+            --build-arg VERSION="${GITHUB_SHA}" \
+            --tag "${image}" \
+            .
+
+          size_bytes="$(
+            docker image inspect \
+              "${image}" \
+              --format '{{.Size}}'
+          )"
+
+          configured_user="$(
+            docker image inspect \
+              "${image}" \
+              --format '{{.Config.User}}'
+          )"
+
+          echo "Image: ${image}"
+          echo "Size: ${size_bytes} bytes"
+          echo "Configured user: ${configured_user}"
+
+          {
+            echo "## Demo API image"
+            echo
+            echo "- Image: \`${image}\`"
+            echo "- Version: \`${GITHUB_SHA}\`"
+            echo "- Size: \`${size_bytes} bytes\`"
+            echo "- Runtime user: \`${configured_user}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
