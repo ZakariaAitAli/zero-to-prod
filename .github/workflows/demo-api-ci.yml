@@ -97,3 +97,23 @@ jobs:
             echo "- Size: \`${size_bytes} bytes\`"
             echo "- Runtime user: \`${configured_user}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-aws-oidc:
+    name: Verify GitHub to AWS OIDC
+    needs: test-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::333534066371:role/zero-to-prod-github-actions
+          aws-region: eu-west-3
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
