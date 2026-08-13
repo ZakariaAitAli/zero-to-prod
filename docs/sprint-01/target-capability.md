@@ -93,12 +93,12 @@ Service stability check
 
 Sprint 01 is complete when all the following conditions are satisfied:
 
-* [ ] The Go API has automated tests.
-* [ ] `/health`, `/ready`, and `/version` work locally.
-* [ ] The application runs successfully as a Docker container.
-* [ ] Pull requests run tests and validate the Docker build.
-* [ ] GitHub Actions authenticates to AWS through OIDC.
-* [ ] No permanent AWS credentials exist in GitHub secrets.
+* [x] The Go API has automated tests.
+* [x] `/health`, `/ready`, and `/version` work locally.
+* [x] The application runs successfully as a Docker container.
+* [x] Pull requests run tests and validate the Docker build.
+* [x] GitHub Actions authenticates to AWS through OIDC.
+* [x] No permanent AWS credentials exist in GitHub secrets.
 * [ ] Images are pushed to ECR using immutable Git commit SHA tags.
 * [ ] GitHub Actions deploys the selected image to ECS Fargate.
 * [ ] The workflow waits for the ECS service to stabilize.
