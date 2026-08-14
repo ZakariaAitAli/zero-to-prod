@@ -1,0 +1,33 @@
+{
+  "family": "zero-to-prod-demo-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::333534066371:role/zero-to-prod-ecs-task-execution",
+  "containerDefinitions": [
+    {
+      "name": "demo-api",
+      "image": "IMAGE_URI_TO_BE_RENDERED",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "wget -q --spider \"http://127.0.0.1:${PORT}/health\" || exit 1"
+        ],
+        "interval": 10,
+        "timeout": 3,
+        "retries": 3,
+        "startPeriod": 3
+      }
+    }
+  ]
+}

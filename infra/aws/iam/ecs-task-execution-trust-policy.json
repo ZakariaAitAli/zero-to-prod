@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowECSTasksToAssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:ecs:eu-west-3:333534066371:*"
+        },
+        "StringEquals": {
+          "aws:SourceAccount": "333534066371"
+        }
+      }
+    }
+  ]
+}

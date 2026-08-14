@@ -26,10 +26,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: apps/demo-api/go.mod
           cache: false
@@ -118,8 +118,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  verify-aws-oidc:
-    name: Verify GitHub to AWS OIDC
+  publish-image:
+    name: Publish immutable image to ECR
     needs: test-and-build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -175,3 +175,129 @@ jobs:
           echo "Pushing image: ${image}"
 
           docker push "${image}"
+
+  deploy-development:
+    name: Deploy to development
+    needs: publish-image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Render deployment task definition
+        env:
+          ECR_REGISTRY: 333534066371.dkr.ecr.eu-west-3.amazonaws.com
+          IMAGE_NAME: zero-to-prod-demo-api
+        run: |
+          template="infra/aws/ecs/demo-api-task-definition.json"
+          rendered="${RUNNER_TEMP}/demo-api-task-definition.json"
+          image="${ECR_REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}"
+
+          template_image="$(
+            jq -r \
+              '.containerDefinitions[]
+               | select(.name == "demo-api")
+               | .image' \
+              "$template"
+          )"
+
+          if [ "$template_image" != "IMAGE_URI_TO_BE_RENDERED" ]; then
+            echo "::error::Unexpected image value in task definition template: ${template_image}"
+            exit 1
+          fi
+
+          jq \
+            --arg image "$image" \
+            '(.containerDefinitions[]
+              | select(.name == "demo-api")
+              | .image) = $image' \
+            "$template" > "$rendered"
+
+          echo "Rendered deployment image: ${image}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::333534066371:role/zero-to-prod-github-actions
+          aws-region: eu-west-3
+
+      - name: Register deployment task definition
+        id: register-task-definition
+        env:
+          TASK_DEFINITION_FILE: ${{ runner.temp }}/demo-api-task-definition.json
+        run: |
+          task_definition_arn="$(
+            aws ecs register-task-definition \
+              --cli-input-json "file://${TASK_DEFINITION_FILE}" \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text
+          )"
+
+          echo "task_definition_arn=${task_definition_arn}" >> "$GITHUB_OUTPUT"
+
+          echo "Registered task definition: ${task_definition_arn}"
+
+      - name: Deploy task definition to ECS service
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+          TASK_DEFINITION_ARN: ${{ steps.register-task-definition.outputs.task_definition_arn }}
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$TASK_DEFINITION_ARN" \
+            --query 'service.{Service:serviceName,TaskDefinition:taskDefinition,DesiredCount:desiredCount}' \
+            --output json
+
+      - name: Wait for ECS service stability
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+        run: |
+          echo "Waiting for ${ECS_SERVICE} in ${ECS_CLUSTER} to stabilize..."
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+          echo "ECS service reached a stable state."
+
+      - name: Verify and report deployment
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+          EXPECTED_TASK_DEFINITION: ${{ steps.register-task-definition.outputs.task_definition_arn }}
+          ENVIRONMENT: development
+        run: |
+          deployed_task_definition="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_SERVICE" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          )"
+
+          if [ "$deployed_task_definition" != "$EXPECTED_TASK_DEFINITION" ]; then
+            echo "::error::Expected ${EXPECTED_TASK_DEFINITION}, but ECS reports ${deployed_task_definition}"
+            exit 1
+          fi
+
+          echo "Environment: ${ENVIRONMENT}"
+          echo "Version: ${GITHUB_SHA}"
+          echo "Task definition: ${deployed_task_definition}"
+
+          {
+            echo "## Development deployment"
+            echo
+            echo "- Environment: \`${ENVIRONMENT}\`"
+            echo "- Version: \`${GITHUB_SHA}\`"
+            echo "- Task definition: \`${deployed_task_definition}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
