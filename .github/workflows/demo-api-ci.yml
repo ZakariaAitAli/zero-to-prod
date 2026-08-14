@@ -117,3 +117,10 @@ jobs:
 
       - name: Verify AWS identity
         run: aws sts get-caller-identity
+
+      - name: Log in to Amazon ECR
+        run: |
+          aws ecr get-login-password --region eu-west-3 \
+            | docker login \
+                --username AWS \
+                --password-stdin 333534066371.dkr.ecr.eu-west-3.amazonaws.com
