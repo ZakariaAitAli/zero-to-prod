@@ -99,7 +99,7 @@ Sprint 01 is complete when all the following conditions are satisfied:
 * [x] Pull requests run tests and validate the Docker build.
 * [x] GitHub Actions authenticates to AWS through OIDC.
 * [x] No permanent AWS credentials exist in GitHub secrets.
-* [ ] Images are pushed to ECR using immutable Git commit SHA tags.
+* [x] Images are pushed to ECR using immutable Git commit SHA tags.
 * [ ] GitHub Actions deploys the selected image to ECS Fargate.
 * [ ] The workflow waits for the ECS service to stabilize.
 * [ ] The workflow verifies `/health`.
