@@ -181,7 +181,7 @@ jobs:
     needs: publish-image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     permissions:
       contents: read
@@ -228,6 +228,49 @@ jobs:
           role-to-assume: arn:aws:iam::333534066371:role/zero-to-prod-github-actions
           aws-region: eu-west-3
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.15.9"
+          terraform_wrapper: false
+
+      - name: Initialize verification Terraform
+        run: |
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            init \
+            -input=false \
+            -lockfile=readonly
+
+      - name: Plan verification infrastructure
+        run: |
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            plan \
+            -input=false \
+            -out=verification.tfplan
+
+      - name: Create verification infrastructure
+        id: verification-infrastructure
+        run: |
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            apply \
+            -input=false \
+            -auto-approve \
+            verification.tfplan
+
+          base_url="$(
+            terraform \
+              -chdir=infra/terraform/development-verification \
+              output \
+              -raw \
+              verification_base_url
+          )"
+
+          echo "base_url=${base_url}" >> "$GITHUB_OUTPUT"
+          echo "Verification endpoint: ${base_url}"
+
       - name: Register deployment task definition
         id: register-task-definition
         env:
@@ -244,7 +287,8 @@ jobs:
 
           echo "Registered task definition: ${task_definition_arn}"
 
-      - name: Deploy task definition to ECS service
+      - name: Deploy task definition and start verification task
+        id: deploy-verification-task
         env:
           ECS_CLUSTER: zero-to-prod-dev
           ECS_SERVICE: demo-api
@@ -254,6 +298,7 @@ jobs:
             --cluster "$ECS_CLUSTER" \
             --service "$ECS_SERVICE" \
             --task-definition "$TASK_DEFINITION_ARN" \
+            --desired-count 1 \
             --query 'service.{Service:serviceName,TaskDefinition:taskDefinition,DesiredCount:desiredCount}' \
             --output json
 
@@ -269,6 +314,12 @@ jobs:
             --services "$ECS_SERVICE"
 
           echo "ECS service reached a stable state."
+
+      - name: Verify deployment over HTTP
+        env:
+          BASE_URL: ${{ steps.verification-infrastructure.outputs.base_url }}
+          EXPECTED_VERSION: ${{ github.sha }}
+        run: ./scripts/verify-deployment.sh
 
       - name: Verify and report deployment
         env:
@@ -301,3 +352,37 @@ jobs:
             echo "- Version: \`${GITHUB_SHA}\`"
             echo "- Task definition: \`${deployed_task_definition}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop verification task
+        if: always() && steps.deploy-verification-task.outcome != 'skipped'
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+        run: |
+          echo "Scaling ${ECS_SERVICE} back to zero..."
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --desired-count 0 \
+            --query 'service.{Service:serviceName,DesiredCount:desiredCount,RunningCount:runningCount}' \
+            --output json
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+          echo "Verification task stopped."
+
+      - name: Destroy verification infrastructure
+        if: always() && steps.verification-infrastructure.outcome != 'skipped'
+        run: |
+          echo "Destroying temporary verification infrastructure..."
+
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            destroy \
+            -input=false \
+            -auto-approve
+
+          echo "Verification infrastructure destroyed."
