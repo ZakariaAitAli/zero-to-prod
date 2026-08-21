@@ -325,7 +325,7 @@ jobs:
       - name: Verify deployment over HTTP
         env:
           BASE_URL: ${{ steps.verification-infrastructure.outputs.base_url }}
-          EXPECTED_VERSION: 1b6a631f0db11289b641fdd3b364282c87cf457b
+          EXPECTED_VERSION: ${{ github.sha }}
         run: ./scripts/verify-deployment.sh
 
       - name: Verify and report deployment
