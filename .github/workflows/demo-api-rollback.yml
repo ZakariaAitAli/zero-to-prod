@@ -1,0 +1,316 @@
+name: Demo API Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Full 40-character Git SHA of an already-published image
+        required: true
+        type: string
+
+      confirmation:
+        description: Type ROLLBACK to confirm the rollback
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  rollback-development:
+    name: Roll back development
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'ROLLBACK'
+
+    concurrency:
+      group: demo-api-development-deployment
+      cancel-in-progress: false
+
+    environment: development
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Validate rollback SHA
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::target_sha must be a full 40-character Git SHA"
+            exit 1
+          fi
+
+          echo "Rollback SHA format is valid."
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Display requested rollback
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          echo "Requested rollback SHA: ${TARGET_SHA}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::333534066371:role/zero-to-prod-github-actions
+          aws-region: eu-west-3
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Verify rollback image exists
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          ECR_REPOSITORY: zero-to-prod-demo-api
+        run: |
+          response="$(
+            aws ecr batch-get-image \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-ids "imageTag=${TARGET_SHA}" \
+              --query '{
+                image: images[0].imageId,
+                failures: failures
+              }' \
+              --output json
+          )"
+
+          echo "$response"
+
+          image_digest="$(jq -r '.image.imageDigest // empty' <<<"$response")"
+
+          if [ -z "$image_digest" ]; then
+            echo "::error::No immutable ECR image found for ${TARGET_SHA}"
+            exit 1
+          fi
+
+          echo "Rollback image exists with digest: ${image_digest}"
+
+      - name: Render rollback task definition
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+          ECR_REGISTRY: 333534066371.dkr.ecr.eu-west-3.amazonaws.com
+          IMAGE_NAME: zero-to-prod-demo-api
+        run: |
+          template="infra/aws/ecs/demo-api-task-definition.json"
+          rendered="${RUNNER_TEMP}/demo-api-rollback-task-definition.json"
+          image="${ECR_REGISTRY}/${IMAGE_NAME}:${TARGET_SHA}"
+
+          template_image="$(
+            jq -r \
+              '.containerDefinitions[]
+               | select(.name == "demo-api")
+               | .image' \
+              "$template"
+          )"
+
+          if [ "$template_image" != "IMAGE_URI_TO_BE_RENDERED" ]; then
+            echo "::error::Unexpected image value in task definition template: ${template_image}"
+            exit 1
+          fi
+
+          jq \
+            --arg image "$image" \
+            '(.containerDefinitions[]
+              | select(.name == "demo-api")
+              | .image) = $image' \
+            "$template" > "$rendered"
+
+          rendered_image="$(
+            jq -r \
+              '.containerDefinitions[]
+               | select(.name == "demo-api")
+               | .image' \
+              "$rendered"
+          )"
+
+          if [ "$rendered_image" != "$image" ]; then
+            echo "::error::Rollback task definition rendered unexpected image: ${rendered_image}"
+            exit 1
+          fi
+
+          echo "Rendered rollback image: ${rendered_image}"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.15.9"
+          terraform_wrapper: false
+
+      - name: Initialize verification Terraform
+        run: |
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            init \
+            -input=false \
+            -lockfile=readonly
+
+      - name: Plan verification infrastructure
+        run: |
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            plan \
+            -input=false \
+            -out=verification.tfplan
+
+      - name: Create verification infrastructure
+        id: verification-infrastructure
+        run: |
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            apply \
+            -input=false \
+            -auto-approve \
+            verification.tfplan
+
+          base_url="$(
+            terraform \
+              -chdir=infra/terraform/development-verification \
+              output \
+              -raw \
+              verification_base_url
+          )"
+
+          echo "base_url=${base_url}" >> "$GITHUB_OUTPUT"
+          echo "Verification endpoint: ${base_url}"
+
+      - name: Record rollback start
+        run: |
+          rollback_started_epoch="$(date +%s)"
+          rollback_started_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          echo "ROLLBACK_STARTED_EPOCH=${rollback_started_epoch}" >> "$GITHUB_ENV"
+          echo "ROLLBACK_STARTED_AT=${rollback_started_at}" >> "$GITHUB_ENV"
+
+          echo "Rollback timing started at ${rollback_started_at}"
+
+      - name: Register rollback task definition
+        id: register-rollback-task-definition
+        env:
+          TASK_DEFINITION_FILE: ${{ runner.temp }}/demo-api-rollback-task-definition.json
+        run: |
+          task_definition_arn="$(
+            aws ecs register-task-definition \
+              --cli-input-json "file://${TASK_DEFINITION_FILE}" \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text
+          )"
+
+          echo "task_definition_arn=${task_definition_arn}" >> "$GITHUB_OUTPUT"
+          echo "Registered rollback task definition: ${task_definition_arn}"
+
+      - name: Deploy rollback task definition
+        id: deploy-rollback-task
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+          TASK_DEFINITION_ARN: ${{ steps.register-rollback-task-definition.outputs.task_definition_arn }}
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$TASK_DEFINITION_ARN" \
+            --desired-count 1 \
+            --query 'service.{
+              Service:serviceName,
+              TaskDefinition:taskDefinition,
+              DesiredCount:desiredCount
+            }' \
+            --output json
+
+      - name: Wait for rollback service stability
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+        run: |
+          echo "Waiting for rollback deployment to stabilize..."
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+          echo "Rollback deployment reached a stable state."
+
+      - name: Verify rollback task definition
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+          EXPECTED_TASK_DEFINITION: ${{ steps.register-rollback-task-definition.outputs.task_definition_arn }}
+        run: |
+          deployed_task_definition="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_SERVICE" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          )"
+
+          if [ "$deployed_task_definition" != "$EXPECTED_TASK_DEFINITION" ]; then
+            echo "::error::Expected ${EXPECTED_TASK_DEFINITION}, but ECS reports ${deployed_task_definition}"
+            exit 1
+          fi
+
+          echo "Rollback task definition verified: ${deployed_task_definition}"
+
+      - name: Verify rollback over HTTP
+        env:
+          BASE_URL: ${{ steps.verification-infrastructure.outputs.base_url }}
+          EXPECTED_VERSION: ${{ inputs.target_sha }}
+        run: ./scripts/verify-deployment.sh
+
+      - name: Record rollback duration
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          rollback_completed_epoch="$(date +%s)"
+          rollback_completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          rollback_duration_seconds="$((rollback_completed_epoch - ROLLBACK_STARTED_EPOCH))"
+
+          echo "Rollback completed at ${rollback_completed_at}"
+          echo "Rollback duration: ${rollback_duration_seconds} seconds"
+
+          {
+            echo "## Development rollback"
+            echo
+            echo "- Target version: \`${TARGET_SHA}\`"
+            echo "- Started: \`${ROLLBACK_STARTED_AT}\`"
+            echo "- Completed: \`${rollback_completed_at}\`"
+            echo "- Duration: \`${rollback_duration_seconds} seconds\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stop rollback verification task
+        if: always() && steps.register-rollback-task-definition.outcome == 'success'
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+        run: |
+          echo "Scaling ${ECS_SERVICE} back to zero..."
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --desired-count 0 \
+            --query 'service.{Service:serviceName,DesiredCount:desiredCount,RunningCount:runningCount}' \
+            --output json
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+          echo "Rollback verification task stopped."
+
+      - name: Destroy verification infrastructure
+        if: always() && steps.verification-infrastructure.outcome != 'skipped'
+        run: |
+          echo "Destroying temporary verification infrastructure..."
+
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            destroy \
+            -input=false \
+            -auto-approve
+
+          echo "Verification infrastructure destroyed."
