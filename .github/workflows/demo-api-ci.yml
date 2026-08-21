@@ -180,6 +180,13 @@ jobs:
     name: Deploy to development
     needs: publish-image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    concurrency:
+      group: demo-api-development-deployment
+      cancel-in-progress: false
+
+    environment: development
+
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
