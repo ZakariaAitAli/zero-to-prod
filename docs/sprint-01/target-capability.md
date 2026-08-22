@@ -1,5 +1,11 @@
 # Sprint 01 — Target Capability
 
+> **Historical planning snapshot**
+>
+> This document preserves the original Sprint 01 target, Definition of Done, exclusions, and assumptions as they were written before implementation. Unchecked items below are therefore historical planning state, not the final completion status. See the [reproducible demonstration](demonstration.md) and [final reflection](reflection.md) for delivered capability and evidence.
+>
+> Two scope details evolved during implementation: Sprint 01 later introduced narrowly scoped Terraform only for the temporary verification ALB and listener, while Terraform-based provisioning of the retained environment remained excluded. Rollback terminology also became more precise: "known-good" is operator-attested from prior successful deployment/verification evidence; the workflow itself proves SHA format and immutable ECR image existence before deployment, then verifies the selected version again afterward.
+
 ## Objective
 
 Build a complete development deployment path that allows a containerized service to be deployed from GitHub Actions to AWS without using permanent AWS credentials.
