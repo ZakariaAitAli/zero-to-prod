@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Full 40-character Git SHA of an already-published image
+        description: Full SHA backed by a prior successful deployment/verification run
         required: true
         type: string
 
@@ -51,6 +51,8 @@ jobs:
           TARGET_SHA: ${{ inputs.target_sha }}
         run: |
           echo "Requested rollback SHA: ${TARGET_SHA}"
+          echo "Rollback eligibility is operator-attested from prior successful deployment and external verification evidence."
+          echo "This workflow validates SHA format and ECR image existence; it does not prove that the target succeeded previously."
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
