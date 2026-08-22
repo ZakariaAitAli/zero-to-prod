@@ -257,6 +257,28 @@ jobs:
             -input=false \
             -out=verification.tfplan
 
+      - name: Reject stale deployment
+        run: |
+          main_sha="$(
+            git ls-remote --exit-code origin refs/heads/main \
+              | awk '{print $1}'
+          )"
+
+          if [ -z "$main_sha" ]; then
+            echo "::error::Could not resolve refs/heads/main from origin."
+            exit 1
+          fi
+
+          echo "Workflow SHA: ${GITHUB_SHA}"
+          echo "Current main SHA: ${main_sha}"
+
+          if [ "$GITHUB_SHA" != "$main_sha" ]; then
+            echo "::error::Rejecting stale deployment: ${GITHUB_SHA} is no longer the current main revision (${main_sha})."
+            exit 1
+          fi
+
+          echo "Deployment freshness check passed."
+
       - name: Create verification infrastructure
         id: verification-infrastructure
         run: |
