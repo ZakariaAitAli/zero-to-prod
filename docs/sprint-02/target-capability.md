@@ -124,7 +124,7 @@ Concurrent Terraform mutation is prevention: reject, wait, or safely serialize t
 
 ### ECR image exists but was never successfully verified
 
-**Failure:** A valid SHA has an immutable ECR image but no successful-verification record for the intended environment. **Surviving evidence:** SHA, image lookup, environment, record lookup, rejection reason, and proof ECS was unchanged. **Required behavior:** build, publication, or deployment attempt remains insufficient; stop before task-definition registration or ECS deployment. **Outcome — refuse before mutation:** prove a published-but-unverified image is ineligible.
+**Failure:** #41 selects an existing immutable ECR image as a rollback candidate, but it has no successful-verification record for the intended environment. Initial deployment candidates do not require a pre-existing record; after ECS stability, `/health`, and exact `/version` verification succeed, #40 records the successful-verification evidence. **Surviving evidence:** SHA, image lookup, environment, record lookup, rejection reason, and proof ECS was unchanged. **Required behavior:** when #41 evaluates rollback eligibility, a missing matching record stops the rollback before task-definition registration or ECS mutation. **Outcome — refuse before mutation:** prove a published-but-unverified rollback candidate is ineligible.
 
 ### Older image is incompatible with current runtime configuration
 
