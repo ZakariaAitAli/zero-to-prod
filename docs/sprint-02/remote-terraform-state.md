@@ -913,7 +913,7 @@ Issue #35 required:
 Versioning.
 ```
 
-Enabled and proven by three retained state versions.
+Enabled and proven by five retained state versions after the local experiments and the post-merge GitHub Actions apply/destroy cycle.
 
 ---
 
@@ -958,11 +958,26 @@ Issue #35 required:
 GitHub Actions can access the backend through OIDC.
 ```
 
-The repository and IAM configuration are prepared for this path.
+Verified by the normal allowed `main` deployment.
 
-A feature-branch smoke test was blocked before runner allocation by the existing `development` environment protection.
+GitHub Actions run:
 
-This criterion requires final evidence from the normal allowed `main` deployment after merge.
+```text
+33983112817
+```
+
+The deployment job successfully:
+
+```text
+obtained AWS credentials through OIDC
+initialized the S3 Terraform backend
+planned verification infrastructure
+applied verification infrastructure
+verified the deployment over HTTP
+destroyed verification infrastructure
+```
+
+The earlier feature-branch smoke test remained blocked before runner allocation by the existing `development` environment protection; that protection was not weakened.
 
 ---
 
@@ -1028,6 +1043,33 @@ The branch-only GitHub Actions smoke test run was:
 
 That run was rejected before runner allocation by the existing `development` environment protection and therefore is not counted as successful OIDC/backend evidence.
 
+The successful post-merge `main` workflow run was:
+
+```text
+33983112817
+```
+
+That run completed the full OIDC-backed remote-state path successfully:
+
+```text
+OIDC authentication
+terraform init
+terraform plan
+terraform apply
+external verification
+terraform destroy
+```
+
+Independent post-run AWS verification showed:
+
+```text
+serial: 5
+lineage: 71e55630-6ebf-c0b8-9bb1-50500e8816c4
+resources: 0
+verification ALB: LoadBalancerNotFound
+retained state versions: 5
+```
+
 ---
 
 ## Result
@@ -1070,19 +1112,35 @@ temporary infrastructure destroyed
 
 Remote state therefore no longer depends on the lifecycle of the runner that originally wrote it.
 
-The remaining final integration proof is the normal GitHub Actions `main` deployment accessing this backend through OIDC.
+The post-merge `main` deployment also proved the complete GitHub Actions integration path:
+
+```text
+GitHub Actions
+    ↓
+OIDC
+    ↓
+AWS role
+    ↓
+S3 remote state
+    ↓
+plan / apply / verify / destroy
+```
+
+Issue #35's remote-state capability is therefore complete.
 
 ---
 
 ## Next experiment
 
-Once the post-merge OIDC/backend path is verified, Sprint 02 can proceed to Issue #36.
+Before continuing to Issue #36, the next experiment is to make CI change-aware.
+
+The current workflow rebuilt and published the demo API even though Issue #35 changed only infrastructure and documentation.
 
 The next question is:
 
 ```text
-What prevents two Terraform executions from mutating
-the same remote state concurrently?
+How should CI select only the validation and build jobs
+that are relevant to the files changed?
 ```
 
-That experiment should add state locking without expanding into hard-runner-interruption recovery, which remains Issue #37.
+After that CI improvement, Sprint 02 can continue to Issue #36 for remote-state locking. Hard-runner-interruption recovery remains Issue #37.

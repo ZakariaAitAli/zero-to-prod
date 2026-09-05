@@ -108,13 +108,13 @@ manual rollback rather than automatic rollback
 operator confirmation rather than independent approval
 temporary public HTTP verification ingress
 desired count returns to 0 after verification
-CI is not change-aware for documentation-only changes
+CI is not change-aware; non-app changes still rebuild the demo API
 ```
 
 Sprint 02 has moved development verification state to a durable, versioned S3 backend and proved normal recovery from a separate fresh Terraform execution.
 
-End-to-end GitHub Actions OIDC access to the S3 backend still requires verification from an allowed `main` deployment; the feature-branch smoke test was blocked by the `development` environment protection before runner allocation.
+End-to-end GitHub Actions OIDC access to the S3 backend is now verified by `main` workflow run `33983112817`, which successfully initialized, planned, applied, verified, and destroyed the development verification infrastructure through remote state.
 
-The next reliability step is testing recovery after a CI runner disappears between `apply` and `destroy`.
+Before the next remote-state reliability experiment, the CI workflow will be made change-aware so non-app changes do not unnecessarily rebuild the demo API.
 
 See [Sprint 02 remote Terraform state evidence](docs/sprint-02/remote-terraform-state.md) and [Sprint 01 final reflection](docs/sprint-01/reflection.md).
