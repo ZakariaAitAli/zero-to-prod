@@ -37,3 +37,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=3s --retries=3 \
     CMD wget -q --spider "http://127.0.0.1:${PORT}/health" || exit 1
 
 ENTRYPOINT ["/app/demo-api"]
+# Issue #43 CI classification experiment.
