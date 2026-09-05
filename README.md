@@ -103,8 +103,7 @@ Sprint 01 intentionally remains development-only.
 Current limitations include:
 
 ```text
-runner-local Terraform state
-no tested fresh-runner orphan recovery
+no tested hard-interruption recovery from remote Terraform state
 manual rollback rather than automatic rollback
 operator confirmation rather than independent approval
 temporary public HTTP verification ingress
@@ -112,6 +111,10 @@ desired count returns to 0 after verification
 CI is not change-aware for documentation-only changes
 ```
 
-The most important follow-up is recovering temporary Terraform-managed verification infrastructure after a CI runner disappears between `apply` and `destroy`.
+Sprint 02 has moved development verification state to a durable, versioned S3 backend and proved normal recovery from a separate fresh Terraform execution.
 
-See [Sprint 01 final reflection](docs/sprint-01/reflection.md) for the complete limitation set and Sprint 02 follow-up experiment.
+End-to-end GitHub Actions OIDC access to the S3 backend still requires verification from an allowed `main` deployment; the feature-branch smoke test was blocked by the `development` environment protection before runner allocation.
+
+The next reliability step is testing recovery after a CI runner disappears between `apply` and `destroy`.
+
+See [Sprint 02 remote Terraform state evidence](docs/sprint-02/remote-terraform-state.md) and [Sprint 01 final reflection](docs/sprint-01/reflection.md).

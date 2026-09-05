@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListDevelopmentVerificationState",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::zero-to-prod-333534066371-eu-west-3-dev-verification-tfstate",
+      "Condition": {
+        "StringEquals": {
+          "s3:prefix": "development-verification/terraform.tfstate"
+        }
+      }
+    },
+    {
+      "Sid": "ReadWriteDevelopmentVerificationState",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::zero-to-prod-333534066371-eu-west-3-dev-verification-tfstate/development-verification/terraform.tfstate"
+    }
+  ]
+}
