@@ -113,6 +113,8 @@ CI is not change-aware for documentation-only changes
 
 Sprint 02 has moved development verification state to a durable, versioned S3 backend and proved normal recovery from a separate fresh Terraform execution.
 
+End-to-end GitHub Actions OIDC access to the S3 backend still requires verification from an allowed `main` deployment; the feature-branch smoke test was blocked by the `development` environment protection before runner allocation.
+
 The next reliability step is testing recovery after a CI runner disappears between `apply` and `destroy`.
 
 See [Sprint 02 remote Terraform state evidence](docs/sprint-02/remote-terraform-state.md) and [Sprint 01 final reflection](docs/sprint-01/reflection.md).
