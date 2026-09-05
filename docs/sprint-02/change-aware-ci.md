@@ -501,29 +501,97 @@ Expected AWS cost is negligible.
 - [x] Application formatting, vet, tests, and Docker build pass locally.
 - [x] Live `CI required` job succeeds on the refactored implementation PR.
 - [x] Repository rules updated to require `CI required`.
-- [ ] Live docs-only PR proves `CI required` succeeds with specialized jobs skipped.
-- [ ] Live Go-source PR behavior recorded.
-- [ ] Live Dockerfile PR behavior recorded.
-- [ ] Live Terraform PR behavior recorded.
+- [x] Live docs-only PR proves `CI required` succeeds with specialized jobs skipped.
+- [x] Live Go-source PR behavior recorded.
+- [x] Live Dockerfile PR behavior recorded.
+- [x] Live Terraform PR behavior recorded.
 - [x] Live workflow-YAML / CI-control PR behavior recorded.
-- [ ] Live mixed docs + application PR behavior recorded.
-- [ ] Final implementation PR evidence recorded.
-- [ ] Actual focused time recorded.
+- [x] Live mixed docs + application PR behavior recorded.
+- [x] Final implementation PR evidence recorded.
+- [x] Actual focused time recorded.
 
-## Next experiment
+## Live GitHub experiments
 
-Run the refactored workflow on PR #48 and verify that:
+The required path-behavior matrix was exercised with temporary pull requests based on `main`.
 
-    Detect changes
-    Validate demo API
-    Validate Terraform
-    Validate CI workflows
-    CI required
+None of the experiment pull requests were merged.
 
-behave according to the classifier.
+| Experiment | PR | Application | Terraform | Workflow / CI | `CI required` | Publish | Deploy |
+| --- | ---: | --- | --- | --- | --- | --- | --- |
+| Documentation only | #49 | skipped | skipped | skipped | success | skipped | skipped |
+| Go source | #50 | success | skipped | skipped | success | skipped | skipped |
+| Dockerfile | #51 | success | skipped | skipped | success | skipped | skipped |
+| Terraform | #52 | skipped | success | skipped | success | skipped | skipped |
+| Workflow / CI control | #48 | success | success | success | success | skipped | skipped |
+| Documentation + application | #53 | success | skipped | skipped | success | skipped | skipped |
 
-After `CI required` succeeds on GitHub, configure that exact job as the repository's required status check.
+The experiments demonstrated that path categories do not suppress checks required by another changed path.
 
-Do not merge PR #48 until the new required gate has been observed and configured.
+In particular, the mixed documentation + application pull request still ran the complete application validator.
 
-After the implementation exists on `main`, create controlled PR experiments for each path category and record the actual GitHub Actions behavior before closing Issue #43.
+Application-relevant pull requests internally classified the change as deploy-relevant, but ECR publication and development deployment remained skipped because pull-request events are not allowed to deploy.
+
+### Main-branch evidence
+
+PR #48 merged as:
+
+    05f5fb3 Add change-aware CI validation
+
+The resulting push to `main` triggered Demo API CI run `33988630752`.
+
+Because the merged change modified CI-control files, the bootstrap guard forced:
+
+    app=true
+    terraform=true
+    workflow=true
+
+while:
+
+    deploy=false
+
+The push therefore ran all three static validators and `CI required`, but skipped immutable ECR publication and development deployment.
+
+No AWS deployment was performed by the Issue #43 implementation merge.
+
+## Completion reflection
+
+### Mistakes and knowledge gaps
+
+Several design and testing mistakes were discovered during the issue.
+
+The first design retained the application-specific `Test and build demo API` job as the required repository check. That made the branch-protection contract depend on one particular validator and constrained the architecture.
+
+The design was refactored to separate specialized conditional validation jobs from a stable aggregate `CI required` gate.
+
+The first mixed-change manual test relied on interactive-shell word splitting. Two paths stored in one scalar were passed as one argument, which incorrectly made the test appear documentation-only. The regression harness was corrected to use Bash and explicit argument lists.
+
+The first workflow-lint experiment selected actionlint `v1.7.12`, which requires Go `>=1.25`, while the repository uses Go `1.24.2`. The workflow now pins actionlint `v1.7.11`.
+
+The first change-range implementation treated pull requests and pushes the same way. It was corrected to use:
+
+    pull request -> base...head
+    push         -> before..sha
+
+A more subtle trust-boundary issue was also identified: the classifier originally influenced whether its own validation would run. An independent CI-control bootstrap guard was added so changes to workflow-policy files force application, Terraform, and workflow validation even if classifier output is wrong.
+
+### What the experiments proved
+
+Workflow-level path filtering is unsafe for a stable required status check because the required context may never be created.
+
+Running the workflow unconditionally while conditionally skipping specialized jobs keeps the merge contract stable.
+
+The aggregate gate must understand both successful jobs and intentional skips. `CI required` therefore fails closed when a required validator is skipped, a non-required validator unexpectedly runs, change detection fails, or classifier state is missing or malformed.
+
+Validation relevance and deployment relevance are intentionally separate.
+
+A change may require broad static validation without being allowed to publish an image or mutate AWS infrastructure.
+
+### Focused time
+
+Approximately **1h 55m**.
+
+### Next experiment
+
+Issue #36: Terraform state locking.
+
+The next experiment should build on the remote-state foundation and determine how concurrent Terraform operations are prevented from modifying the same state unsafely.
