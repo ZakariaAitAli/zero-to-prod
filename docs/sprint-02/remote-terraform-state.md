@@ -1012,6 +1012,24 @@ documentation
 
 ---
 
+## Session record
+
+Focused time:
+
+```text
+~3h
+```
+
+The branch-only GitHub Actions smoke test run was:
+
+```text
+33981010289
+```
+
+That run was rejected before runner allocation by the existing `development` environment protection and therefore is not counted as successful OIDC/backend evidence.
+
+---
+
 ## Result
 
 Issue #35 changes the verification-state model from:
