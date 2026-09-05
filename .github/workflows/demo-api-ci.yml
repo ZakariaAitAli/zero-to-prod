@@ -15,17 +15,16 @@ permissions:
   contents: read
 
 jobs:
-  test-and-build:
-    name: Test and build demo API
+  changes:
+    name: Detect changes
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     outputs:
+      app: ${{ steps.changes.outputs.app }}
+      terraform: ${{ steps.changes.outputs.terraform }}
+      workflow: ${{ steps.changes.outputs.workflow }}
       deploy: ${{ steps.changes.outputs.deploy }}
-
-    defaults:
-      run:
-        working-directory: apps/demo-api
 
     steps:
       - name: Check out repository
@@ -35,7 +34,6 @@ jobs:
 
       - name: Detect changed paths
         id: changes
-        working-directory: .
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -82,6 +80,16 @@ jobs:
             echo "Changed files:"
             printf '  %s\n' "${changed_files[@]}"
 
+            ci_control_changed=false
+
+            for changed_file in "${changed_files[@]}"; do
+              case "$changed_file" in
+                .github/workflows/*|scripts/classify-ci-changes.sh|scripts/test-ci-change-classifier.sh|scripts/verify-ci-required.sh|scripts/test-ci-required-gate.sh)
+                  ci_control_changed=true
+                  ;;
+              esac
+            done
+
             mapfile -t classification < <(
               ./scripts/classify-ci-changes.sh "${changed_files[@]}"
             )
@@ -97,45 +105,65 @@ jobs:
             value="${result#*=}"
 
             case "$key" in
-              app)
-                app="$value"
-                ;;
-              terraform)
-                terraform="$value"
-                ;;
-              workflow)
-                workflow="$value"
-                ;;
-              deploy)
-                deploy="$value"
-                ;;
+              app) app="$value" ;;
+              terraform) terraform="$value" ;;
+              workflow) workflow="$value" ;;
+              deploy) deploy="$value" ;;
               *)
                 echo "::error::Unexpected classifier output: ${result}"
                 exit 1
                 ;;
             esac
 
-            echo "$result" >> "$GITHUB_OUTPUT"
           done
+
+          # CI control-plane files must not be able to skip validation of
+          # their own policy. This guard is intentionally independent of
+          # classifier output.
+          if [ "${ci_control_changed:-false}" = "true" ]; then
+            app=true
+            terraform=true
+            workflow=true
+          fi
+
+          {
+            echo "app=${app}"
+            echo "terraform=${terraform}"
+            echo "workflow=${workflow}"
+            echo "deploy=${deploy}"
+          } >> "$GITHUB_OUTPUT"
 
           {
             echo "## Change-aware CI"
             echo
             echo "- Application validation: \`${app}\`"
             echo "- Terraform validation: \`${terraform}\`"
-            echo "- Workflow linting: \`${workflow}\`"
+            echo "- Workflow validation: \`${workflow}\`"
             echo "- Publish/deploy eligible: \`${deploy}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  app-validation:
+    name: Validate demo API
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: apps/demo-api
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Set up Go
-        if: steps.changes.outputs.app == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: apps/demo-api/go.mod
           cache: false
 
       - name: Display tool versions
-        if: steps.changes.outputs.app == 'true'
         run: |
           echo "Go version:"
           go version
@@ -144,7 +172,6 @@ jobs:
           docker version --format '{{.Client.Version}}'
 
       - name: Check Go formatting
-        if: steps.changes.outputs.app == 'true'
         run: |
           unformatted_files="$(gofmt -l .)"
 
@@ -157,15 +184,12 @@ jobs:
           echo "All Go files are correctly formatted."
 
       - name: Run Go vet
-        if: steps.changes.outputs.app == 'true'
         run: go vet ./...
 
       - name: Run automated tests
-        if: steps.changes.outputs.app == 'true'
         run: go test ./... -v -count=1
 
       - name: Build Docker image
-        if: steps.changes.outputs.app == 'true'
         env:
           IMAGE_NAME: zero-to-prod-demo-api
         run: |
@@ -203,21 +227,53 @@ jobs:
             echo "- Runtime user: \`${configured_user}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Export Docker image
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.changes.outputs.deploy == 'true'
+        env:
+          IMAGE_NAME: zero-to-prod-demo-api
+        run: |
+          image="${IMAGE_NAME}:${GITHUB_SHA}"
+
+          docker save \
+            --output demo-api-image.tar \
+            "${image}"
+
+      - name: Upload Docker image artifact
+        if: >-
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          needs.changes.outputs.deploy == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: apps/demo-api/demo-api-image.tar
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+  terraform-validation:
+    name: Validate Terraform
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Set up Terraform
-        if: steps.changes.outputs.terraform == 'true'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: "1.15.9"
           terraform_wrapper: false
 
       - name: Check Terraform formatting
-        if: steps.changes.outputs.terraform == 'true'
-        working-directory: .
         run: terraform fmt -check -recursive infra/terraform
 
       - name: Validate Terraform
-        if: steps.changes.outputs.terraform == 'true'
-        working-directory: .
         run: |
           set -euo pipefail
 
@@ -239,59 +295,85 @@ jobs:
               validate
           done
 
-      - name: Validate CI classifier
-        if: steps.changes.outputs.workflow == 'true'
-        working-directory: .
+  workflow-validation:
+    name: Validate CI workflows
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: apps/demo-api/go.mod
+          cache: false
+
+      - name: Validate CI policy scripts
         run: |
           bash -n scripts/classify-ci-changes.sh
           bash -n scripts/test-ci-change-classifier.sh
+          bash -n scripts/verify-ci-required.sh
+          bash -n scripts/test-ci-required-gate.sh
+
           ./scripts/test-ci-change-classifier.sh
+          ./scripts/test-ci-required-gate.sh
 
       - name: Lint GitHub Actions workflows
-        if: steps.changes.outputs.workflow == 'true'
-        working-directory: .
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
 
-      - name: Skip application validation
-        if: steps.changes.outputs.app != 'true'
-        working-directory: .
-        run: |
-          echo "No application-relevant changes detected."
-          echo "Required check remains successful without Go or Docker work."
+  ci-required:
+    name: CI required
+    needs:
+      - changes
+      - app-validation
+      - terraform-validation
+      - workflow-validation
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
 
-      - name: Export Docker image
-        if: >-
-          github.event_name == 'push' &&
-          github.ref == 'refs/heads/main' &&
-          steps.changes.outputs.deploy == 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Verify required validations
         env:
-          IMAGE_NAME: zero-to-prod-demo-api
+          CHANGES_RESULT: ${{ needs.changes.result }}
+
+          APP_REQUIRED: ${{ needs.changes.outputs.app }}
+          APP_RESULT: ${{ needs.app-validation.result }}
+
+          TERRAFORM_REQUIRED: ${{ needs.changes.outputs.terraform }}
+          TERRAFORM_RESULT: ${{ needs.terraform-validation.result }}
+
+          WORKFLOW_REQUIRED: ${{ needs.changes.outputs.workflow }}
+          WORKFLOW_RESULT: ${{ needs.workflow-validation.result }}
         run: |
-          image="${IMAGE_NAME}:${GITHUB_SHA}"
-
-          docker save \
-            --output demo-api-image.tar \
-            "${image}"
-
-      - name: Upload Docker image artifact
-        if: >-
-          github.event_name == 'push' &&
-          github.ref == 'refs/heads/main' &&
-          steps.changes.outputs.deploy == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          path: apps/demo-api/demo-api-image.tar
-          archive: false
-          if-no-files-found: error
-          retention-days: 1
+          ./scripts/verify-ci-required.sh \
+            "$CHANGES_RESULT" \
+            "$APP_REQUIRED" \
+            "$APP_RESULT" \
+            "$TERRAFORM_REQUIRED" \
+            "$TERRAFORM_RESULT" \
+            "$WORKFLOW_REQUIRED" \
+            "$WORKFLOW_RESULT"
 
   publish-image:
     name: Publish immutable image to ECR
-    needs: test-and-build
+    needs:
+      - changes
+      - app-validation
+      - ci-required
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.test-and-build.outputs.deploy == 'true'
+      needs.changes.outputs.deploy == 'true' &&
+      needs.app-validation.result == 'success' &&
+      needs.ci-required.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

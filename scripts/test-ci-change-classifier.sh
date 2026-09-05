@@ -54,6 +54,11 @@ assert_case \
   .github/workflows/demo-api-ci.yml
 
 assert_case \
+  "CI required gate policy" \
+  "$workflow_expected" \
+  scripts/verify-ci-required.sh
+
+assert_case \
   "mixed docs + app" \
   "$app_expected" \
   docs/sprint-02/change-aware-ci.md \
