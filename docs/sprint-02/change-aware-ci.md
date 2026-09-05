@@ -16,7 +16,7 @@ The workflow itself still runs for every pull request to `main`.
 
 Workflow-level `paths:` filters are deliberately avoided. Change detection happens inside the workflow, and the always-running aggregate `CI required` job evaluates whether every validation selected by the classifier succeeded.
 
-The workflow gate is implemented in this branch. The repository setting requiring `CI required` must be added only after the new job has been observed successfully on GitHub.
+The workflow gate is implemented and has completed successfully on GitHub. The active `Protect main` repository ruleset now requires `CI required` on the default branch.
 
 ## Design
 
@@ -133,7 +133,7 @@ and regression-tested by:
 
 This provides one stable branch-protection contract while allowing specialized validation jobs to change independently.
 
-At the time of this implementation update, the old `Test and build demo API` repository requirement has been removed. The new `CI required` repository requirement is intentionally pending until the new job has completed successfully on GitHub.
+The old `Test and build demo API` repository requirement has been removed. The active `Protect main` ruleset now requires the stable `CI required` status check.
 
 ## Change-range semantics
 
@@ -499,13 +499,13 @@ Expected AWS cost is negligible.
 - [x] Terraform validation passes locally.
 - [x] Workflow linting passes locally.
 - [x] Application formatting, vet, tests, and Docker build pass locally.
-- [ ] Live `CI required` job succeeds on the refactored implementation PR.
-- [ ] Repository rules updated to require `CI required`.
+- [x] Live `CI required` job succeeds on the refactored implementation PR.
+- [x] Repository rules updated to require `CI required`.
 - [ ] Live docs-only PR proves `CI required` succeeds with specialized jobs skipped.
 - [ ] Live Go-source PR behavior recorded.
 - [ ] Live Dockerfile PR behavior recorded.
 - [ ] Live Terraform PR behavior recorded.
-- [ ] Live workflow-YAML PR behavior recorded.
+- [x] Live workflow-YAML / CI-control PR behavior recorded.
 - [ ] Live mixed docs + application PR behavior recorded.
 - [ ] Final implementation PR evidence recorded.
 - [ ] Actual focused time recorded.
