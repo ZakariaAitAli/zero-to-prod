@@ -934,31 +934,150 @@ Exact AWS billing impact should be verified from billing data rather than estima
 - [x] No workflow depends on runner-local Terraform state for recovery.
 - [x] Pull-request Terraform validation remains backend-free.
 - [x] Local workflow and Terraform static validation pass.
-- [ ] Pull-request `CI required` evidence recorded for the final implementation.
-- [ ] Main-branch OIDC runtime proves the GitHub Actions role can acquire and release the S3 lock.
-- [ ] Final focused time recorded.
+- [x] Pull-request `CI required` evidence recorded for the final implementation.
+- [x] Main-branch OIDC runtime proves the GitHub Actions role can acquire and release the S3 lock.
+- [x] Final focused time recorded.
 
-## Remaining evidence before closure
+## Final GitHub and AWS evidence
 
-The local and AWS experiments prove the locking mechanism and IAM behavior.
+Implementation PR #55, `Add Terraform state locking`, validated commit:
 
-Before Issue #36 is closed, the final implementation still needs live GitHub evidence:
+    51f701bc4946ec6a19d271006b91194bffdfbde6
 
-    implementation PR
-        ↓
-    CI required passes
-        ↓
-    merge to main
-        ↓
-    normal main deployment path
-        ↓
-    OIDC role initializes S3 backend
-        ↓
-    plan / apply / destroy acquire locks successfully
-        ↓
-    final state and AWS baseline verified
+Pull-request workflow run:
 
-This final run is important because local sandbox administrator credentials do not prove that the GitHub OIDC role works end to end with the newly added lock-object permissions.
+    34279739813
+
+completed successfully with the stable fail-closed `CI required` gate green.
+
+The PR merged to `main` as:
+
+    21bb0a0c9bc0d28a09314ab1b5dc6e6358aac809
+
+The merge itself did not intentionally trigger a deployment because the change-aware CI classifier correctly keeps Terraform- and workflow-only changes at:
+
+    deploy=false
+
+A deliberate `main` runtime experiment therefore used the existing protected rollback workflow rather than weakening the classifier or introducing an unrelated application change.
+
+Successful runtime:
+
+    workflow: Demo API Rollback
+    run:      34280243917
+    ref:      main
+    commit:   21bb0a0c9bc0d28a09314ab1b5dc6e6358aac809
+    result:   success
+
+The workflow assumed the intended GitHub Actions role through OIDC:
+
+    arn:aws:sts::333534066371:assumed-role/zero-to-prod-github-actions/GitHubActions
+
+Terraform 1.15.9 successfully initialized the S3 backend from a fresh GitHub-hosted runner.
+
+The runtime then executed:
+
+    terraform plan
+        -lock-timeout=60s
+
+    terraform apply
+        -lock-timeout=60s
+        verification.tfplan
+
+    terraform destroy
+        -lock-timeout=60s
+
+The plan created two temporary verification resources.
+
+The apply completed with:
+
+    Apply complete! Resources: 2 added, 0 changed, 0 destroyed.
+
+External verification passed for both:
+
+    /health
+    /version
+
+The destroy completed with:
+
+    Destroy complete! Resources: 2 destroyed.
+
+### Independent remote-state verification
+
+Before the GitHub runtime:
+
+    serial         = 7
+    lineage        = 71e55630-6ebf-c0b8-9bb1-50500e8816c4
+    resource_count = 0
+
+After the GitHub runtime:
+
+    serial         = 9
+    lineage        = 71e55630-6ebf-c0b8-9bb1-50500e8816c4
+    resource_count = 0
+
+This is the expected state progression:
+
+    serial 7
+        ↓ apply
+    serial 8
+        ↓ destroy
+    serial 9
+
+The lineage did not change.
+
+### GitHub lock lifecycle evidence
+
+S3 version history during workflow run `34280243917` contained three lock-object versions and three corresponding delete markers.
+
+Lock versions were created during the plan, apply, and destroy state operations.
+
+The final delete marker was written after destroy.
+
+After the workflow completed:
+
+    HeadObject development-verification/terraform.tfstate.tflock
+        -> 404 Not Found
+
+This proves that the GitHub OIDC role had enough permission to acquire and release the native S3 state lock throughout the runtime.
+
+It also confirms why GitHub workflow concurrency and Terraform locking remain separate controls:
+
+- GitHub concurrency serializes the deployment/rollback workflow.
+- Terraform locking serializes individual state operations against the selected backend key.
+- The successful GitHub run exercised both controls together.
+
+### Independent AWS cleanup verification
+
+After the successful workflow:
+
+    ECS desiredCount = 0
+    ECS runningCount = 0
+    ECS pendingCount = 0
+    running tasks    = []
+
+The temporary verification ALB returned:
+
+    LoadBalancerNotFound
+
+No active Terraform lock remained.
+
+The rollback workflow registered task-definition revision:
+
+    zero-to-prod-demo-api:11
+
+This revision points to the same immutable rollback image used by the experiment.
+
+It is retained ECS metadata only; no task or temporary verification compute remained running after cleanup.
+
+## Focused time
+
+Approximate focused time for Issue #36:
+
+    ~1h 50m
+
+This includes implementation, IAM review, three failure experiments, lifecycle testing, fresh-execution recovery, documentation, PR validation, and the final `main` OIDC runtime experiment.
+
+CI and AWS resource provisioning wait time were part of the observed experiment but were not additional implementation complexity.
 
 ## Next experiment
 
