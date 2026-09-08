@@ -507,6 +507,7 @@ jobs:
             -chdir=infra/terraform/development-verification \
             plan \
             -input=false \
+            -lock-timeout=60s \
             -out=verification.tfplan
 
       - name: Reject stale deployment
@@ -538,6 +539,7 @@ jobs:
             -chdir=infra/terraform/development-verification \
             apply \
             -input=false \
+            -lock-timeout=60s \
             -auto-approve \
             verification.tfplan
 
@@ -664,6 +666,7 @@ jobs:
             -chdir=infra/terraform/development-verification \
             destroy \
             -input=false \
+            -lock-timeout=60s \
             -auto-approve
 
           echo "Verification infrastructure destroyed."
