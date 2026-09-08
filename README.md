@@ -114,6 +114,6 @@ Sprint 02 has moved development verification state to a durable, versioned S3 ba
 
 End-to-end GitHub Actions OIDC access to the S3 backend was established by `main` workflow run `33983112817`, which successfully initialized, planned, applied, verified, and destroyed the development verification infrastructure through remote state.
 
-CI is now change-aware with the stable fail-closed `CI required` merge gate. The current remote-state reliability work adds native S3 state locking, exact lock-object IAM permissions, and bounded lock waits while retaining GitHub deployment concurrency.
+CI is now change-aware with the stable fail-closed `CI required` merge gate. Development verification also uses native S3 state locking, exact lock-object IAM permissions, and bounded lock waits while retaining GitHub deployment concurrency. `main` rollback workflow run `34280243917` proved the GitHub OIDC role can initialize the locked backend, complete plan/apply/destroy, release every lock, and return the AWS environment to its low-cost baseline.
 
 See [Sprint 02 remote Terraform state evidence](docs/sprint-02/remote-terraform-state.md), [change-aware CI evidence](docs/sprint-02/change-aware-ci.md), [Terraform state locking evidence](docs/sprint-02/terraform-state-locking.md), and [Sprint 01 final reflection](docs/sprint-01/reflection.md).
