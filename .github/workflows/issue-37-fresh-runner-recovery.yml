@@ -1,0 +1,338 @@
+name: Issue 37 Fresh Runner Recovery
+
+on:
+  push:
+    branches:
+      - feat/issue-37-fresh-runner-recovery
+    paths:
+      - .github/workflows/issue-37-fresh-runner-recovery.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  recover-orphan:
+    name: Recover orphaned verification infrastructure
+    if: github.ref == 'refs/heads/feat/issue-37-fresh-runner-recovery'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    environment: development
+
+    concurrency:
+      group: demo-api-development-deployment
+      cancel-in-progress: false
+
+    steps:
+      - name: Prove fresh runner workspace
+        run: |
+          echo "Runner: ${RUNNER_NAME}"
+          echo "Workspace before checkout: ${GITHUB_WORKSPACE}"
+
+          if find "$GITHUB_WORKSPACE" -mindepth 1 -print -quit | grep -q .; then
+            echo "::error::Expected an empty GitHub-hosted runner workspace before checkout."
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 3 -print
+            exit 1
+          fi
+
+          echo "Fresh runner workspace is empty before checkout."
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Prove no runner-local Terraform recovery data
+        run: |
+          root="infra/terraform/development-verification"
+
+          test ! -d "${root}/.terraform"
+          test ! -f "${root}/terraform.tfstate"
+          test ! -f "${root}/terraform.tfstate.backup"
+          test ! -f "${root}/verification.tfplan"
+          test ! -f "${root}/recovery-destroy.tfplan"
+
+          echo "No prior .terraform directory, local state, or plan files exist."
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c
+        with:
+          role-to-assume: arn:aws:iam::333534066371:role/zero-to-prod-github-actions
+          aws-region: eu-west-3
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.9
+          terraform_wrapper: false
+
+      - name: Initialize from remote backend
+        run: |
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            init \
+            -input=false \
+            -lockfile=readonly
+
+      - name: Recover ownership from remote state
+        run: |
+          root="infra/terraform/development-verification"
+          recovered_state="${RUNNER_TEMP}/issue37-recovered.tfstate"
+
+          echo "Terraform addresses recovered from remote state:"
+          terraform -chdir="$root" state list
+
+          terraform -chdir="$root" state pull > "$recovered_state"
+
+          jq '{
+            serial,
+            lineage,
+            managed_resources: [
+              .resources[]
+              | select(.mode == "managed")
+              | {type, name}
+            ]
+          }' "$recovered_state"
+
+          serial="$(jq -r '.serial' "$recovered_state")"
+          lineage="$(jq -r '.lineage' "$recovered_state")"
+
+          if [ "$serial" != "10" ]; then
+            echo "::error::Expected remote state serial 10, got ${serial}."
+            exit 1
+          fi
+
+          if [ "$lineage" != "71e55630-6ebf-c0b8-9bb1-50500e8816c4" ]; then
+            echo "::error::Unexpected Terraform state lineage: ${lineage}"
+            exit 1
+          fi
+
+          actual_managed="$(
+            terraform -chdir="$root" state list \
+              | grep -v '^data\.' \
+              | sort
+          )"
+
+          expected_managed="$(
+            printf '%s\n' \
+              'aws_lb.verification' \
+              'aws_lb_listener.http' \
+              | sort
+          )"
+
+          if [ "$actual_managed" != "$expected_managed" ]; then
+            echo "::error::Remote state contains unexpected managed resources."
+            printf 'Expected:\n%s\nActual:\n%s\n' \
+              "$expected_managed" \
+              "$actual_managed"
+            exit 1
+          fi
+
+          terraform -chdir="$root" show -json > "${RUNNER_TEMP}/issue37-current.json"
+
+          alb_arn="$(
+            jq -r '
+              .values.root_module.resources[]
+              | select(.address == "aws_lb.verification")
+              | .values.arn
+            ' "${RUNNER_TEMP}/issue37-current.json"
+          )"
+
+          listener_arn="$(
+            jq -r '
+              .values.root_module.resources[]
+              | select(.address == "aws_lb_listener.http")
+              | .values.arn
+            ' "${RUNNER_TEMP}/issue37-current.json"
+          )"
+
+          test -n "$alb_arn"
+          test "$alb_arn" != "null"
+          test -n "$listener_arn"
+          test "$listener_arn" != "null"
+
+          echo "RECOVERY_ALB_ARN=${alb_arn}" >> "$GITHUB_ENV"
+          echo "RECOVERY_LISTENER_ARN=${listener_arn}" >> "$GITHUB_ENV"
+
+          echo "Recovered ALB ARN: ${alb_arn}"
+          echo "Recovered listener ARN: ${listener_arn}"
+
+      - name: Plan recovery destruction
+        run: |
+          root="infra/terraform/development-verification"
+          plan="${root}/recovery-destroy.tfplan"
+          plan_json="${RUNNER_TEMP}/issue37-recovery-plan.json"
+
+          terraform \
+            -chdir="$root" \
+            plan \
+            -destroy \
+            -input=false \
+            -lock-timeout=60s \
+            -out=recovery-destroy.tfplan
+
+          terraform \
+            -chdir="$root" \
+            show \
+            -json \
+            recovery-destroy.tfplan > "$plan_json"
+
+          changes="$(
+            jq -c '
+              [
+                .resource_changes[]
+                | select(.change.actions != ["no-op"])
+                | {
+                    address,
+                    actions: .change.actions
+                  }
+              ]
+              | sort_by(.address)
+            ' "$plan_json"
+          )"
+
+          expected='[{"address":"aws_lb.verification","actions":["delete"]},{"address":"aws_lb_listener.http","actions":["delete"]}]'
+
+          echo "Destructive changes recovered from remote state:"
+          echo "$changes" | jq .
+
+          if [ "$changes" != "$expected" ]; then
+            echo "::error::Recovery plan is not exactly the two expected deletes."
+            exit 1
+          fi
+
+      - name: Destroy orphan from recovered state
+        run: |
+          echo "Recovery destroy started at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          terraform \
+            -chdir=infra/terraform/development-verification \
+            apply \
+            -input=false \
+            -lock-timeout=60s \
+            -auto-approve \
+            recovery-destroy.tfplan
+
+          echo "Recovery destroy completed at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+      - name: Verify AWS resources are absent
+        run: |
+          set +e
+
+          aws elbv2 describe-load-balancers \
+            --load-balancer-arns "$RECOVERY_ALB_ARN" \
+            >"${RUNNER_TEMP}/alb.out" \
+            2>"${RUNNER_TEMP}/alb.err"
+          alb_rc=$?
+
+          aws elbv2 describe-listeners \
+            --listener-arns "$RECOVERY_LISTENER_ARN" \
+            >"${RUNNER_TEMP}/listener.out" \
+            2>"${RUNNER_TEMP}/listener.err"
+          listener_rc=$?
+
+          set -e
+
+          if [ "$alb_rc" -eq 0 ]; then
+            echo "::error::Recovered ALB still exists after Terraform destroy."
+            cat "${RUNNER_TEMP}/alb.out"
+            exit 1
+          fi
+
+          if ! grep -q 'LoadBalancerNotFound' "${RUNNER_TEMP}/alb.err"; then
+            cat "${RUNNER_TEMP}/alb.err"
+            echo "::error::ALB absence could not be independently proven."
+            exit 1
+          fi
+
+          if [ "$listener_rc" -eq 0 ]; then
+            echo "::error::Recovered listener still exists after Terraform destroy."
+            cat "${RUNNER_TEMP}/listener.out"
+            exit 1
+          fi
+
+          if ! grep -q 'ListenerNotFound' "${RUNNER_TEMP}/listener.err"; then
+            cat "${RUNNER_TEMP}/listener.err"
+            echo "::error::Listener absence could not be independently proven."
+            exit 1
+          fi
+
+          echo "AWS independently confirms ALB absence."
+          echo "AWS independently confirms listener absence."
+
+      - name: Verify final Terraform and ECS baseline
+        run: |
+          root="infra/terraform/development-verification"
+          final_state="${RUNNER_TEMP}/issue37-final.tfstate"
+
+          terraform -chdir="$root" state pull > "$final_state"
+
+          jq '{
+            serial,
+            lineage,
+            resource_count: (.resources | length),
+            managed_resource_count: (
+              [
+                .resources[]
+                | select(.mode == "managed")
+              ]
+              | length
+            )
+          }' "$final_state"
+
+          managed_count="$(
+            jq '
+              [
+                .resources[]
+                | select(.mode == "managed")
+              ]
+              | length
+            ' "$final_state"
+          )"
+
+          if [ "$managed_count" -ne 0 ]; then
+            echo "::error::Managed resources remain in Terraform state."
+            exit 1
+          fi
+
+          ecs="$(
+            aws ecs describe-services \
+              --cluster zero-to-prod-dev \
+              --services demo-api \
+              --query 'services[0].{
+                Desired:desiredCount,
+                Running:runningCount,
+                Pending:pendingCount,
+                TaskDefinition:taskDefinition
+              }' \
+              --output json
+          )"
+
+          echo "$ecs"
+
+          if [ "$(jq -r '.Desired' <<<"$ecs")" -ne 0 ] ||
+             [ "$(jq -r '.Running' <<<"$ecs")" -ne 0 ] ||
+             [ "$(jq -r '.Pending' <<<"$ecs")" -ne 0 ]; then
+            echo "::error::ECS did not return to the zero-runtime baseline."
+            exit 1
+          fi
+
+          running_tasks="$(
+            aws ecs list-tasks \
+              --cluster zero-to-prod-dev \
+              --service-name demo-api \
+              --desired-status RUNNING \
+              --query 'taskArns' \
+              --output json
+          )"
+
+          echo "$running_tasks"
+
+          if [ "$(jq 'length' <<<"$running_tasks")" -ne 0 ]; then
+            echo "::error::Running ECS tasks remain."
+            exit 1
+          fi
+
+          echo "Fresh-runner recovery completed successfully."
