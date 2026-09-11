@@ -20,7 +20,10 @@ permissions:
 jobs:
   rollback-development:
     name: Roll back development
-    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'ROLLBACK'
+    if: >-
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/feat/issue-37-fresh-runner-recovery') &&
+      inputs.confirmation == 'ROLLBACK'
 
     concurrency:
       group: demo-api-development-deployment
@@ -179,6 +182,18 @@ jobs:
 
           echo "base_url=${base_url}" >> "$GITHUB_OUTPUT"
           echo "Verification endpoint: ${base_url}"
+
+      - name: Hold for Issue 37 hard-interruption experiment
+        if: github.ref == 'refs/heads/feat/issue-37-fresh-runner-recovery'
+        run: |
+          echo "::warning::Issue #37 interruption window is open."
+          echo "Force-cancel this run externally while this step is active."
+          echo "If it is not force-cancelled, the workflow will continue after five minutes and normal cleanup will still run."
+
+          for remaining in 300 270 240 210 180 150 120 90 60 30; do
+            echo "Interruption window: ${remaining}s remaining"
+            sleep 30
+          done
 
       - name: Record rollback start
         run: |
