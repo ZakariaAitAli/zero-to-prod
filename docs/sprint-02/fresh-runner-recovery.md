@@ -2,7 +2,9 @@
 
 ## Objective
 
-Issue #37 proves that temporary verification infrastructure can be recovered and removed after the GitHub Actions runner that created it disappears before cleanup.
+Issue #37 proves that temporary verification infrastructure can be recovered and removed after the GitHub Actions execution that created it stops before cleanup.
+
+The controlled experiment uses force-cancellation as a safe proxy for runner loss. It directly tests recovery after cleanup is skipped, but it does not prove that the original GitHub-hosted runner VM itself was destroyed.
 
 Issue #35 established durable remote Terraform state.
 
@@ -15,9 +17,9 @@ Terraform apply succeeds
     ↓
 temporary verification infrastructure exists
     ↓
-original runner disappears before destroy
+original execution is force-cancelled before destroy
     ↓
-local workspace is lost
+later cleanup steps do not execute
     ↓
 a separate fresh runner starts
     ↓
@@ -327,7 +329,13 @@ Stop rollback verification task     -> skipped
 Destroy verification infrastructure -> skipped
 ```
 
-This deliberately reproduced the failure mode where normal cleanup never executes.
+This experiment is a force-cancellation proxy for the harder runner-loss failure mode.
+
+It directly proves that GitHub can stop the execution after infrastructure creation without scheduling the later cleanup steps.
+
+It does not directly prove that the underlying GitHub-hosted runner VM was destroyed or that its workspace became inaccessible. Literal runner-loss behavior therefore remains unverified.
+
+The recovery experiment instead validates the property required for that failure mode: recovery does not depend on anything stored in the original runner workspace.
 
 ### Post-cancel orphan evidence
 
@@ -337,7 +345,7 @@ At:
 2026-09-11T20:08:28Z
 ```
 
-the original workflow was already gone, but AWS still reported the ALB as:
+the force-cancelled execution was no longer running cleanup, but AWS still reported the ALB as:
 
 ```
 active
@@ -358,7 +366,7 @@ aws_lb_listener.http
 
 still managed.
 
-The temporary infrastructure had therefore survived the runner that created it.
+The temporary infrastructure had therefore survived the force-cancelled execution that created it.
 
 ### Result
 
@@ -366,9 +374,11 @@ Pass.
 
 The interruption successfully created a Terraform-managed orphan without starting ECS compute.
 
-## What survived the original runner
+## What survived the interrupted execution
 
-The original GitHub-hosted runner workspace did not survive.
+The experiment did not directly prove destruction of the original GitHub-hosted runner VM or its workspace.
+
+What it did prove is that the separate recovery run did not rely on any runner-local recovery artifact from the interrupted execution.
 
 The following information did survive externally:
 
@@ -383,7 +393,7 @@ listener ARN
 live AWS resources
 ```
 
-This is the critical recovery boundary.
+This is the critical recovery boundary for the tested force-cancellation scenario.
 
 Recovery did not depend on:
 
@@ -425,6 +435,157 @@ recovery-destroy.tfplan
 ```
 
 The recovery therefore had no filesystem state from the interrupted run.
+
+### Copyable recovery procedure
+
+The recovery path can be executed from a clean workspace using only the repository configuration, remote state, and AWS access.
+
+Initialize the backend and inspect the recovered ownership:
+
+```bash
+ROOT="infra/terraform/development-verification"
+
+terraform -chdir="$ROOT" init -input=false -lockfile=readonly
+terraform -chdir="$ROOT" state list
+terraform -chdir="$ROOT" state pull > /tmp/issue37-recovered.tfstate
+```
+
+Capture the exact ALB and listener ARNs from Terraform state:
+
+```bash
+terraform -chdir="$ROOT" show -json > /tmp/issue37-current.json
+
+ALB_ARN="$(jq -r '.values.root_module.resources[] | select(.address == "aws_lb.verification") | .values.arn' /tmp/issue37-current.json)"
+LISTENER_ARN="$(jq -r '.values.root_module.resources[] | select(.address == "aws_lb_listener.http") | .values.arn' /tmp/issue37-current.json)"
+
+printf 'ALB: %s\nListener: %s\n' "$ALB_ARN" "$LISTENER_ARN"
+```
+
+Create a saved destroy plan:
+
+```bash
+terraform -chdir="$ROOT" plan -destroy -input=false -lock-timeout=60s -out=recovery-destroy.tfplan
+terraform -chdir="$ROOT" show -json recovery-destroy.tfplan > /tmp/issue37-recovery-plan.json
+```
+
+Allowlist the destructive changes before applying:
+
+```bash
+ACTUAL="$(jq -c '[.resource_changes[] | select(.change.actions != ["no-op"]) | {address,actions:.change.actions}] | sort_by(.address)' /tmp/issue37-recovery-plan.json)"
+EXPECTED='[{"address":"aws_lb.verification","actions":["delete"]},{"address":"aws_lb_listener.http","actions":["delete"]}]'
+
+printf '%s\n' "$ACTUAL" | jq .
+
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  echo "Refusing recovery: destroy plan contains unexpected changes."
+  exit 1
+fi
+```
+
+Apply only the reviewed saved plan:
+
+```bash
+terraform -chdir="$ROOT" apply -input=false -lock-timeout=60s -auto-approve recovery-destroy.tfplan
+```
+
+Independently verify AWS deletion:
+
+```bash
+if AWS_PAGER="" aws elbv2 describe-load-balancers --profile sandbox --region eu-west-3 --load-balancer-arns "$ALB_ARN" >/tmp/issue37-alb.out 2>/tmp/issue37-alb.err; then
+  echo "ERROR: ALB still exists."
+  exit 1
+elif grep -q 'LoadBalancerNotFound' /tmp/issue37-alb.err; then
+  echo "ALB absent."
+else
+  cat /tmp/issue37-alb.err
+  echo "ERROR: ALB absence could not be verified."
+  exit 1
+fi
+
+if AWS_PAGER="" aws elbv2 describe-listeners --profile sandbox --region eu-west-3 --listener-arns "$LISTENER_ARN" >/tmp/issue37-listener.out 2>/tmp/issue37-listener.err; then
+  echo "ERROR: listener still exists."
+  exit 1
+elif grep -q 'ListenerNotFound' /tmp/issue37-listener.err; then
+  echo "Listener absent."
+else
+  cat /tmp/issue37-listener.err
+  echo "ERROR: listener absence could not be verified."
+  exit 1
+fi
+```
+
+Verify the final remote-state and ECS baseline:
+
+```bash
+terraform -chdir="$ROOT" state pull > /tmp/issue37-final.tfstate
+jq '{serial,lineage,resource_count:(.resources|length)}' /tmp/issue37-final.tfstate
+
+AWS_PAGER="" aws ecs describe-services   --profile sandbox   --region eu-west-3   --cluster zero-to-prod-dev   --services demo-api   --query 'services[0].{Desired:desiredCount,Running:runningCount,Pending:pendingCount,TaskDefinition:taskDefinition}'   --output json
+
+AWS_PAGER="" aws ecs list-tasks   --profile sandbox   --region eu-west-3   --cluster zero-to-prod-dev   --service-name demo-api   --desired-status RUNNING   --query 'taskArns'   --output json
+```
+
+For the controlled stale-lock experiment, first verify that no real lock exists. An expected 404 is handled explicitly and does not rely on shell-wide `set -e` behavior:
+
+```bash
+BUCKET="zero-to-prod-333534066371-eu-west-3-dev-verification-tfstate"
+LOCK_KEY="development-verification/terraform.tfstate.tflock"
+
+if AWS_PAGER="" aws s3api head-object --profile sandbox --region eu-west-3 --bucket "$BUCKET" --key "$LOCK_KEY" >/tmp/issue37-lock.out 2>/tmp/issue37-lock.err; then
+  echo "ERROR: a real Terraform lock already exists."
+  cat /tmp/issue37-lock.out
+  exit 1
+elif grep -q '404' /tmp/issue37-lock.err; then
+  echo "No current Terraform lock exists."
+else
+  cat /tmp/issue37-lock.err
+  echo "ERROR: lock absence could not be verified."
+  exit 1
+fi
+```
+
+Create the synthetic lock used by the experiment:
+
+```bash
+LOCK_ID="$(cat /proc/sys/kernel/random/uuid)"
+LOCK_CREATED="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+jq -n   --arg ID "$LOCK_ID"   --arg Operation "OperationTypePlan"   --arg Info "Issue 37 controlled stale-lock experiment"   --arg Who "issue-37-controlled-test"   --arg Version "1.15.9"   --arg Created "$LOCK_CREATED"   --arg Path "$BUCKET/development-verification/terraform.tfstate"   '{ID:$ID,Operation:$Operation,Info:$Info,Who:$Who,Version:$Version,Created:$Created,Path:$Path}'   > /tmp/issue37-stale-lock.json
+
+AWS_PAGER="" aws s3api put-object   --profile sandbox   --region eu-west-3   --bucket "$BUCKET"   --key "$LOCK_KEY"   --body /tmp/issue37-stale-lock.json
+```
+
+Run the bounded lock-conflict test, record its exit status, and immediately remove the synthetic lock:
+
+```bash
+if terraform -chdir="$ROOT" plan -input=false -lock-timeout=5s -refresh=false -no-color >/tmp/issue37-lock-plan.out 2>&1; then
+  PLAN_RC=0
+else
+  PLAN_RC=$?
+fi
+
+AWS_PAGER="" aws s3api delete-object   --profile sandbox   --region eu-west-3   --bucket "$BUCKET"   --key "$LOCK_KEY"
+
+cat /tmp/issue37-lock-plan.out
+echo "Terraform exit: $PLAN_RC"
+```
+
+Finally, verify that the synthetic lock is gone:
+
+```bash
+if AWS_PAGER="" aws s3api head-object --profile sandbox --region eu-west-3 --bucket "$BUCKET" --key "$LOCK_KEY" >/tmp/issue37-lock-final.out 2>/tmp/issue37-lock-final.err; then
+  echo "ERROR: lock still exists."
+  exit 1
+elif grep -q '404' /tmp/issue37-lock-final.err; then
+  echo "Synthetic lock removed."
+else
+  cat /tmp/issue37-lock-final.err
+  echo "ERROR: final lock absence could not be verified."
+  exit 1
+fi
+```
+
+The recovery procedure deliberately does not use `-lock=false`.
 
 ### Remote state initialization
 
@@ -687,14 +848,14 @@ After force-cancellation:
 Destroy verification infrastructure -> skipped
 ```
 
-The presence of an `always()` cleanup condition cannot guarantee cleanup after every form of runner loss or forced workflow termination.
+The presence of an `always()` cleanup condition cannot guarantee cleanup when the workflow execution itself is stopped before cleanup can be scheduled.
 
-The distinction is:
+The experiment directly proved this force-cancellation path:
 
 ```
 ordinary step failure
     ↓
-runner still executing
+runner remains available
     ↓
 always() cleanup can run
 ```
@@ -702,12 +863,14 @@ always() cleanup can run
 versus:
 
 ```
-hard cancellation / runner disappearance
+force-cancellation after infrastructure creation
     ↓
-runner no longer executes cleanup
+later cleanup step is skipped
     ↓
 durable remote state + external recovery required
 ```
+
+A literal unexpected runner disappearance was not directly reproduced. It remains an unverified failure mode, but the recovery design intentionally avoids dependence on the original runner filesystem.
 
 Remote state is therefore part of the recovery design, not only a collaboration feature.
 
@@ -755,11 +918,13 @@ Terraform completed its destruction at:
 2026-09-11T20:13:16Z
 ```
 
-Maximum observed orphan/resource lifetime:
+Total observed ALB lifetime:
 
 ```
 approximately 8 minutes 28 seconds
 ```
+
+This measures resource creation through completed destruction.
 
 The workflow was force-cancelled at:
 
@@ -767,7 +932,7 @@ The workflow was force-cancelled at:
 2026-09-11T20:07:25Z
 ```
 
-Time from forced cancellation to completed recovery:
+Maximum observed orphan lifetime, measured from force-cancellation until completed recovery:
 
 ```
 approximately 5 minutes 51 seconds
@@ -791,7 +956,32 @@ The ALB existed for less than nine minutes.
 
 S3 state and lock activity consisted only of small state/lock objects and API requests.
 
-The exact billed AWS amount was not yet available at experiment time and should be confirmed later from Cost Explorer rather than estimated from runtime alone.
+A Cost Explorer query was performed for:
+
+```
+Start   = 2026-09-11
+End     = 2026-09-12
+Service = Elastic Load Balancing
+```
+
+At the time of documentation, Cost Explorer returned:
+
+```
+UnblendedCost = 0 USD
+UsageQuantity = 0
+Groups        = []
+Estimated     = true
+```
+
+Because the result is still marked `Estimated` and contains no ELB usage groups, `$0.00` is not treated as the final billed experiment cost.
+
+Actual experiment cost:
+
+```
+pending Cost Explorer ingestion
+```
+
+The completion reflection therefore remains pending only for the final billed amount. The bounded runtime evidence is already known.
 
 The important bounded-cost evidence is:
 
@@ -893,20 +1083,26 @@ No experiment-specific IAM permission remains.
 
 ## Acceptance evidence
 
-| Requirement                                         | Evidence                                                              | Result |
-| --------------------------------------------------- | --------------------------------------------------------------------- | ------ |
-| Create temporary verification ALB through Terraform | Run `34642213628`; state serial advanced to `10`                      | Pass   |
-| Interrupt cleanup after apply                       | Force-cancel at `20:07:25Z`; destroy step skipped                     | Pass   |
-| Start separate fresh workflow run                   | Recovery run `34642955772`                                            | Pass   |
-| Fresh runner has no previous filesystem             | Empty pre-checkout workspace; no local Terraform files after checkout | Pass   |
-| Recover existing Terraform resources                | State serial `10`; exact ALB/listener addresses and ARNs recovered    | Pass   |
-| Destroy orphan from fresh runner                    | Saved plan contained exactly two deletes; apply destroyed both        | Pass   |
-| Independently verify deletion                       | `LoadBalancerNotFound` and `ListenerNotFound`                         | Pass   |
-| Restore Terraform baseline                          | State serial `11`, zero resources                                     | Pass   |
-| Restore ECS baseline                                | `0 / 0 / 0`, independent running-task list `[]`                       | Pass   |
-| Reproduce stale/held lock safely                    | Synthetic lock caused S3 `412 PreconditionFailed`, Terraform exit `1` | Pass   |
-| Record maximum orphan lifetime                      | Approximately `8m 28s`                                                | Pass   |
-| Remove temporary experiment controls                | Workflow instrumentation and branch policy removed                    | Pass   |
+| Requirement                                         | Evidence                                                                                      | Result |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------ |
+| Create temporary verification ALB through Terraform | Run `34642213628`; state serial advanced to `10`                                              | Pass   |
+| Interrupt cleanup after apply                       | Force-cancel at `20:07:25Z`; destroy step skipped                                             | Pass   |
+| Start separate fresh workflow run                   | Recovery run `34642955772`                                                                    | Pass   |
+| Fresh runner has no previous filesystem             | Empty pre-checkout workspace; no local Terraform state, plan, or initialized backend cache after checkout | Pass   |
+| Recover existing Terraform resources                | State serial `10`; exact ALB/listener addresses and ARNs recovered                            | Pass   |
+| Destroy orphan from fresh runner                    | Saved plan contained exactly two deletes; apply destroyed both                                | Pass   |
+| Independently verify deletion                       | `LoadBalancerNotFound` and `ListenerNotFound`                                                 | Pass   |
+| Restore Terraform baseline                          | State serial `11`, zero resources                                                             | Pass   |
+| Restore ECS baseline                                | `0 / 0 / 0`, independent running-task list `[]`                                               | Pass   |
+| Reproduce stale/held lock safely                    | Synthetic lock caused S3 `412 PreconditionFailed`, Terraform exit `1`                         | Pass   |
+| Record maximum orphan lifetime                      | Approximately `5m 51s`                                                                        | Pass   |
+| Remove temporary experiment controls                | Workflow instrumentation and branch policy removed                                            | Pass   |
+
+## Completion reflection status
+
+The evidence, cleanup, mistake/knowledge-gap notes, next experiment, and focused-time record are complete.
+
+The only pending completion item is the final billed AWS experiment cost. The current Cost Explorer result for `2026-09-11` through `2026-09-12` is still estimated and reports no ELB usage groups, so the issue should not claim a final billed amount yet.
 
 ## Focused time
 
@@ -924,11 +1120,11 @@ Earlier planning and final documentation time are not included in that measured 
 
 The experiment answered the main questions from Issue #37.
 
-What survives a CI runner?
+What recovery data remains available after an interrupted CI execution?
 
 ```
-durable external systems survive
-runner-local filesystem state does not
+durable external systems remain available
+the fresh runner has no runner-local recovery artifacts from the interrupted execution
 ```
 
 For this workflow, the important durable system is the S3 Terraform backend.
@@ -958,13 +1154,14 @@ What can `if: always()` protect?
 failures where the runner remains available to execute cleanup
 ```
 
-What requires external recovery?
+What requires external recovery in the tested scenario?
 
 ```
-hard cancellation
-runner disappearance
+force-cancellation after infrastructure creation
 any failure where cleanup steps never execute
 ```
+
+Literal unexpected runner disappearance was not directly tested, but the same recovery design is intentionally independent of the original runner filesystem.
 
 The resulting recovery model is:
 
