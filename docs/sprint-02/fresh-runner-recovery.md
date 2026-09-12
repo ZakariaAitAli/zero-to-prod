@@ -956,32 +956,29 @@ The ALB existed for less than nine minutes.
 
 S3 state and lock activity consisted only of small state/lock objects and API requests.
 
-A Cost Explorer query was performed for:
+The AWS Cost Explorer console later showed the September 11 cost split clearly.
 
-```
-Start   = 2026-09-11
-End     = 2026-09-12
-Service = Elastic Load Balancing
-```
+Elastic Load Balancing cost attributable to the Issue #37 infrastructure experiment:
 
-At the time of documentation, Cost Explorer returned:
+`$0.03`
 
-```
-UnblendedCost = 0 USD
-UsageQuantity = 0
-Groups        = []
-Estimated     = true
-```
+A separate `$0.03` was shown under Cost Explorer and came from the Cost Explorer API checks performed while investigating the experiment cost. That API-query cost is not counted as part of the infrastructure experiment itself.
 
-Because the result is still marked `Estimated` and contains no ELB usage groups, `$0.00` is not treated as the final billed experiment cost.
+The final experiment infrastructure cost recorded for Issue #37 is therefore:
 
-Actual experiment cost:
+`$0.03`
 
-```
-pending Cost Explorer ingestion
-```
+ECS contributed no experiment runtime cost because the service remained at:
 
-The completion reflection therefore remains pending only for the final billed amount. The bounded runtime evidence is already known.
+`desired = 0`
+
+The total additional cost visible for September 11 related to the experiment and its billing investigation was approximately:
+
+`$0.06`
+
+Of that amount, approximately half was the ELB experiment and half was avoidable Cost Explorer API usage.
+
+Future cost checks for this project should use the AWS Cost Explorer console rather than the Cost Explorer API unless machine-readable billing evidence is explicitly required.
 
 The important bounded-cost evidence is:
 
@@ -1083,26 +1080,32 @@ No experiment-specific IAM permission remains.
 
 ## Acceptance evidence
 
-| Requirement                                         | Evidence                                                                                      | Result |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------ |
-| Create temporary verification ALB through Terraform | Run `34642213628`; state serial advanced to `10`                                              | Pass   |
-| Interrupt cleanup after apply                       | Force-cancel at `20:07:25Z`; destroy step skipped                                             | Pass   |
-| Start separate fresh workflow run                   | Recovery run `34642955772`                                                                    | Pass   |
+| Requirement                                         | Evidence                                                                                                  | Result |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------ |
+| Create temporary verification ALB through Terraform | Run `34642213628`; state serial advanced to `10`                                                          | Pass   |
+| Interrupt cleanup after apply                       | Force-cancel at `20:07:25Z`; destroy step skipped                                                         | Pass   |
+| Start separate fresh workflow run                   | Recovery run `34642955772`                                                                                | Pass   |
 | Fresh runner has no previous filesystem             | Empty pre-checkout workspace; no local Terraform state, plan, or initialized backend cache after checkout | Pass   |
-| Recover existing Terraform resources                | State serial `10`; exact ALB/listener addresses and ARNs recovered                            | Pass   |
-| Destroy orphan from fresh runner                    | Saved plan contained exactly two deletes; apply destroyed both                                | Pass   |
-| Independently verify deletion                       | `LoadBalancerNotFound` and `ListenerNotFound`                                                 | Pass   |
-| Restore Terraform baseline                          | State serial `11`, zero resources                                                             | Pass   |
-| Restore ECS baseline                                | `0 / 0 / 0`, independent running-task list `[]`                                               | Pass   |
-| Reproduce stale/held lock safely                    | Synthetic lock caused S3 `412 PreconditionFailed`, Terraform exit `1`                         | Pass   |
-| Record maximum orphan lifetime                      | Approximately `5m 51s`                                                                        | Pass   |
-| Remove temporary experiment controls                | Workflow instrumentation and branch policy removed                                            | Pass   |
+| Recover existing Terraform resources                | State serial `10`; exact ALB/listener addresses and ARNs recovered                                        | Pass   |
+| Destroy orphan from fresh runner                    | Saved plan contained exactly two deletes; apply destroyed both                                            | Pass   |
+| Independently verify deletion                       | `LoadBalancerNotFound` and `ListenerNotFound`                                                             | Pass   |
+| Restore Terraform baseline                          | State serial `11`, zero resources                                                                         | Pass   |
+| Restore ECS baseline                                | `0 / 0 / 0`, independent running-task list `[]`                                                           | Pass   |
+| Reproduce stale/held lock safely                    | Synthetic lock caused S3 `412 PreconditionFailed`, Terraform exit `1`                                     | Pass   |
+| Record maximum orphan lifetime                      | Approximately `5m 51s`                                                                                    | Pass   |
+| Remove temporary experiment controls                | Workflow instrumentation and branch policy removed                                                        | Pass   |
 
 ## Completion reflection status
 
 The evidence, cleanup, mistake/knowledge-gap notes, next experiment, and focused-time record are complete.
 
-The only pending completion item is the final billed AWS experiment cost. The current Cost Explorer result for `2026-09-11` through `2026-09-12` is still estimated and reports no ELB usage groups, so the issue should not claim a final billed amount yet.
+The completion reflection is now complete.
+
+The final Issue #37 infrastructure experiment cost was `$0.03` for Elastic Load Balancing.
+
+An additional `$0.03` shown under Cost Explorer came from Cost Explorer API requests used during the billing investigation and is recorded separately from the infrastructure experiment cost.
+
+The total additional September 11 cost related to the experiment and its cost investigation was therefore approximately `$0.06`.
 
 ## Focused time
 
