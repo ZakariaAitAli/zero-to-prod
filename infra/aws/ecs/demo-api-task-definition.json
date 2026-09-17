@@ -27,6 +27,14 @@
         "timeout": 3,
         "retries": 3,
         "startPeriod": 3
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/zero-to-prod/development/demo-api",
+          "awslogs-region": "eu-west-3",
+          "awslogs-stream-prefix": "ecs"
+        }
       }
     }
   ]
