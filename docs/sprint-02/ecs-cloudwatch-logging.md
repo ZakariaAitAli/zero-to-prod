@@ -233,8 +233,77 @@ The service itself remained unchanged.
 This proves that the real Fargate `awslogs` path can create a stream and retain
 application stderr/stdout using the least-privilege execution-role policy.
 
-A final deployment-workflow proof remains required after the implementation is
-merged.
+## Post-merge deployment workflow proof
+
+Pull request `#59` was merged to `main` as:
+
+~~~
+26949137bb283b5e382fabbf044a62496bf3b43e
+~~~
+
+GitHub Actions run `#65` completed successfully.
+
+The deployment workflow:
+
+- published the immutable image;
+- rendered the committed ECS task-definition template;
+- created the temporary verification infrastructure;
+- registered a new task definition;
+- deployed one verification task;
+- waited for ECS stability;
+- passed external HTTP verification;
+- scaled the service back to zero;
+- destroyed the temporary verification infrastructure.
+
+The workflow registered:
+
+~~~
+zero-to-prod-demo-api:15
+~~~
+
+with image:
+
+~~~
+333534066371.dkr.ecr.eu-west-3.amazonaws.com/zero-to-prod-demo-api:26949137bb283b5e382fabbf044a62496bf3b43e
+~~~
+
+Revision `15` retained the committed logging configuration:
+
+~~~json
+{
+  "logDriver": "awslogs",
+  "options": {
+    "awslogs-group": "/zero-to-prod/development/demo-api",
+    "awslogs-region": "eu-west-3",
+    "awslogs-stream-prefix": "ecs"
+  }
+}
+~~~
+
+The real deployment created the CloudWatch stream:
+
+~~~
+ecs/demo-api/7cddebd0b2a54cb5a3bb2b07be305067
+~~~
+
+That stream retained the application startup event:
+
+~~~
+2026/09/17 22:33:42 demo-api version=26949137bb283b5e382fabbf044a62496bf3b43e listening on :8080
+~~~
+
+This establishes the complete deployment evidence chain:
+
+~~~
+merged commit
+-> immutable ECR image
+-> task definition :15
+-> GitHub Actions deployment
+-> ECS task
+-> awslogs
+-> CloudWatch application event
+-> cleanup back to ECS 0/0/0
+~~~
 
 ## Failure experiment 1: missing CloudWatch Logs permission
 
@@ -584,17 +653,37 @@ That value is recorded as an observed API field, not treated as a precise
 real-time byte measurement for the individual events.
 
 Expected recurring/usage cost is therefore very small for this development
-environment, but the final billed amount must be checked through the AWS Cost
-Explorer console after billing data has ingested.
+environment.
+
+After billing data had ingested, AWS Cost Explorer was reviewed through the
+console for September 17.
+
+Observed cost:
+
+~~~
+total = $0.03
+~~~
+
+At the displayed precision, the only non-zero service cost was:
+
+~~~
+Elastic Load Balancing = $0.03
+~~~
+
+The bounded ECS, ECR, S3, and logging activity did not appear as additional
+non-zero service charges at the displayed precision.
+
+The `$0.03` therefore reflects the short-lived verification deployment
+infrastructure rather than an ongoing application-logging service cost.
 
 The Cost Explorer API is not used for project cost checks.
 
-## Final AWS state after experiments
+## Final AWS state
 
-Retained ECS service:
+After the post-merge deployment completed, the retained ECS service was:
 
 ~~~
-task definition = zero-to-prod-demo-api:11
+task definition = zero-to-prod-demo-api:15
 desired         = 0
 running         = 0
 pending         = 0
@@ -606,6 +695,12 @@ Running tasks:
 []
 ~~~
 
+The deployed task definition uses image:
+
+~~~
+333534066371.dkr.ecr.eu-west-3.amazonaws.com/zero-to-prod-demo-api:26949137bb283b5e382fabbf044a62496bf3b43e
+~~~
+
 Intentional durable resource:
 
 ~~~
@@ -613,37 +708,39 @@ Intentional durable resource:
 retention = 7 days
 ~~~
 
-Retained streams:
+Retained streams include:
 
 ~~~
 ecs/demo-api/beedb3cc10684833ae1403e5fbf86c18
 ecs/demo-api/8b5177f913ab455bbe78828d5c05ad35
+ecs/demo-api/7cddebd0b2a54cb5a3bb2b07be305067
 ~~~
 
 Temporary experiment IAM roles were deleted.
 
 Temporary failure task-definition revisions `13` and `14` were deregistered.
 
-Revision `12` remains available as the logging-enabled task-definition
-experiment revision.
+Revision `12` remains as the standalone logging experiment revision.
 
-## Acceptance status before merge
+Revision `15` is the successful post-merge deployment revision.
+
+## Final acceptance status
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
-| Task definition uses `awslogs` | Repository template and revision `12` | Pass |
+| Task definition uses `awslogs` | Repository template and deployed revision `15` | Pass |
 | Dedicated log group exists | `/zero-to-prod/development/demo-api` | Pass |
 | Retention explicitly configured | `7` days | Pass |
 | Execution role has only required logging permissions | `CreateLogStream` + `PutLogEvents`, scoped to one group | Pass |
-| Application stdout/stderr reaches CloudWatch | Standalone revision `12` experiment | Pass |
+| Application stdout/stderr reaches CloudWatch | Standalone experiment and post-merge deployment | Pass |
 | Environment/service naming is understandable | group + `ecs/demo-api/<task-id>` streams | Pass |
 | Logging architecture and IAM documented | This document | Pass |
-| Expected recurring/usage cost recorded | Bounded-volume expectation documented | Pass |
+| Expected recurring/usage cost recorded | Bounded retention and volume documented | Pass |
 | Missing logging permission experiment | `AccessDeniedException` | Pass |
 | Incorrect log group experiment | `ResourceNotFoundException` | Pass |
 | Application error before exit | exit `1` plus retained fatal log | Pass |
-| Actual deployment workflow proves committed logging path | Post-merge experiment still required | Pending |
-| Final billed log/runtime cost reviewed in Cost Explorer console | Billing ingestion/review still required | Pending |
+| Actual deployment workflow proves committed logging path | run `#65`, revision `15`, exact SHA retained in CloudWatch | Pass |
+| Final billed log/runtime cost reviewed in Cost Explorer console | September 17 total `$0.03`; only ELB was non-zero at displayed precision | Pass |
 
 ## Next experiment
 
@@ -653,5 +750,11 @@ reports the failed layer without allowing diagnostics to block cleanup.
 
 ## Focused time
 
-To be recorded when Issue #38 implementation and post-merge validation are
-complete.
+Approximately:
+
+~~~
+~1h 25m
+~~~
+
+across implementation, bounded failure experiments, post-merge deployment
+validation, cleanup verification, and final cost review.
