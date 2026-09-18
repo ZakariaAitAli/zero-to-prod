@@ -25,6 +25,7 @@ assert_case() {
 
 docs_expected=$'app=false\nterraform=false\nworkflow=false\ndeploy=false'
 app_expected=$'app=true\nterraform=false\nworkflow=false\ndeploy=true'
+deploy_sensitive_expected=$'app=true\nterraform=true\nworkflow=false\ndeploy=true'
 terraform_expected=$'app=false\nterraform=true\nworkflow=false\ndeploy=false'
 workflow_expected=$'app=true\nterraform=true\nworkflow=true\ndeploy=false'
 
@@ -57,6 +58,11 @@ assert_case \
   "CI required gate policy" \
   "$workflow_expected" \
   scripts/verify-ci-required.sh
+
+assert_case \
+  "deployment diagnostics collector" \
+  "$deploy_sensitive_expected" \
+  scripts/collect-deployment-diagnostics.sh
 
 assert_case \
   "mixed docs + app" \

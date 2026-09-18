@@ -38,7 +38,7 @@ for changed_file in "$@"; do
       workflow=true
       ;;
 
-    infra/aws/ecs/demo-api-task-definition.json|scripts/verify-deployment.sh)
+    infra/aws/ecs/demo-api-task-definition.json|scripts/verify-deployment.sh|scripts/collect-deployment-diagnostics.sh)
       app=true
       terraform=true
       deploy=true

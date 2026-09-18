@@ -17,6 +17,34 @@
       "Resource": "arn:aws:ecs:eu-west-3:333534066371:service/zero-to-prod-dev/demo-api"
     },
     {
+      "Sid": "ListDevelopmentTasksForDiagnostics",
+      "Effect": "Allow",
+      "Action": "ecs:ListTasks",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:eu-west-3:333534066371:cluster/zero-to-prod-dev"
+        }
+      }
+    },
+    {
+      "Sid": "DescribeDevelopmentTasksForDiagnostics",
+      "Effect": "Allow",
+      "Action": "ecs:DescribeTasks",
+      "Resource": "arn:aws:ecs:eu-west-3:333534066371:task/zero-to-prod-dev/*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:eu-west-3:333534066371:cluster/zero-to-prod-dev"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDemoApiLogsForDiagnostics",
+      "Effect": "Allow",
+      "Action": "logs:FilterLogEvents",
+      "Resource": "arn:aws:logs:eu-west-3:333534066371:log-group:/zero-to-prod/development/demo-api"
+    },
+    {
       "Sid": "PassOnlyDemoApiExecutionRole",
       "Effect": "Allow",
       "Action": "iam:PassRole",
