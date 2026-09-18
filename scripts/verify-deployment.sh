@@ -16,6 +16,29 @@ trap 'rm -rf "$tmp_dir"' EXIT
 health_body="${tmp_dir}/health.body"
 version_body="${tmp_dir}/version.body"
 
+diagnostics_file="${VERIFICATION_DIAGNOSTICS_FILE:-}"
+
+record_diagnostic() {
+  [ -n "$diagnostics_file" ] || return 0
+
+  {
+    printf 'stage=%s\n' "$1"
+    printf 'detail=%s\n' "$2"
+  } > "$diagnostics_file"
+}
+
+json_field() {
+  local file="$1"
+  local field="$2"
+
+  jq -r \
+    --arg field "$field" \
+    '.[$field] // "missing"' \
+    "$file" 2>/dev/null \
+    | head -c 512 \
+    || printf 'unparseable'
+}
+
 echo "Checking health endpoint: ${health_url}"
 
 if curl \
@@ -34,6 +57,11 @@ else
   curl_exit=$?
   health_response="$(cat "$health_body" 2>/dev/null || true)"
   printf 'Health response: %s\n' "$health_response"
+
+  record_diagnostic \
+    "health-request" \
+    "curl_exit=${curl_exit}"
+
   echo "::error::Health request failed with curl exit code ${curl_exit}"
   exit "$curl_exit"
 fi
@@ -42,6 +70,10 @@ health_response="$(cat "$health_body")"
 printf 'Health response: %s\n' "$health_response"
 
 if ! jq -e '.status == "healthy"' >/dev/null <<<"$health_response"; then
+  record_diagnostic \
+    "health-content" \
+    "observed_status=$(json_field "$health_body" status)"
+
   echo "::error::Health endpoint did not report status=healthy"
   exit 1
 fi
@@ -66,6 +98,11 @@ else
   curl_exit=$?
   version_response="$(cat "$version_body" 2>/dev/null || true)"
   printf 'Version response: %s\n' "$version_response"
+
+  record_diagnostic \
+    "version-request" \
+    "curl_exit=${curl_exit}"
+
   echo "::error::Version request failed with curl exit code ${curl_exit}"
   exit "$curl_exit"
 fi
@@ -78,6 +115,10 @@ observed_version="$(jq -r '.version // empty' <<<"$version_response")"
 printf 'Observed version:   %s\n' "$observed_version"
 
 if [ "$observed_version" != "$EXPECTED_VERSION" ]; then
+  record_diagnostic \
+    "version-mismatch" \
+    "expected=${EXPECTED_VERSION} observed=${observed_version}"
+
   echo "::error::Expected version ${EXPECTED_VERSION}, observed ${observed_version}"
   exit 1
 fi

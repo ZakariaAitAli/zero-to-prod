@@ -586,6 +586,7 @@ jobs:
             --output json
 
       - name: Wait for ECS service stability
+        id: wait-service-stability
         env:
           ECS_CLUSTER: zero-to-prod-dev
           ECS_SERVICE: demo-api
@@ -599,12 +600,15 @@ jobs:
           echo "ECS service reached a stable state."
 
       - name: Verify deployment over HTTP
+        id: verify-http
         env:
           BASE_URL: ${{ steps.verification-infrastructure.outputs.base_url }}
           EXPECTED_VERSION: ${{ github.sha }}
+          VERIFICATION_DIAGNOSTICS_FILE: ${{ runner.temp }}/deployment-verification-diagnostics.txt
         run: ./scripts/verify-deployment.sh
 
       - name: Verify and report deployment
+        id: verify-deployment
         env:
           ECS_CLUSTER: zero-to-prod-dev
           ECS_SERVICE: demo-api
@@ -635,6 +639,45 @@ jobs:
             echo "- Version: \`${GITHUB_SHA}\`"
             echo "- Task definition: \`${deployed_task_definition}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect failed deployment diagnostics
+        id: deployment-diagnostics
+        if: >-
+          always() &&
+          steps.deploy-verification-task.outcome != 'skipped' &&
+          (
+            steps.deploy-verification-task.outcome == 'failure' ||
+            steps.wait-service-stability.outcome == 'failure' ||
+            steps.verify-http.outcome == 'failure' ||
+            steps.verify-deployment.outcome == 'failure'
+          )
+        continue-on-error: true
+        timeout-minutes: 3
+        env:
+          ECS_CLUSTER: zero-to-prod-dev
+          ECS_SERVICE: demo-api
+          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_TASK_DEFINITION: ${{ steps.register-task-definition.outputs.task_definition_arn }}
+          DEPLOY_OUTCOME: ${{ steps.deploy-verification-task.outcome }}
+          STABILITY_OUTCOME: ${{ steps.wait-service-stability.outcome }}
+          HTTP_OUTCOME: ${{ steps.verify-http.outcome }}
+          REPORT_OUTCOME: ${{ steps.verify-deployment.outcome }}
+          VERIFICATION_DIAGNOSTICS_FILE: ${{ runner.temp }}/deployment-verification-diagnostics.txt
+        run: |
+          failure_stage="unknown"
+
+          if [ "$DEPLOY_OUTCOME" = "failure" ]; then
+            failure_stage="ecs-update-service"
+          elif [ "$STABILITY_OUTCOME" = "failure" ]; then
+            failure_stage="ecs-service-stability"
+          elif [ "$HTTP_OUTCOME" = "failure" ]; then
+            failure_stage="external-http-verification"
+          elif [ "$REPORT_OUTCOME" = "failure" ]; then
+            failure_stage="deployment-state-verification"
+          fi
+
+          FAILURE_STAGE="$failure_stage" \
+            ./scripts/collect-deployment-diagnostics.sh
 
       - name: Stop verification task
         if: always() && steps.deploy-verification-task.outcome != 'skipped'
