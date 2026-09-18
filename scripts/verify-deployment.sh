@@ -33,9 +33,11 @@ json_field() {
 
   jq -r \
     --arg field "$field" \
-    '.[$field] // "missing"' \
+    '(.[$field] // "missing")
+     | tostring
+     | gsub("[\\r\\n\\t]"; " ")
+     | .[0:128]' \
     "$file" 2>/dev/null \
-    | head -c 512 \
     || printf 'unparseable'
 }
 
@@ -55,9 +57,6 @@ if curl \
   :
 else
   curl_exit=$?
-  health_response="$(cat "$health_body" 2>/dev/null || true)"
-  printf 'Health response: %s\n' "$health_response"
-
   record_diagnostic \
     "health-request" \
     "curl_exit=${curl_exit}"
@@ -66,13 +65,13 @@ else
   exit "$curl_exit"
 fi
 
-health_response="$(cat "$health_body")"
-printf 'Health response: %s\n' "$health_response"
+health_status="$(json_field "$health_body" status)"
+printf 'Observed health status: %s\n' "$health_status"
 
-if ! jq -e '.status == "healthy"' >/dev/null <<<"$health_response"; then
+if [ "$health_status" != "healthy" ]; then
   record_diagnostic \
     "health-content" \
-    "observed_status=$(json_field "$health_body" status)"
+    "observed_status=${health_status}"
 
   echo "::error::Health endpoint did not report status=healthy"
   exit 1
@@ -96,9 +95,6 @@ if curl \
   :
 else
   curl_exit=$?
-  version_response="$(cat "$version_body" 2>/dev/null || true)"
-  printf 'Version response: %s\n' "$version_response"
-
   record_diagnostic \
     "version-request" \
     "curl_exit=${curl_exit}"
@@ -107,11 +103,7 @@ else
   exit "$curl_exit"
 fi
 
-version_response="$(cat "$version_body")"
-printf 'Version response: %s\n' "$version_response"
-
-observed_version="$(jq -r '.version // empty' <<<"$version_response")"
-
+observed_version="$(json_field "$version_body" version)"
 printf 'Observed version:   %s\n' "$observed_version"
 
 if [ "$observed_version" != "$EXPECTED_VERSION" ]; then
