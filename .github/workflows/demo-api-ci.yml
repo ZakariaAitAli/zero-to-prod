@@ -373,6 +373,7 @@ jobs:
       - app-validation
       - ci-required
     if: >-
+      always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       needs.changes.outputs.deploy == 'true' &&
@@ -435,7 +436,11 @@ jobs:
   deploy-development:
     name: Deploy to development
     needs: publish-image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.publish-image.result == 'success'
 
     concurrency:
       group: demo-api-development-deployment
