@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +13,8 @@ import (
 //	go build -ldflags="-X main.version=<commit-sha>"
 var version = "dev"
 
+const expectedRuntimeContract = "A"
+
 type statusResponse struct {
 	Status string `json:"status"`
 }
@@ -21,6 +24,12 @@ type versionResponse struct {
 }
 
 func main() {
+	runtimeContract := os.Getenv("RUNTIME_CONTRACT")
+
+	if err := validateRuntimeContract(expectedRuntimeContract, runtimeContract); err != nil {
+		log.Fatalf("invalid runtime configuration: %v", err)
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -33,6 +42,22 @@ func main() {
 	if err := http.ListenAndServe(address, newHandler(version)); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
+}
+
+func validateRuntimeContract(expected, observed string) error {
+	if observed == "" {
+		return fmt.Errorf("RUNTIME_CONTRACT is required; expected %q", expected)
+	}
+
+	if observed != expected {
+		return fmt.Errorf(
+			"RUNTIME_CONTRACT mismatch: expected %q, got %q",
+			expected,
+			observed,
+		)
+	}
+
+	return nil
 }
 
 func newHandler(appVersion string) http.Handler {

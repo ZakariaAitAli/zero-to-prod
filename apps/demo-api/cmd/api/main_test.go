@@ -115,3 +115,45 @@ func TestHealthEndpointRejectsPost(t *testing.T) {
 		)
 	}
 }
+
+func TestValidateRuntimeContract(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected string
+		observed string
+		wantErr  bool
+	}{
+		{
+			name:     "matching contract",
+			expected: "A",
+			observed: "A",
+			wantErr:  false,
+		},
+		{
+			name:     "mismatched contract",
+			expected: "A",
+			observed: "B",
+			wantErr:  true,
+		},
+		{
+			name:     "missing contract",
+			expected: "A",
+			observed: "",
+			wantErr:  true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateRuntimeContract(test.expected, test.observed)
+
+			if test.wantErr && err == nil {
+				t.Fatal("expected runtime contract validation to fail")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Fatalf("expected runtime contract validation to succeed, got: %v", err)
+			}
+		})
+	}
+}
