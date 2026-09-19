@@ -49,8 +49,12 @@ if ! aws s3api get-object \
   --no-cli-pager \
   >/dev/null 2>"$get_error_file"; then
 
+  echo "Rollback eligibility: REJECTED"
+
   if grep -Eq 'NoSuchKey|404|Not Found' "$get_error_file"; then
     echo "::error::No verified deployment record exists for ${TARGET_SHA} in ${TARGET_ENVIRONMENT}"
+  elif grep -Eq 'AccessDenied|403|Forbidden' "$get_error_file"; then
+    echo "::error::Deployment record unavailable or inaccessible for ${TARGET_SHA} in ${TARGET_ENVIRONMENT}"
   else
     echo "::error::Could not retrieve deployment record for ${TARGET_SHA}"
     cat "$get_error_file" >&2

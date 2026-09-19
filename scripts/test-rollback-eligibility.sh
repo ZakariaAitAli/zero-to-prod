@@ -23,6 +23,11 @@ if [ "${MOCK_AWS_MODE:-}" = "missing" ]; then
   exit 254
 fi
 
+if [ "${MOCK_AWS_MODE:-}" = "access-denied" ]; then
+  echo "An error occurred (AccessDenied) when calling the GetObject operation: not authorized to perform: s3:ListBucket" >&2
+  exit 254
+fi
+
 if [ "${1:-}" != "s3api" ] || [ "${2:-}" != "get-object" ]; then
   echo "Unexpected fake AWS invocation: $*" >&2
   exit 99
@@ -175,6 +180,12 @@ run_case \
   1 \
   "No verified deployment record exists" \
   "missing"
+
+run_case \
+  "deployment record inaccessible without ListBucket" \
+  1 \
+  "Deployment record unavailable or inaccessible" \
+  "access-denied"
 
 run_case \
   "malformed deployment record" \
