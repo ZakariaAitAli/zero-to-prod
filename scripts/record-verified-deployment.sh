@@ -9,6 +9,7 @@ required=(
   GIT_SHA
   IMAGE_URI
   IMAGE_DIGEST
+  RUNTIME_CONFIG_DIGEST
   TASK_DEFINITION_ARN
   WORKFLOW_RUN_ID
   VERIFICATION_RESULT_FILE
@@ -28,6 +29,11 @@ fi
 
 if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   echo "::error::IMAGE_DIGEST must be a sha256 digest"
+  exit 1
+fi
+
+if [[ ! "$RUNTIME_CONFIG_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "::error::RUNTIME_CONFIG_DIGEST must be a sha256 digest"
   exit 1
 fi
 
@@ -63,6 +69,7 @@ jq -n \
   --arg git_sha "$GIT_SHA" \
   --arg image_uri "$IMAGE_URI" \
   --arg image_digest "$IMAGE_DIGEST" \
+  --arg runtime_config_digest "$RUNTIME_CONFIG_DIGEST" \
   --arg task_definition_arn "$TASK_DEFINITION_ARN" \
   --arg workflow_run_id "$WORKFLOW_RUN_ID" \
   --arg verified_at "$verified_at" \
@@ -70,12 +77,13 @@ jq -n \
   --arg version_expected "$version_expected" \
   --arg version_observed "$version_observed" \
   '{
-    schema_version: 1,
+    schema_version: 2,
     verification_status: "verified",
     environment: $environment,
     git_sha: $git_sha,
     image_uri: $image_uri,
     image_digest: $image_digest,
+    runtime_config_digest: $runtime_config_digest,
     task_definition_arn: $task_definition_arn,
     workflow_run_id: $workflow_run_id,
     verification_timestamp: $verified_at,
