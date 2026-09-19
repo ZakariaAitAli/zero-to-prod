@@ -30,6 +30,12 @@ func main() {
 		log.Fatalf("invalid runtime configuration: %v", err)
 	}
 
+	log.Printf(
+		"runtime contract verified: expected=%q observed=%q",
+		expectedRuntimeContract,
+		runtimeContract,
+	)
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
