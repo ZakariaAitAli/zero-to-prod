@@ -28,6 +28,7 @@ app_expected=$'app=true\nterraform=false\nworkflow=false\ndeploy=true'
 deploy_sensitive_expected=$'app=true\nterraform=true\nworkflow=false\ndeploy=true'
 terraform_expected=$'app=false\nterraform=true\nworkflow=false\ndeploy=false'
 workflow_expected=$'app=true\nterraform=true\nworkflow=true\ndeploy=false'
+workflow_only_expected=$'app=false\nterraform=false\nworkflow=true\ndeploy=false'
 
 assert_case \
   "docs-only" \
@@ -58,6 +59,16 @@ assert_case \
   "CI required gate policy" \
   "$workflow_expected" \
   scripts/verify-ci-required.sh
+
+assert_case \
+  "rollback eligibility verifier" \
+  "$workflow_only_expected" \
+  scripts/verify-rollback-eligibility.sh
+
+assert_case \
+  "rollback eligibility tests" \
+  "$workflow_only_expected" \
+  scripts/test-rollback-eligibility.sh
 
 assert_case \
   "deployment diagnostics collector" \

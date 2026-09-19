@@ -36,8 +36,8 @@ jobs:
         env:
           TARGET_SHA: ${{ inputs.target_sha }}
         run: |
-          if [[ ! "$TARGET_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
-            echo "::error::target_sha must be a full 40-character Git SHA"
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::target_sha must be a full lowercase 40-character Git SHA"
             exit 1
           fi
 
@@ -51,8 +51,8 @@ jobs:
           TARGET_SHA: ${{ inputs.target_sha }}
         run: |
           echo "Requested rollback SHA: ${TARGET_SHA}"
-          echo "Rollback eligibility is operator-attested from prior successful deployment and external verification evidence."
-          echo "This workflow validates SHA format and ECR image existence; it does not prove that the target succeeded previously."
+          echo "Rollback requires machine-verifiable prior deployment evidence."
+          echo "The target must exist in ECR and have a matching verified deployment record before rollback can proceed."
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
@@ -64,6 +64,7 @@ jobs:
         run: aws sts get-caller-identity
 
       - name: Verify rollback image exists
+        id: verify_rollback_image
         env:
           TARGET_SHA: ${{ inputs.target_sha }}
           ECR_REPOSITORY: zero-to-prod-demo-api
@@ -76,7 +77,8 @@ jobs:
                 image: images[0].imageId,
                 failures: failures
               }' \
-              --output json
+              --output json \
+              --no-cli-pager
           )"
 
           echo "$response"
@@ -88,7 +90,17 @@ jobs:
             exit 1
           fi
 
+          echo "image_digest=${image_digest}" >> "$GITHUB_OUTPUT"
           echo "Rollback image exists with digest: ${image_digest}"
+
+      - name: Verify rollback eligibility
+        env:
+          DEPLOYMENT_RECORD_BUCKET: zero-to-prod-333534066371-eu-west-3-deployment-records
+          TARGET_ENVIRONMENT: development
+          TARGET_SHA: ${{ inputs.target_sha }}
+          EXPECTED_IMAGE_URI: 333534066371.dkr.ecr.eu-west-3.amazonaws.com/zero-to-prod-demo-api:${{ inputs.target_sha }}
+          EXPECTED_IMAGE_DIGEST: ${{ steps.verify_rollback_image.outputs.image_digest }}
+        run: ./scripts/verify-rollback-eligibility.sh
 
       - name: Render rollback task definition
         env:
