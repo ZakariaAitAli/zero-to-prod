@@ -65,6 +65,11 @@ assert_case \
   scripts/collect-deployment-diagnostics.sh
 
 assert_case \
+  "verified deployment recorder" \
+  "$deploy_sensitive_expected" \
+  scripts/record-verified-deployment.sh
+
+assert_case \
   "mixed docs + app" \
   "$app_expected" \
   docs/sprint-02/change-aware-ci.md \

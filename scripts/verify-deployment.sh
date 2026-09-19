@@ -17,6 +17,11 @@ health_body="${tmp_dir}/health.body"
 version_body="${tmp_dir}/version.body"
 
 diagnostics_file="${VERIFICATION_DIAGNOSTICS_FILE:-}"
+result_file="${VERIFICATION_RESULT_FILE:-}"
+
+if [ -n "$result_file" ]; then
+  rm -f "$result_file"
+fi
 
 record_diagnostic() {
   [ -n "$diagnostics_file" ] || return 0
@@ -113,6 +118,30 @@ if [ "$observed_version" != "$EXPECTED_VERSION" ]; then
 
   echo "::error::Expected version ${EXPECTED_VERSION}, observed ${observed_version}"
   exit 1
+fi
+
+if [ -n "$result_file" ]; then
+  verification_timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  result_tmp="${tmp_dir}/verification-result.json"
+
+  jq -n \
+    --arg timestamp "$verification_timestamp" \
+    --arg health "$health_status" \
+    --arg expected "$EXPECTED_VERSION" \
+    --arg observed "$observed_version" \
+    '{
+      verification_timestamp: $timestamp,
+      health: {
+        status: $health
+      },
+      version: {
+        expected: $expected,
+        observed: $observed,
+        matches: ($expected == $observed)
+      }
+    }' > "$result_tmp"
+
+  mv "$result_tmp" "$result_file"
 fi
 
 echo "Version verification passed."

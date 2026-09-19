@@ -279,6 +279,7 @@ jobs:
 
           for terraform_root in \
             infra/terraform/bootstrap/development-verification-state \
+            infra/terraform/bootstrap/deployment-records \
             infra/terraform/development-verification
           do
             echo "Validating ${terraform_root}"
@@ -605,6 +606,7 @@ jobs:
           BASE_URL: ${{ steps.verification-infrastructure.outputs.base_url }}
           EXPECTED_VERSION: ${{ github.sha }}
           VERIFICATION_DIAGNOSTICS_FILE: ${{ runner.temp }}/deployment-verification-diagnostics.txt
+          VERIFICATION_RESULT_FILE: ${{ runner.temp }}/deployment-verification-result.json
         run: ./scripts/verify-deployment.sh
 
       - name: Verify and report deployment
@@ -640,6 +642,47 @@ jobs:
             echo "- Task definition: \`${deployed_task_definition}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Resolve verified image metadata
+        id: verified-image
+        env:
+          ECR_REGISTRY: 333534066371.dkr.ecr.eu-west-3.amazonaws.com
+          ECR_REPOSITORY: zero-to-prod-demo-api
+        run: |
+          image_digest="$(
+            aws ecr batch-get-image \
+              --region eu-west-3 \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-ids "imageTag=${GITHUB_SHA}" \
+              --query 'images[0].imageId.imageDigest' \
+              --output text
+          )"
+
+          if [ -z "$image_digest" ] || [ "$image_digest" = "None" ]; then
+            echo "::error::Could not resolve ECR digest for ${GITHUB_SHA}"
+            exit 1
+          fi
+
+          image_uri="${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+
+          echo "image_uri=${image_uri}" >> "$GITHUB_OUTPUT"
+          echo "image_digest=${image_digest}" >> "$GITHUB_OUTPUT"
+
+          echo "Verified image URI: ${image_uri}"
+          echo "Verified image digest: ${image_digest}"
+
+      - name: Record verified deployment
+        id: record-deployment
+        env:
+          DEPLOYMENT_RECORD_BUCKET: zero-to-prod-333534066371-eu-west-3-deployment-records
+          DEPLOYMENT_ENVIRONMENT: development
+          GIT_SHA: ${{ github.sha }}
+          IMAGE_URI: ${{ steps.verified-image.outputs.image_uri }}
+          IMAGE_DIGEST: ${{ steps.verified-image.outputs.image_digest }}
+          TASK_DEFINITION_ARN: ${{ steps.register-task-definition.outputs.task_definition_arn }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          VERIFICATION_RESULT_FILE: ${{ runner.temp }}/deployment-verification-result.json
+        run: ./scripts/record-verified-deployment.sh
+
       - name: Collect failed deployment diagnostics
         id: deployment-diagnostics
         if: >-
@@ -649,7 +692,9 @@ jobs:
             steps.deploy-verification-task.outcome == 'failure' ||
             steps.wait-service-stability.outcome == 'failure' ||
             steps.verify-http.outcome == 'failure' ||
-            steps.verify-deployment.outcome == 'failure'
+            steps.verify-deployment.outcome == 'failure' ||
+            steps.verified-image.outcome == 'failure' ||
+            steps.record-deployment.outcome == 'failure'
           )
         continue-on-error: true
         timeout-minutes: 3
@@ -662,6 +707,8 @@ jobs:
           STABILITY_OUTCOME: ${{ steps.wait-service-stability.outcome }}
           HTTP_OUTCOME: ${{ steps.verify-http.outcome }}
           REPORT_OUTCOME: ${{ steps.verify-deployment.outcome }}
+          IMAGE_OUTCOME: ${{ steps.verified-image.outcome }}
+          RECORD_OUTCOME: ${{ steps.record-deployment.outcome }}
           VERIFICATION_DIAGNOSTICS_FILE: ${{ runner.temp }}/deployment-verification-diagnostics.txt
         run: |
           failure_stage="unknown"
@@ -674,6 +721,10 @@ jobs:
             failure_stage="external-http-verification"
           elif [ "$REPORT_OUTCOME" = "failure" ]; then
             failure_stage="deployment-state-verification"
+          elif [ "$IMAGE_OUTCOME" = "failure" ]; then
+            failure_stage="verified-image-metadata"
+          elif [ "$RECORD_OUTCOME" = "failure" ]; then
+            failure_stage="deployment-record-write"
           fi
 
           FAILURE_STAGE="$failure_stage" \
