@@ -4,6 +4,22 @@
 
 Issue #40 adds durable deployment evidence to the development delivery path.
 
+> **Schema evolution after Issue #42**
+>
+> The original Issue #40 experiment in this document created deployment-record schema version `1`.
+>
+> The current writer uses schema version `2` and adds:
+>
+> ```text
+> runtime_config_digest
+> ```
+>
+> The digest identifies the ECS task-definition configuration independently of the `demo-api` application image.
+>
+> Current rollback eligibility requires this recorded digest to match the current runtime configuration. Historical schema-v1 records remain valid historical evidence, but they are no longer rollback-eligible because they cannot prove runtime-configuration compatibility.
+>
+> See `docs/sprint-02/runtime-config-rollback-compatibility.md` for the schema-v2 implementation and experiment.
+
 Before this issue, the pipeline could prove a deployment during the workflow run:
 
 ```text
