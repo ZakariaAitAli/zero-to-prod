@@ -4,6 +4,18 @@
 
 Issue #41 replaces operator-attested rollback eligibility with a machine-verifiable decision based on durable deployment evidence.
 
+> **Current-state note after Issue #42**
+>
+> The experiments in this document were originally performed with deployment-record schema version `1`.
+>
+> The current rollback policy uses schema version `2` and additionally requires the historical `runtime_config_digest` to exactly match the digest of the current ECS task-definition configuration.
+>
+> Schema-v1 records are now rejected fail-closed because they contain no runtime-configuration identity.
+>
+> The rollback workflow still does not restore a historical task definition. It restores the historical application image only when the recorded runtime configuration is compatible with the current task-definition template.
+>
+> See `docs/sprint-02/runtime-config-rollback-compatibility.md` for the Issue #42 experiment and current configuration-compatibility contract.
+
 Before this issue, rollback required an operator to identify a revision believed to be known-good.
 
 The workflow verified:

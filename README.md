@@ -57,11 +57,15 @@ verify that the immutable image exists in ECR
     ↓
 retrieve the verified deployment record for the target environment + SHA
     ↓
-require the record to match the environment, SHA, image URI, and current ECR digest
+compute the current runtime-configuration digest
+    ↓
+require schema-v2 evidence matching environment, SHA, image URI, and current ECR digest
+    ↓
+require the historical runtime-config digest to match the current task-definition configuration
     ↓
 require prior successful health + exact-version verification evidence
     ↓
-register a new task-definition revision using that existing image
+register a fresh task-definition revision using the historical image + current compatible configuration
     ↓
 deploy + externally verify /health and exact /version again
     ↓
@@ -70,7 +74,9 @@ return to the same zero-runtime baseline
 
 Pull requests stop after validation. Image publication and development deployment run only for pushes to `main`.
 
-Rollback is workflow-assisted but not automatic. A failed deployment is cleaned up first, and an operator must explicitly dispatch the rollback workflow with the `ROLLBACK` confirmation. The workflow then makes rollback eligibility machine-verifiable: it requires a full SHA, confirms that the immutable ECR image exists, retrieves the durable verified deployment record for the target environment, validates that the record matches the requested SHA and current image digest, and only then allows deployment to proceed. Historical verification evidence establishes rollback eligibility but does not replace fresh post-rollback external `/health` and exact `/version` verification.
+Rollback is workflow-assisted but not automatic. A failed deployment is cleaned up first, and an operator must explicitly dispatch the rollback workflow with the `ROLLBACK` confirmation. The workflow then makes rollback eligibility machine-verifiable: it requires a full SHA, confirms that the immutable ECR image exists, retrieves a schema-v2 durable verified deployment record for the target environment, validates the requested SHA and current image digest, and requires the historical runtime-configuration digest to exactly match the current task-definition configuration before deployment may proceed. Historical verification evidence establishes rollback eligibility but does not replace fresh post-rollback external `/health` and exact `/version` verification.
+
+Rollback does not restore the historical ECS task definition. It registers a fresh revision using the selected historical application image and the current task-definition template, but only when their recorded/current runtime-configuration identities match. Secret values behind unchanged references, database/schema state, and other external dependencies are outside this compatibility digest.
 
 ## Architecture
 
@@ -122,4 +128,4 @@ End-to-end GitHub Actions OIDC access to the S3 backend was established by `main
 
 CI is now change-aware with the stable fail-closed `CI required` merge gate. Development verification also uses native S3 state locking, exact lock-object IAM permissions, and bounded lock waits while retaining GitHub deployment concurrency. `main` rollback workflow run `34280243917` proved the GitHub OIDC role can initialize the locked backend, complete plan/apply/destroy, release every lock, and return the AWS environment to its low-cost baseline.
 
-See [Sprint 02 remote Terraform state evidence](docs/sprint-02/remote-terraform-state.md), [change-aware CI evidence](docs/sprint-02/change-aware-ci.md), [Terraform state locking evidence](docs/sprint-02/terraform-state-locking.md), [machine-verifiable rollback eligibility evidence](docs/sprint-02/rollback-eligibility.md), and [Sprint 01 final reflection](docs/sprint-01/reflection.md).
+See [Sprint 02 remote Terraform state evidence](docs/sprint-02/remote-terraform-state.md), [change-aware CI evidence](docs/sprint-02/change-aware-ci.md), [Terraform state locking evidence](docs/sprint-02/terraform-state-locking.md), [machine-verifiable rollback eligibility evidence](docs/sprint-02/rollback-eligibility.md), [runtime-configuration rollback compatibility evidence](docs/sprint-02/runtime-config-rollback-compatibility.md), and [Sprint 01 final reflection](docs/sprint-01/reflection.md).
