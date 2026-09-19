@@ -319,9 +319,12 @@ jobs:
           bash -n scripts/test-ci-change-classifier.sh
           bash -n scripts/verify-ci-required.sh
           bash -n scripts/test-ci-required-gate.sh
+          bash -n scripts/verify-rollback-eligibility.sh
+          bash -n scripts/test-rollback-eligibility.sh
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
+          ./scripts/test-rollback-eligibility.sh
 
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11

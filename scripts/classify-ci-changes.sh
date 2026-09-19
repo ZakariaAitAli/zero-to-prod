@@ -32,6 +32,10 @@ for changed_file in "$@"; do
       terraform=true
       ;;
 
+    scripts/verify-rollback-eligibility.sh|scripts/test-rollback-eligibility.sh)
+      workflow=true
+      ;;
+
     .github/workflows/*|scripts/classify-ci-changes.sh|scripts/test-ci-change-classifier.sh|scripts/verify-ci-required.sh|scripts/test-ci-required-gate.sh)
       app=true
       terraform=true
