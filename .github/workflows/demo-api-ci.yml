@@ -321,10 +321,13 @@ jobs:
           bash -n scripts/test-ci-required-gate.sh
           bash -n scripts/verify-rollback-eligibility.sh
           bash -n scripts/test-rollback-eligibility.sh
+          bash -n scripts/runtime-config-digest.sh
+          bash -n scripts/test-runtime-config-digest.sh
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
           ./scripts/test-rollback-eligibility.sh
+          ./scripts/test-runtime-config-digest.sh
 
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
@@ -489,6 +492,18 @@ jobs:
             "$template" > "$rendered"
 
           echo "Rendered deployment image: ${image}"
+
+      - name: Resolve runtime configuration identity
+        id: runtime-config
+        env:
+          TASK_DEFINITION_FILE: ${{ runner.temp }}/demo-api-task-definition.json
+        run: |
+          runtime_config_digest="$(
+            ./scripts/runtime-config-digest.sh "$TASK_DEFINITION_FILE"
+          )"
+
+          echo "runtime_config_digest=${runtime_config_digest}" >> "$GITHUB_OUTPUT"
+          echo "Runtime configuration digest: ${runtime_config_digest}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
@@ -686,6 +701,7 @@ jobs:
           GIT_SHA: ${{ github.sha }}
           IMAGE_URI: ${{ steps.verified-image.outputs.image_uri }}
           IMAGE_DIGEST: ${{ steps.verified-image.outputs.image_digest }}
+          RUNTIME_CONFIG_DIGEST: ${{ steps.runtime-config.outputs.runtime_config_digest }}
           TASK_DEFINITION_ARN: ${{ steps.register-task-definition.outputs.task_definition_arn }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
           VERIFICATION_RESULT_FILE: ${{ runner.temp }}/deployment-verification-result.json

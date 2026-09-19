@@ -7,6 +7,7 @@ target_sha="236147faca2751ed69bfa54e463ed5b63281e081"
 target_environment="development"
 image_uri="333534066371.dkr.ecr.eu-west-3.amazonaws.com/zero-to-prod-demo-api:${target_sha}"
 image_digest="sha256:2e704c3ef7aabe82eb4632aa5bae2f3da82a70a5f42a04402c6769187f102d4d"
+runtime_config_digest="sha256:024366f5afead2046b14092e5131b63df2bcd89775f6244845ff41ec7c195991"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -50,14 +51,16 @@ make_record() {
     --arg sha "$target_sha" \
     --arg image_uri "$image_uri" \
     --arg digest "$digest" \
+    --arg runtime_config_digest "$runtime_config_digest" \
     --arg status "$status" \
     '{
-      schema_version: 1,
+      schema_version: 2,
       verification_status: $status,
       environment: $environment,
       git_sha: $sha,
       image_uri: $image_uri,
       image_digest: $digest,
+      runtime_config_digest: $runtime_config_digest,
       task_definition_arn: "arn:aws:ecs:eu-west-3:333534066371:task-definition/zero-to-prod-demo-api:20",
       workflow_run_id: "35454383940",
       verification_timestamp: "2026-09-19T16:21:51Z",
@@ -92,6 +95,7 @@ run_case() {
     TARGET_SHA="$target_sha" \
     EXPECTED_IMAGE_URI="$image_uri" \
     EXPECTED_IMAGE_DIGEST="$image_digest" \
+    EXPECTED_RUNTIME_CONFIG_DIGEST="$runtime_config_digest" \
     "$validator" 2>&1
   )"
   status=$?
@@ -117,6 +121,7 @@ run_case() {
 valid_record="${tmp_dir}/valid.json"
 wrong_environment_record="${tmp_dir}/wrong-environment.json"
 wrong_digest_record="${tmp_dir}/wrong-digest.json"
+wrong_runtime_config_record="${tmp_dir}/wrong-runtime-config.json"
 unverified_record="${tmp_dir}/unverified.json"
 malformed_record="${tmp_dir}/malformed.json"
 wrong_sha_record="${tmp_dir}/wrong-sha.json"
@@ -163,8 +168,11 @@ jq '.version.observed = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     | .version.matches = false' \
   "$valid_record" > "$version_mismatch_record"
 
-jq '.schema_version = 2' \
+jq '.schema_version = 1' \
   "$valid_record" > "$wrong_schema_record"
+
+jq '.runtime_config_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+  "$valid_record" > "$wrong_runtime_config_record"
 
 jq 'del(.verification_timestamp)' \
   "$valid_record" > "$missing_provenance_record"
@@ -209,6 +217,13 @@ run_case \
   "$wrong_digest_record"
 
 run_case \
+  "different runtime configuration" \
+  1 \
+  "Deployment record .runtime_config_digest mismatch" \
+  "record" \
+  "$wrong_runtime_config_record"
+
+run_case \
   "record not verified" \
   1 \
   "Deployment record .verification_status mismatch" \
@@ -244,7 +259,7 @@ run_case \
   "$version_mismatch_record"
 
 run_case \
-  "unsupported schema version" \
+  "legacy schema v1 record" \
   1 \
   "Deployment record .schema_version mismatch" \
   "record" \

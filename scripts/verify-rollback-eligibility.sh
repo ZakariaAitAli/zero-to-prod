@@ -9,6 +9,7 @@ required=(
   TARGET_SHA
   EXPECTED_IMAGE_URI
   EXPECTED_IMAGE_DIGEST
+  EXPECTED_RUNTIME_CONFIG_DIGEST
 )
 
 for name in "${required[@]}"; do
@@ -30,6 +31,11 @@ fi
 
 if [[ ! "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   echo "::error::EXPECTED_IMAGE_DIGEST must be a sha256 digest"
+  exit 1
+fi
+
+if [[ ! "$EXPECTED_RUNTIME_CONFIG_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "::error::EXPECTED_RUNTIME_CONFIG_DIGEST must be a sha256 digest"
   exit 1
 fi
 
@@ -93,12 +99,13 @@ assert_nonempty() {
   fi
 }
 
-assert_equal '.schema_version' '1'
+assert_equal '.schema_version' '2'
 assert_equal '.verification_status' 'verified'
 assert_equal '.environment' "$TARGET_ENVIRONMENT"
 assert_equal '.git_sha' "$TARGET_SHA"
 assert_equal '.image_uri' "$EXPECTED_IMAGE_URI"
 assert_equal '.image_digest' "$EXPECTED_IMAGE_DIGEST"
+assert_equal '.runtime_config_digest' "$EXPECTED_RUNTIME_CONFIG_DIGEST"
 assert_equal '.health.status' 'healthy'
 assert_equal '.version.expected' "$TARGET_SHA"
 assert_equal '.version.observed' "$TARGET_SHA"
@@ -114,5 +121,6 @@ echo "Rollback eligibility: ELIGIBLE"
 echo "Environment: ${TARGET_ENVIRONMENT}"
 echo "Target SHA: ${TARGET_SHA}"
 echo "Image digest: ${EXPECTED_IMAGE_DIGEST}"
+echo "Runtime config digest: ${EXPECTED_RUNTIME_CONFIG_DIGEST}"
 echo "Deployment record: ${record_key}"
 echo "Previously verified at: ${verified_at}"

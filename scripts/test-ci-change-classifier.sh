@@ -71,6 +71,16 @@ assert_case \
   scripts/test-rollback-eligibility.sh
 
 assert_case \
+  "runtime config digest helper" \
+  "$workflow_only_expected" \
+  scripts/runtime-config-digest.sh
+
+assert_case \
+  "runtime config digest tests" \
+  "$workflow_only_expected" \
+  scripts/test-runtime-config-digest.sh
+
+assert_case \
   "deployment diagnostics collector" \
   "$deploy_sensitive_expected" \
   scripts/collect-deployment-diagnostics.sh

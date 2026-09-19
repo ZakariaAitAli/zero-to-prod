@@ -32,7 +32,7 @@ for changed_file in "$@"; do
       terraform=true
       ;;
 
-    scripts/verify-rollback-eligibility.sh|scripts/test-rollback-eligibility.sh)
+    scripts/verify-rollback-eligibility.sh|scripts/test-rollback-eligibility.sh|scripts/runtime-config-digest.sh|scripts/test-runtime-config-digest.sh)
       workflow=true
       ;;
 
