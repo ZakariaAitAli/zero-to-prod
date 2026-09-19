@@ -39,7 +39,7 @@
       "environment": [
         {
           "name": "RUNTIME_CONTRACT",
-          "value": "A"
+          "value": "B"
         }
       ]
     }

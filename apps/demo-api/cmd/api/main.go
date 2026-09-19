@@ -13,7 +13,7 @@ import (
 //	go build -ldflags="-X main.version=<commit-sha>"
 var version = "dev"
 
-const expectedRuntimeContract = "A"
+const expectedRuntimeContract = "B"
 
 type statusResponse struct {
 	Status string `json:"status"`
