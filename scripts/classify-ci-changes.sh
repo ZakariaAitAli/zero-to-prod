@@ -32,7 +32,7 @@ for changed_file in "$@"; do
       terraform=true
       ;;
 
-    scripts/verify-rollback-eligibility.sh|scripts/test-rollback-eligibility.sh|scripts/runtime-config-digest.sh|scripts/test-runtime-config-digest.sh)
+    scripts/verify-rollback-eligibility.sh|scripts/test-rollback-eligibility.sh|scripts/runtime-config-digest.sh|scripts/test-runtime-config-digest.sh|tools/demo-api-local)
       workflow=true
       ;;
 
@@ -45,6 +45,7 @@ for changed_file in "$@"; do
     infra/aws/ecs/demo-api-task-definition.json|scripts/verify-deployment.sh|scripts/collect-deployment-diagnostics.sh|scripts/record-verified-deployment.sh)
       app=true
       terraform=true
+      workflow=true
       deploy=true
       ;;
 

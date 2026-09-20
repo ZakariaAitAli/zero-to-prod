@@ -323,11 +323,39 @@ jobs:
           bash -n scripts/test-rollback-eligibility.sh
           bash -n scripts/runtime-config-digest.sh
           bash -n scripts/test-runtime-config-digest.sh
+          bash -n scripts/verify-deployment.sh
+          bash -n scripts/collect-deployment-diagnostics.sh
+          bash -n scripts/record-verified-deployment.sh
+          bash -n tools/demo-api-local
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
           ./scripts/test-rollback-eligibility.sh
           ./scripts/test-runtime-config-digest.sh
+
+      - name: Validate ECS task definition template
+        run: |
+          set -euo pipefail
+
+          task_definition="infra/aws/ecs/demo-api-task-definition.json"
+
+          jq --exit-status '
+            .family == "zero-to-prod-demo-api"
+            and .networkMode == "awsvpc"
+            and ((.requiresCompatibilities | index("FARGATE")) != null)
+            and (
+              [
+                .containerDefinitions[]
+                | select(
+                    .name == "demo-api"
+                    and .image == "IMAGE_URI_TO_BE_RENDERED"
+                  )
+              ]
+              | length == 1
+            )
+          ' "$task_definition" >/dev/null
+
+          echo "ECS task-definition template structure is valid."
 
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
