@@ -1,8 +1,18 @@
 # Zero-to-Prod Platform
 
-Zero-to-Prod is a development-only learning platform for building and testing deployment, recovery, observability, rollback, and cost-control patterns on AWS.
+Zero-to-Prod is an evidence-driven DevOps and Cloud Engineering laboratory for learning how to design, build, secure, deploy, observe, operate, compare, recover, and evolve real software systems across local, open-source, and multi-cloud environments.
 
-The project currently includes two completed capability layers:
+The project is technology- and provider-neutral. AWS is currently the deepest implemented cloud environment, but it is an implementation context rather than the permanent project boundary.
+
+Zero-to-Prod develops production-oriented reference implementations and deliberately does **not** claim production readiness without evidence.
+
+The long-term mission, engineering principles, learning model, environment strategy, and capability roadmap are defined in the:
+
+[Zero-to-Prod v2 rebaseline specification](docs/rebaseline/zero-to-prod-v2-specification.md)
+
+## Current implemented baseline
+
+The repository currently contains two completed, evidence-backed capability layers centered on a small Go API and an AWS ECS Fargate development environment:
 
 ```text
 Sprint 01
@@ -13,16 +23,36 @@ recoverable Terraform state + diagnostics + verified release evidence
 + machine-verifiable rollback eligibility + runtime-config compatibility
 ```
 
-The AWS sandbox is:
+The AWS sandbox used for those experiments is:
 
 ```text
 account = 333534066371
 region  = eu-west-3
 ```
 
-The project deliberately does **not** claim production readiness.
+These sprints remain the historical implementation baseline. They do not define the permanent technology or provider scope of Zero-to-Prod v2.
 
-## Current capability — Sprint 02
+## Zero-to-Prod v2 direction
+
+Future work starts from engineering problems and capabilities rather than from a predetermined tool or cloud provider.
+
+The project will progressively expand across local environments, open-source systems, and real cloud providers where provider-specific behavior is part of the learning objective. Technologies such as AWS, Azure, GCP, Kubernetes, Terraform, databases, messaging systems, and observability platforms are implementation options to evaluate rather than default answers.
+
+Future work follows these principles:
+
+```text
+problem before technology
+concept before provider
+alternatives before decisions
+evidence before claims
+failure as part of design
+measure before optimizing
+local-first where behavior is portable
+real providers where provider semantics matter
+L5 breadth with selected L6 operational depth
+```
+
+## Implemented capability — Sprint 02
 
 Sprint 02 focuses on:
 
@@ -339,7 +369,7 @@ Its documentation remains as the historical foundation for Sprint 02:
 
 ## Known limitations
 
-Zero-to-Prod remains a development learning environment.
+The currently implemented Sprint 01 and Sprint 02 baseline remains a development learning environment.
 
 Current known limitations include:
 
@@ -360,4 +390,4 @@ no external API compatibility guarantee
 no recovery guarantee for every possible Terraform/state failure
 ```
 
-The next compatibility boundary is mutable external state that can change while both the immutable image identity and `runtime_config_digest` remain unchanged.
+These limitations describe the currently implemented Sprint 01 and Sprint 02 baseline. They do not define the long-term scope or the next experiment. Future work is selected according to the Zero-to-Prod v2 rebaseline specification and its capability, learning, evidence, and technology-selection principles.
