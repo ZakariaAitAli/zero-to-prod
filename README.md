@@ -52,6 +52,23 @@ real providers where provider semantics matter
 L5 breadth with selected L6 operational depth
 ```
 
+## Local development
+
+The existing demo API has a cloud-independent native development workflow for fast local feedback.
+
+From the repository root:
+
+```text
+./tools/demo-api-local test
+./tools/demo-api-local build
+./tools/demo-api-local run
+./tools/demo-api-local verify
+```
+
+The workflow requires no AWS credentials or cloud infrastructure.
+
+See the [local demo API development guide](docs/guides/local-demo-api.md) for prerequisites, configuration overrides, verification behavior, and environment boundaries.
+
 ## Implemented capability — Sprint 02
 
 Sprint 02 focuses on:
