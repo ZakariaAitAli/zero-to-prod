@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestStatusEndpoints(t *testing.T) {
@@ -155,5 +158,109 @@ func TestValidateRuntimeContract(t *testing.T) {
 				t.Fatalf("expected runtime contract validation to succeed, got: %v", err)
 			}
 		})
+	}
+}
+
+func TestHTTPServerConfiguration(t *testing.T) {
+	server := newHTTPServer(
+		"127.0.0.1:18081",
+		newHandler("test-version"),
+	)
+
+	if server.Addr != "127.0.0.1:18081" {
+		t.Errorf(
+			"expected address %q, got %q",
+			"127.0.0.1:18081",
+			server.Addr,
+		)
+	}
+
+	if server.Handler == nil {
+		t.Fatal("expected HTTP handler to be configured")
+	}
+
+	tests := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{
+			name: "read header timeout",
+			got:  server.ReadHeaderTimeout,
+			want: readHeaderTimeout,
+		},
+		{
+			name: "read timeout",
+			got:  server.ReadTimeout,
+			want: readTimeout,
+		},
+		{
+			name: "write timeout",
+			got:  server.WriteTimeout,
+			want: writeTimeout,
+		},
+		{
+			name: "idle timeout",
+			got:  server.IdleTimeout,
+			want: idleTimeout,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.got != test.want {
+				t.Errorf(
+					"expected %s %s, got %s",
+					test.name,
+					test.want,
+					test.got,
+				)
+			}
+		})
+	}
+}
+
+func TestRunHTTPServerGracefulShutdown(t *testing.T) {
+	shutdownContext, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	server := newHTTPServer(
+		"127.0.0.1:0",
+		newHandler("test-version"),
+	)
+
+	if err := runHTTPServer(
+		shutdownContext,
+		server,
+		time.Second,
+	); err != nil {
+		t.Fatalf(
+			"expected graceful shutdown to succeed, got: %v",
+			err,
+		)
+	}
+}
+
+func TestRunHTTPServerReturnsUnexpectedListenError(t *testing.T) {
+	server := newHTTPServer(
+		"127.0.0.1:99999",
+		newHandler("test-version"),
+	)
+
+	err := runHTTPServer(
+		context.Background(),
+		server,
+		time.Second,
+	)
+
+	if err == nil {
+		t.Fatal("expected invalid listen address to fail")
+	}
+
+	if !strings.Contains(err.Error(), "serve HTTP") {
+		t.Fatalf(
+			"expected server error to identify HTTP serving failure, got: %v",
+			err,
+		)
 	}
 }
