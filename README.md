@@ -1,131 +1,363 @@
 # Zero-to-Prod Platform
 
-## Sprint 01
+Zero-to-Prod is a development-only learning platform for building and testing deployment, recovery, observability, rollback, and cost-control patterns on AWS.
 
-Sprint 01 proves a complete development delivery path for a small containerized service.
-
-Given a tested commit on `main`, GitHub Actions can build one Docker image, identify it with the full Git commit SHA, publish that immutable artifact to Amazon ECR, deploy it to Amazon ECS Fargate using GitHub OIDC authentication, verify the running application externally, and perform an operator-assisted rollback to a previously verified immutable image when necessary.
-
-The deployment uses a temporary internet-facing Application Load Balancer only for external verification. After deployment or rollback verification, the ECS service is scaled back to zero and the temporary load balancer is destroyed.
-
-The sandbox environment is development-only in AWS account `333534066371`, region `eu-west-3`.
-
-## Deployment flow
+The project currently includes two completed capability layers:
 
 ```text
-Pull request
-    ↓
-format + vet + tests + Docker build validation
-    ↓
-merge / push to main
-    ↓
-build Docker image once as zero-to-prod-demo-api:<full Git SHA>
-    ↓
-export and transfer the exact image artifact
-    ↓
-GitHub OIDC → temporary AWS credentials
-    ↓
-push SHA-tagged image to immutable Amazon ECR
-    ↓
-GitHub OIDC → temporary AWS credentials
-    ↓
-create temporary verification ALB + listener
-    ↓
-render and register ECS task definition with the exact ECR image
-    ↓
-scale demo-api from 0 → 1
-    ↓
-wait for ECS service stability
-    ↓
-external /health + exact /version verification
-    ↓
-success or verification failure
-    ↓
-scale demo-api from 1 → 0
-    ↓
-destroy temporary verification ALB
+Sprint 01
+tested immutable deployment + external verification + manual rollback
 
-On failure, rollback is an explicit operator action:
-
-manual rollback dispatch
-    ↓
-operator supplies a full SHA + explicit ROLLBACK confirmation
-    ↓
-validate the full target SHA
-    ↓
-verify that the immutable image exists in ECR
-    ↓
-retrieve the verified deployment record for the target environment + SHA
-    ↓
-compute the current runtime-configuration digest
-    ↓
-require schema-v2 evidence matching environment, SHA, image URI, and current ECR digest
-    ↓
-require the historical runtime-config digest to match the current task-definition configuration
-    ↓
-require prior successful health + exact-version verification evidence
-    ↓
-register a fresh task-definition revision using the historical image + current compatible configuration
-    ↓
-deploy + externally verify /health and exact /version again
-    ↓
-return to the same zero-runtime baseline
+Sprint 02
+recoverable Terraform state + diagnostics + verified release evidence
++ machine-verifiable rollback eligibility + runtime-config compatibility
 ```
 
-Pull requests stop after validation. Image publication and development deployment run only for pushes to `main`.
+The AWS sandbox is:
 
-Rollback is workflow-assisted but not automatic. A failed deployment is cleaned up first, and an operator must explicitly dispatch the rollback workflow with the `ROLLBACK` confirmation. The workflow then makes rollback eligibility machine-verifiable: it requires a full SHA, confirms that the immutable ECR image exists, retrieves a schema-v2 durable verified deployment record for the target environment, validates the requested SHA and current image digest, and requires the historical runtime-configuration digest to exactly match the current task-definition configuration before deployment may proceed. Historical verification evidence establishes rollback eligibility but does not replace fresh post-rollback external `/health` and exact `/version` verification.
+```text
+account = 333534066371
+region  = eu-west-3
+```
 
-Rollback does not restore the historical ECS task definition. It registers a fresh revision using the selected historical application image and the current task-definition template, but only when their recorded/current runtime-configuration identities match. Secret values behind unchanged references, database/schema state, and other external dependencies are outside this compatibility digest.
+The project deliberately does **not** claim production readiness.
 
-## Architecture
+## Current capability — Sprint 02
 
-The Sprint 01 architecture separates artifact delivery, AWS authentication, runtime deployment, external verification, rollback, and cleanup.
+Sprint 02 focuses on:
 
-See [Sprint 01 architecture](docs/sprint-01/architecture.md) for the maintained Mermaid diagram and system boundaries.
+> Recoverable, Observable, and Cost-Controlled Deployments
 
-## Security
+Given a tested change on `main`, the current development path can:
 
-Sprint 01 uses GitHub OIDC instead of stored AWS keys, immutable SHA-tagged images, constrained IAM policies, guarded deployment and rollback workflows, pinned Action dependencies, and temporary verification ingress.
+```text
+classify the change
+    ↓
+run only required validation
+    ↓
+build the application artifact once
+    ↓
+publish an immutable full-SHA image to Amazon ECR
+    ↓
+initialize durable remote Terraform state
+    ↓
+create temporary verification infrastructure
+    ↓
+deploy to Amazon ECS Fargate
+    ↓
+wait for ECS stability
+    ↓
+externally verify /health
+    ↓
+externally verify exact /version
+    ↓
+persist verified deployment evidence
+    ↓
+scale ECS back to zero
+    ↓
+destroy temporary verification infrastructure
+```
 
-See [Sprint 01 security decisions](docs/sprint-01/security-decisions.md) for the verified controls, IAM boundaries, and known limitations.
+If deployment fails while the runner remains available, bounded diagnostics correlate ECS state, stopped-task/container metadata, CloudWatch application logs, and external-verifier evidence before cleanup.
 
-## Operations and failure recovery
+If cleanup never executes, a fresh runner can initialize the same remote Terraform backend, recover the Terraform-owned temporary resources, review an exact saved destroy plan, and remove only the expected resources.
 
-Common authentication, authorization, ECS, verification, rollback, and cleanup failures are documented with evidence-backed checks and recovery guidance.
+## Rollback model
 
-See [Sprint 01 operations runbook](docs/sprint-01/runbook.md).
+Rollback remains an explicit operator action through:
 
-## Demonstration
+```text
+Demo API Rollback
+```
 
-Sprint 01 includes a reproducible written demonstration covering normal deployment, a controlled wrong-version failure, cleanup, manual rollback to an existing immutable image, external rollback verification, measured recovery time, and restoration of the normal pipeline.
+The operator supplies:
 
-See [Sprint 01 reproducible demonstration](docs/sprint-01/demonstration.md).
+```text
+full target Git SHA
++
+explicit ROLLBACK confirmation
+```
 
-## Sprint 01 evidence
+Before runtime mutation, the workflow requires machine-verifiable evidence that the target is eligible.
 
-The final Sprint 01 reflection records the delivered capability, mistakes and corrections, knowledge gaps, known limitations, focused time, and next experiment.
+Current rollback eligibility requires:
 
-See [Sprint 01 final reflection](docs/sprint-01/reflection.md).
+```text
+target environment
++
+immutable ECR image
++
+schema-v2 verified deployment record
++
+matching image digest
++
+matching runtime_config_digest
++
+successful historical health verification
++
+successful historical exact-version verification
+```
+
+Only then can the workflow:
+
+```text
+register a fresh task-definition revision
+    ↓
+deploy the historical image
+    ↓
+wait for ECS stability
+    ↓
+freshly verify /health
+    ↓
+freshly verify exact /version
+    ↓
+return to the zero-runtime baseline
+```
+
+Historical verification authorizes a rollback attempt. It does not replace fresh post-rollback verification.
+
+## Release identity
+
+Sprint 02 demonstrated that an immutable image alone is not a complete rollback-safe release.
+
+The tested release/rollback identity is:
+
+```text
+environment
++
+immutable image digest
++
+runtime configuration digest
+```
+
+The runtime configuration digest represents the ECS task-definition registration document except for the application image.
+
+Rollback does not restore the historical ECS task definition. It uses the selected historical image with the current task-definition configuration only when the historical and current runtime-configuration identities match.
+
+The digest does not prove compatibility for mutable external state such as:
+
+```text
+secret values behind unchanged references
+database contents or schema
+external API contracts
+mutable external service configuration
+```
+
+Those remain explicit limitations and future experiment boundaries.
+
+## Recovery model
+
+Terraform state for development verification is stored in versioned Amazon S3 and uses native S3 locking.
+
+A tested hard-interruption recovery followed:
+
+```text
+runner A creates temporary ALB/listener
+    ↓
+runner A is force-cancelled before cleanup
+    ↓
+durable S3 Terraform state remains
+    ↓
+fresh runner B starts with no local Terraform state
+    ↓
+terraform init reconnects to remote state
+    ↓
+saved destroy plan is generated
+    ↓
+destructive changes are allowlisted
+    ↓
+only ALB + listener are destroyed
+    ↓
+AWS independently confirms both are absent
+```
+
+The recovery design does not disable Terraform locking.
+
+## Observability
+
+Application stdout/stderr is sent to:
+
+```text
+/zero-to-prod/development/demo-api
+```
+
+with:
+
+```text
+CloudWatch Logs retention = 7 days
+```
+
+Failed-deployment diagnostics correlate evidence from multiple layers.
+
+| Failure                        | Primary evidence                |
+| ------------------------------ | ------------------------------- |
+| Application startup exit       | stopped-task/container metadata |
+| Container-health failure       | ECS events + task health        |
+| Service stabilization failure  | ECS service events              |
+| External `/health` failure     | verifier evidence               |
+| Exact `/version` mismatch      | verifier evidence               |
+| Historical application context | CloudWatch Logs                 |
+
+Diagnostics are bounded and best-effort so they do not prevent cleanup.
+
+## Security and IAM
+
+GitHub Actions uses OIDC-issued temporary AWS credentials instead of long-lived AWS access keys.
+
+The design favors narrow permissions and fail-closed behavior.
+
+Examples tested during Sprint 02 include:
+
+```text
+exact Terraform state/lock access
+deterministic deployment-record object access
+no requirement for broad S3 ListBucket just to test record existence
+rollback rejection when required evidence is inaccessible
+no IAM expansion merely to make a secondary evidence assertion pass
+```
+
+Immutable SHA-tagged ECR images, guarded rollback inputs, pinned GitHub Actions dependencies, deployment concurrency, Terraform locking, and temporary verification ingress remain part of the security boundary.
+
+Sprint 01 security details:
+
+[Sprint 01 security decisions](docs/sprint-01/security-decisions.md)
+
+Sprint 02 security/IAM decisions and lessons:
+
+[Sprint 02 architecture](docs/sprint-02/architecture.md)
+
+[Sprint 02 reflection](docs/sprint-02/reflection.md)
+
+## Cost controls
+
+The Sprint 02 personal AWS guardrails are:
+
+```text
+target Sprint 02 AWS cost <= $3
+hard personal ceiling       $5
+existing AWS Budget         $20/month
+```
+
+The Issue #44 Cost Explorer console snapshot showed approximately:
+
+```text
+September MTD = $0.54
+```
+
+The largest visible cost driver was Elastic Load Balancing from temporary verification-ALB experiments.
+
+No intentionally always-on compute or load balancer was added.
+
+Current storage controls include:
+
+```text
+CloudWatch Logs retention = 7 days
+ECR tags = immutable full SHA
+Terraform state = versioned S3
+deployment records = versioned S3
+```
+
+No blind age- or count-based ECR lifecycle rule is enabled because such a rule cannot determine whether an image is still required by retained rollback evidence.
+
+Image cleanup must first protect:
+
+```text
+current ECS image
++
+images required by retained rollback evidence
+```
+
+## Normal resting state
+
+The intended development baseline is:
+
+```text
+ECS desired = 0
+ECS running = 0
+ECS pending = 0
+running ECS tasks = none
+temporary verification ALB = absent
+temporary Terraform managed resources = none
+```
+
+Issue #44 independently verified this baseline after the Sprint 02 experiments.
+
+The retained target group is intentional baseline infrastructure and is not owned by the temporary verification Terraform state.
+
+## Sprint 02 documentation
+
+Architecture and system boundaries:
+
+[Sprint 02 architecture](docs/sprint-02/architecture.md)
+
+Operational deployment, recovery, rollback, and cleanup procedures:
+
+[Sprint 02 operations runbook](docs/sprint-02/runbook.md)
+
+Integrated evidence chain for the final Sprint 02 capability:
+
+[Sprint 02 reproducible demonstration](docs/sprint-02/demonstration.md)
+
+Mistakes, corrections, cost decisions, knowledge gaps, focused time, and next experiment:
+
+[Sprint 02 reflection](docs/sprint-02/reflection.md)
+
+Focused experiment evidence:
+
+* [Target capability and failure model](docs/sprint-02/target-capability.md)
+* [Remote Terraform state](docs/sprint-02/remote-terraform-state.md)
+* [Change-aware CI](docs/sprint-02/change-aware-ci.md)
+* [Terraform state locking](docs/sprint-02/terraform-state-locking.md)
+* [Fresh-runner recovery](docs/sprint-02/fresh-runner-recovery.md)
+* [ECS CloudWatch logging](docs/sprint-02/ecs-cloudwatch-logging.md)
+* [Failed-deployment diagnostics](docs/sprint-02/failed-deployment-diagnostics.md)
+* [Verified deployment records](docs/sprint-02/verified-deployment-records.md)
+* [Rollback eligibility](docs/sprint-02/rollback-eligibility.md)
+* [Runtime-configuration rollback compatibility](docs/sprint-02/runtime-config-rollback-compatibility.md)
+
+## Sprint 01 foundation
+
+Sprint 01 established the original development delivery path:
+
+```text
+test
+→ build immutable artifact
+→ publish to ECR
+→ deploy to ECS Fargate
+→ externally verify
+→ clean up
+→ operator-assisted rollback
+```
+
+Its documentation remains as the historical foundation for Sprint 02:
+
+* [Sprint 01 architecture](docs/sprint-01/architecture.md)
+* [Sprint 01 security decisions](docs/sprint-01/security-decisions.md)
+* [Sprint 01 operations runbook](docs/sprint-01/runbook.md)
+* [Sprint 01 reproducible demonstration](docs/sprint-01/demonstration.md)
+* [Sprint 01 final reflection](docs/sprint-01/reflection.md)
 
 ## Known limitations
 
-Sprint 01 intentionally remains development-only.
+Zero-to-Prod remains a development learning environment.
 
-Current limitations include:
+Current known limitations include:
 
 ```text
-no tested hard-interruption recovery from remote Terraform state
-manual rollback rather than automatic rollback
-operator confirmation rather than independent approval
+no production-readiness claim
+no automatic rollback
+no zero-downtime deployment guarantee
+operator-triggered rollback
 temporary public HTTP verification ingress
-desired count returns to 0 after verification
+desired ECS count returns to zero after verification
+no multi-account promotion
+no multi-region recovery
+no EKS/Kubernetes or GitOps deployment model
+no full historical task-definition restoration
+no secret-value rollback
+no database/schema rollback
+no external API compatibility guarantee
+no recovery guarantee for every possible Terraform/state failure
 ```
 
-Sprint 02 has moved development verification state to a durable, versioned S3 backend and proved normal recovery from a separate fresh Terraform execution.
-
-End-to-end GitHub Actions OIDC access to the S3 backend was established by `main` workflow run `33983112817`, which successfully initialized, planned, applied, verified, and destroyed the development verification infrastructure through remote state.
-
-CI is now change-aware with the stable fail-closed `CI required` merge gate. Development verification also uses native S3 state locking, exact lock-object IAM permissions, and bounded lock waits while retaining GitHub deployment concurrency. `main` rollback workflow run `34280243917` proved the GitHub OIDC role can initialize the locked backend, complete plan/apply/destroy, release every lock, and return the AWS environment to its low-cost baseline.
-
-See [Sprint 02 remote Terraform state evidence](docs/sprint-02/remote-terraform-state.md), [change-aware CI evidence](docs/sprint-02/change-aware-ci.md), [Terraform state locking evidence](docs/sprint-02/terraform-state-locking.md), [machine-verifiable rollback eligibility evidence](docs/sprint-02/rollback-eligibility.md), [runtime-configuration rollback compatibility evidence](docs/sprint-02/runtime-config-rollback-compatibility.md), and [Sprint 01 final reflection](docs/sprint-01/reflection.md).
+The next compatibility boundary is mutable external state that can change while both the immutable image identity and `runtime_config_digest` remain unchanged.
