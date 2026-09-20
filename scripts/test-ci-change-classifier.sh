@@ -25,7 +25,7 @@ assert_case() {
 
 docs_expected=$'app=false\nterraform=false\nworkflow=false\ndeploy=false'
 app_expected=$'app=true\nterraform=false\nworkflow=false\ndeploy=true'
-deploy_sensitive_expected=$'app=true\nterraform=true\nworkflow=false\ndeploy=true'
+deploy_sensitive_expected=$'app=true\nterraform=true\nworkflow=true\ndeploy=true'
 terraform_expected=$'app=false\nterraform=true\nworkflow=false\ndeploy=false'
 workflow_expected=$'app=true\nterraform=true\nworkflow=true\ndeploy=false'
 workflow_only_expected=$'app=false\nterraform=false\nworkflow=true\ndeploy=false'
@@ -81,6 +81,11 @@ assert_case \
   scripts/test-runtime-config-digest.sh
 
 assert_case \
+  "deployment verifier" \
+  "$deploy_sensitive_expected" \
+  scripts/verify-deployment.sh
+
+assert_case \
   "deployment diagnostics collector" \
   "$deploy_sensitive_expected" \
   scripts/collect-deployment-diagnostics.sh
@@ -91,10 +96,25 @@ assert_case \
   scripts/record-verified-deployment.sh
 
 assert_case \
+  "ECS task definition" \
+  "$deploy_sensitive_expected" \
+  infra/aws/ecs/demo-api-task-definition.json
+
+assert_case \
+  "local developer tooling" \
+  "$workflow_only_expected" \
+  tools/demo-api-local
+
+assert_case \
+  "unknown path remains conservative" \
+  "$workflow_expected" \
+  some/future/unclassified-file.txt
+
+assert_case \
   "mixed docs + app" \
   "$app_expected" \
   docs/sprint-02/change-aware-ci.md \
   apps/demo-api/cmd/api/main.go
 
 echo
-echo "All Issue #43 path-classification experiments passed."
+echo "All CI path-classification experiments passed."
