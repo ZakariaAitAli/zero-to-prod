@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
 // version is replaced at build time using:
@@ -13,7 +18,15 @@ import (
 //	go build -ldflags="-X main.version=<commit-sha>"
 var version = "dev"
 
-const expectedRuntimeContract = "B"
+const (
+	expectedRuntimeContract = "B"
+
+	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 10 * time.Second
+	writeTimeout      = 10 * time.Second
+	idleTimeout       = 60 * time.Second
+	shutdownTimeout   = 10 * time.Second
+)
 
 type statusResponse struct {
 	Status string `json:"status"`
@@ -42,11 +55,74 @@ func main() {
 	}
 
 	address := ":" + port
+	server := newHTTPServer(address, newHandler(version))
+
+	shutdownContext, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
 
 	log.Printf("demo-api version=%s listening on %s", version, address)
 
-	if err := http.ListenAndServe(address, newHandler(version)); err != nil {
+	if err := runHTTPServer(shutdownContext, server, shutdownTimeout); err != nil {
 		log.Fatalf("server stopped: %v", err)
+	}
+}
+
+func newHTTPServer(address string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+	}
+}
+
+func runHTTPServer(
+	shutdownContext context.Context,
+	server *http.Server,
+	gracePeriod time.Duration,
+) error {
+	serverErrors := make(chan error, 1)
+
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErrors:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+
+		return fmt.Errorf("serve HTTP: %w", err)
+
+	case <-shutdownContext.Done():
+		log.Printf("shutdown requested")
+
+		gracefulContext, cancel := context.WithTimeout(
+			context.Background(),
+			gracePeriod,
+		)
+		defer cancel()
+
+		if err := server.Shutdown(gracefulContext); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+
+		err := <-serverErrors
+
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("serve HTTP after shutdown: %w", err)
+		}
+
+		log.Printf("graceful shutdown complete")
+
+		return nil
 	}
 }
 
