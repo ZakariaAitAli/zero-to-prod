@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd
+)"
+
+ROOT_DIR="$(
+  cd -- "${SCRIPT_DIR}/.."
+  pwd
+)"
+
+APP_DIR="${ROOT_DIR}/apps/demo-api"
+
+VERSION="${VERSION:-local}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-${VERSION}}"
+PORT="${PORT:-8080}"
+RUNTIME_CONTRACT="${RUNTIME_CONTRACT:-B}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:${PORT}}"
+BINARY="${DEMO_API_BINARY:-${TMPDIR:-/tmp}/zero-to-prod-demo-api}"
+
+usage() {
+  cat <<EOF_USAGE
+Usage:
+  ./tools/demo-api-local test
+  ./tools/demo-api-local build
+  ./tools/demo-api-local run
+  ./tools/demo-api-local verify
+
+Environment overrides:
+  VERSION=<version>              build/run version (default: local)
+  EXPECTED_VERSION=<version>     version expected by verify
+  PORT=<port>                    local API port (default: 8080)
+  RUNTIME_CONTRACT=<contract>    runtime contract (default: B)
+  BASE_URL=<url>                 verification base URL
+  DEMO_API_BINARY=<path>         native binary output path
+EOF_USAGE
+}
+
+require_command() {
+  local command_name="$1"
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "error: required command not found: ${command_name}" >&2
+    exit 1
+  fi
+}
+
+test_app() {
+  require_command go
+
+  echo "Running demo-api tests..."
+
+  (
+    cd "$APP_DIR"
+    go test ./... -count=1
+  )
+}
+
+build_app() {
+  require_command go
+
+  mkdir -p "$(dirname "$BINARY")"
+
+  echo "Building demo-api..."
+  echo "Version: ${VERSION}"
+  echo "Output:  ${BINARY}"
+
+  (
+    cd "$APP_DIR"
+
+    go build \
+      -trimpath \
+      -ldflags="-X main.version=${VERSION}" \
+      -o "$BINARY" \
+      ./cmd/api
+  )
+}
+
+run_app() {
+  build_app
+
+  echo
+  echo "Starting demo-api..."
+  echo "URL:              http://127.0.0.1:${PORT}"
+  echo "Runtime contract: ${RUNTIME_CONTRACT}"
+  echo "Version:          ${VERSION}"
+  echo
+
+  exec env \
+    RUNTIME_CONTRACT="$RUNTIME_CONTRACT" \
+    PORT="$PORT" \
+    "$BINARY"
+}
+
+verify_response() {
+  local path="$1"
+  local expected="$2"
+  local response
+
+  response="$(
+    curl \
+      --fail \
+      --silent \
+      --show-error \
+      --connect-timeout 2 \
+      --max-time 5 \
+      "${BASE_URL}${path}"
+  )"
+
+  if [ "$response" != "$expected" ]; then
+    echo "error: unexpected response from ${path}" >&2
+    echo "expected: ${expected}" >&2
+    echo "observed: ${response}" >&2
+    exit 1
+  fi
+
+  echo "OK ${path} ${response}"
+}
+
+verify_app() {
+  require_command curl
+
+  echo "Verifying demo-api at ${BASE_URL}..."
+
+  verify_response \
+    "/health" \
+    '{"status":"healthy"}'
+
+  verify_response \
+    "/ready" \
+    '{"status":"ready"}'
+
+  verify_response \
+    "/version" \
+    "{\"version\":\"${EXPECTED_VERSION}\"}"
+
+  echo "Local verification passed."
+}
+
+case "${1:-}" in
+  test)
+    test_app
+    ;;
+  build)
+    build_app
+    ;;
+  run)
+    run_app
+    ;;
+  verify)
+    verify_app
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  "")
+    usage >&2
+    exit 2
+    ;;
+  *)
+    echo "error: unknown command: $1" >&2
+    echo >&2
+    usage >&2
+    exit 2
+    ;;
+esac
