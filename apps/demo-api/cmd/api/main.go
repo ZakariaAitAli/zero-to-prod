@@ -18,6 +18,9 @@ import (
 // version is replaced at build time using:
 //
 //	go build -ldflags="-X main.version=<commit-sha>"
+//
+// The /version endpoint exposes this value so deployment verification can
+// require the exact deployed commit SHA.
 var version = "dev"
 
 const (
