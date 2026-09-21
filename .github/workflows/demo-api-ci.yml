@@ -280,6 +280,7 @@ jobs:
           for terraform_root in \
             infra/terraform/bootstrap/development-verification-state \
             infra/terraform/bootstrap/deployment-records \
+            infra/terraform/development-runtime \
             infra/terraform/development-verification
           do
             echo "Validating ${terraform_root}"
