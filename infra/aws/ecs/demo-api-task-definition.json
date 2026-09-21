@@ -35,13 +35,7 @@
           "awslogs-region": "eu-west-3",
           "awslogs-stream-prefix": "ecs"
         }
-      },
-      "environment": [
-        {
-          "name": "RUNTIME_CONTRACT",
-          "value": "B"
-        }
-      ]
+      }
     }
   ]
 }

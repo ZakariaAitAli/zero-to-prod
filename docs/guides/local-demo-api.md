@@ -44,7 +44,6 @@ Defaults:
 
 ```text
 PORT=8080
-RUNTIME_CONTRACT=B
 VERSION=local
 ```
 
@@ -117,14 +116,6 @@ BASE_URL=http://127.0.0.1:18080 \
 EXPECTED_VERSION=experiment-1 \
   ./tools/demo-api-local verify
 ```
-
-The runtime contract can be overridden deliberately for failure experiments:
-
-```bash
-RUNTIME_CONTRACT=A ./tools/demo-api-local run
-```
-
-The current application is expected to reject that configuration.
 
 ## Cloud independence
 

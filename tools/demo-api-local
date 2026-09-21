@@ -16,7 +16,6 @@ APP_DIR="${ROOT_DIR}/apps/demo-api"
 VERSION="${VERSION:-local}"
 EXPECTED_VERSION="${EXPECTED_VERSION:-${VERSION}}"
 PORT="${PORT:-8080}"
-RUNTIME_CONTRACT="${RUNTIME_CONTRACT:-B}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${PORT}}"
 BINARY="${DEMO_API_BINARY:-${TMPDIR:-/tmp}/zero-to-prod-demo-api}"
 
@@ -32,7 +31,6 @@ Environment overrides:
   VERSION=<version>              build/run version (default: local)
   EXPECTED_VERSION=<version>     version expected by verify
   PORT=<port>                    local API port (default: 8080)
-  RUNTIME_CONTRACT=<contract>    runtime contract (default: B)
   BASE_URL=<url>                 verification base URL
   DEMO_API_BINARY=<path>         native binary output path
 EOF_USAGE
@@ -83,13 +81,11 @@ run_app() {
 
   echo
   echo "Starting demo-api..."
-  echo "URL:              http://127.0.0.1:${PORT}"
-  echo "Runtime contract: ${RUNTIME_CONTRACT}"
-  echo "Version:          ${VERSION}"
+  echo "URL:     http://127.0.0.1:${PORT}"
+  echo "Version: ${VERSION}"
   echo
 
   exec env \
-    RUNTIME_CONTRACT="$RUNTIME_CONTRACT" \
     PORT="$PORT" \
     "$BINARY"
 }

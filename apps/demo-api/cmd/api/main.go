@@ -21,8 +21,6 @@ import (
 var version = "dev"
 
 const (
-	expectedRuntimeContract = "B"
-
 	readHeaderTimeout = 5 * time.Second
 	readTimeout       = 10 * time.Second
 	writeTimeout      = 10 * time.Second
@@ -51,18 +49,6 @@ func (state *readinessState) isReady() bool {
 }
 
 func main() {
-	runtimeContract := os.Getenv("RUNTIME_CONTRACT")
-
-	if err := validateRuntimeContract(expectedRuntimeContract, runtimeContract); err != nil {
-		log.Fatalf("invalid runtime configuration: %v", err)
-	}
-
-	log.Printf(
-		"runtime contract verified: expected=%q observed=%q",
-		expectedRuntimeContract,
-		runtimeContract,
-	)
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -161,22 +147,6 @@ func runHTTPServer(
 
 		return nil
 	}
-}
-
-func validateRuntimeContract(expected, observed string) error {
-	if observed == "" {
-		return fmt.Errorf("RUNTIME_CONTRACT is required; expected %q", expected)
-	}
-
-	if observed != expected {
-		return fmt.Errorf(
-			"RUNTIME_CONTRACT mismatch: expected %q, got %q",
-			expected,
-			observed,
-		)
-	}
-
-	return nil
 }
 
 func newHandler(
