@@ -8,12 +8,14 @@ printf 'Verification target: %s\n' "$BASE_URL"
 printf 'Expected version:   %s\n' "$EXPECTED_VERSION"
 
 health_url="${BASE_URL%/}/health"
+readiness_url="${BASE_URL%/}/ready"
 version_url="${BASE_URL%/}/version"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 health_body="${tmp_dir}/health.body"
+readiness_body="${tmp_dir}/readiness.body"
 version_body="${tmp_dir}/version.body"
 
 diagnostics_file="${VERIFICATION_DIAGNOSTICS_FILE:-}"
@@ -83,6 +85,46 @@ if [ "$health_status" != "healthy" ]; then
 fi
 
 echo "Health verification passed."
+
+echo "Checking readiness endpoint: ${readiness_url}"
+
+if curl \
+  --fail-with-body \
+  --silent \
+  --show-error \
+  --connect-timeout 3 \
+  --max-time 5 \
+  --retry 4 \
+  --retry-delay 2 \
+  --retry-connrefused \
+  --output "$readiness_body" \
+  "$readiness_url"; then
+  :
+else
+  curl_exit=$?
+  readiness_status="$(json_field "$readiness_body" status)"
+
+  record_diagnostic \
+    "readiness-request" \
+    "curl_exit=${curl_exit} observed_status=${readiness_status}"
+
+  echo "::error::Readiness request failed with curl exit code ${curl_exit}"
+  exit "$curl_exit"
+fi
+
+readiness_status="$(json_field "$readiness_body" status)"
+printf 'Observed readiness status: %s\n' "$readiness_status"
+
+if [ "$readiness_status" != "ready" ]; then
+  record_diagnostic \
+    "readiness-content" \
+    "observed_status=${readiness_status}"
+
+  echo "::error::Readiness endpoint did not report status=ready"
+  exit 1
+fi
+
+echo "Readiness verification passed."
 
 echo "Checking version endpoint: ${version_url}"
 

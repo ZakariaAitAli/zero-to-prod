@@ -66,13 +66,32 @@ GET /ready
 GET /version
 ```
 
-Expected default responses are:
+Expected responses for a running, ready instance are:
 
 ```text
 /health   {"status":"healthy"}
 /ready    {"status":"ready"}
 /version  {"version":"local"}
 ```
+
+## Health and readiness
+
+The two status endpoints have different purposes.
+
+`GET /health` is the process liveness signal. It reports whether the application process is alive enough to serve HTTP.
+
+`GET /ready` is the traffic-acceptance signal. Readiness starts false, becomes true after the HTTP listener has successfully bound, and becomes false before graceful shutdown begins.
+
+When the application is not ready, `/ready` returns:
+
+```text
+HTTP 503
+{"status":"not_ready"}
+```
+
+The current AWS development target group still uses `/health` for its load balancer health check. That target group is not yet managed by Terraform in this repository, so this guide does not claim that `/ready` currently controls AWS traffic routing.
+
+Deployment verification does require `/ready` to report `ready` before a deployment can be considered verified.
 
 ## Overrides
 

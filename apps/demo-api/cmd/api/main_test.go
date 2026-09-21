@@ -10,8 +10,15 @@ import (
 	"time"
 )
 
+func readyTestHandler(appVersion string) http.Handler {
+	readiness := &readinessState{}
+	readiness.set(true)
+
+	return newHandler(appVersion, readiness)
+}
+
 func TestStatusEndpoints(t *testing.T) {
-	handler := newHandler("test-version")
+	handler := readyTestHandler("test-version")
 
 	tests := []struct {
 		name       string
@@ -69,10 +76,68 @@ func TestStatusEndpoints(t *testing.T) {
 	}
 }
 
+func TestReadinessEndpointTracksState(t *testing.T) {
+	readiness := &readinessState{}
+	handler := newHandler("test-version", readiness)
+
+	assertReadiness := func(
+		wantCode int,
+		wantStatus string,
+	) {
+		t.Helper()
+
+		request := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		if response.Code != wantCode {
+			t.Fatalf(
+				"expected status code %d, got %d",
+				wantCode,
+				response.Code,
+			)
+		}
+
+		var body statusResponse
+
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode readiness response: %v", err)
+		}
+
+		if body.Status != wantStatus {
+			t.Fatalf(
+				"expected readiness status %q, got %q",
+				wantStatus,
+				body.Status,
+			)
+		}
+	}
+
+	assertReadiness(
+		http.StatusServiceUnavailable,
+		"not_ready",
+	)
+
+	readiness.set(true)
+
+	assertReadiness(
+		http.StatusOK,
+		"ready",
+	)
+
+	readiness.set(false)
+
+	assertReadiness(
+		http.StatusServiceUnavailable,
+		"not_ready",
+	)
+}
+
 func TestVersionEndpoint(t *testing.T) {
 	const expectedVersion = "abc123"
 
-	handler := newHandler(expectedVersion)
+	handler := readyTestHandler(expectedVersion)
 
 	request := httptest.NewRequest(http.MethodGet, "/version", nil)
 	response := httptest.NewRecorder()
@@ -103,7 +168,7 @@ func TestVersionEndpoint(t *testing.T) {
 }
 
 func TestHealthEndpointRejectsPost(t *testing.T) {
-	handler := newHandler("test-version")
+	handler := readyTestHandler("test-version")
 
 	request := httptest.NewRequest(http.MethodPost, "/health", nil)
 	response := httptest.NewRecorder()
@@ -164,7 +229,7 @@ func TestValidateRuntimeContract(t *testing.T) {
 func TestHTTPServerConfiguration(t *testing.T) {
 	server := newHTTPServer(
 		"127.0.0.1:18081",
-		newHandler("test-version"),
+		readyTestHandler("test-version"),
 	)
 
 	if server.Addr != "127.0.0.1:18081" {
@@ -222,34 +287,68 @@ func TestHTTPServerConfiguration(t *testing.T) {
 
 func TestRunHTTPServerGracefulShutdown(t *testing.T) {
 	shutdownContext, cancel := context.WithCancel(context.Background())
-	cancel()
+	defer cancel()
+
+	readiness := &readinessState{}
 
 	server := newHTTPServer(
 		"127.0.0.1:0",
-		newHandler("test-version"),
+		newHandler("test-version", readiness),
 	)
 
-	if err := runHTTPServer(
-		shutdownContext,
-		server,
-		time.Second,
-	); err != nil {
-		t.Fatalf(
-			"expected graceful shutdown to succeed, got: %v",
-			err,
+	result := make(chan error, 1)
+
+	go func() {
+		result <- runHTTPServer(
+			shutdownContext,
+			server,
+			readiness,
+			time.Second,
 		)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+
+	for !readiness.isReady() {
+		if time.Now().After(deadline) {
+			t.Fatal("server did not become ready after binding listener")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf(
+				"expected graceful shutdown to succeed, got: %v",
+				err,
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for graceful shutdown")
+	}
+
+	if readiness.isReady() {
+		t.Fatal("expected readiness to be false after shutdown")
 	}
 }
 
 func TestRunHTTPServerReturnsUnexpectedListenError(t *testing.T) {
+	readiness := &readinessState{}
+
 	server := newHTTPServer(
 		"127.0.0.1:99999",
-		newHandler("test-version"),
+		newHandler("test-version", readiness),
 	)
 
 	err := runHTTPServer(
 		context.Background(),
 		server,
+		readiness,
 		time.Second,
 	)
 
@@ -257,10 +356,14 @@ func TestRunHTTPServerReturnsUnexpectedListenError(t *testing.T) {
 		t.Fatal("expected invalid listen address to fail")
 	}
 
-	if !strings.Contains(err.Error(), "serve HTTP") {
+	if !strings.Contains(err.Error(), "listen HTTP") {
 		t.Fatalf(
-			"expected server error to identify HTTP serving failure, got: %v",
+			"expected server error to identify HTTP listen failure, got: %v",
 			err,
 		)
+	}
+
+	if readiness.isReady() {
+		t.Fatal("failed listener binding must not mark server ready")
 	}
 }
