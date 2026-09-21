@@ -313,7 +313,7 @@ replaced
 or removed
 ```
 
-The current `RUNTIME_CONTRACT` experiment is the canonical example.
+The Sprint 02 `RUNTIME_CONTRACT` experiment is the canonical example: it was introduced to expose runtime-configuration compatibility risk, generalized into the reusable `runtime_config_digest` mechanism, and later retired from the live runtime.
 
 ---
 
