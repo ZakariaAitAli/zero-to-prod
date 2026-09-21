@@ -1,10 +1,12 @@
-data "aws_lb_target_group" "demo_api" {
-  name = "zero-to-prod-dev-demo-api"
-}
+data "terraform_remote_state" "development_runtime" {
+  backend = "s3"
 
-data "aws_security_group" "alb" {
-  name   = "zero-to-prod-dev-alb"
-  vpc_id = "vpc-0de74a3a8146ba655"
+  config = {
+    bucket  = "zero-to-prod-333534066371-eu-west-3-dev-verification-tfstate"
+    key     = "development-runtime/terraform.tfstate"
+    region  = "eu-west-3"
+    encrypt = true
+  }
 }
 
 data "aws_subnet" "alb_a" {
@@ -21,7 +23,7 @@ resource "aws_lb" "verification" {
   load_balancer_type = "application"
 
   security_groups = [
-    data.aws_security_group.alb.id,
+    data.terraform_remote_state.development_runtime.outputs.verification_alb_security_group_id,
   ]
 
   subnets = [
@@ -36,7 +38,8 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   default_action {
-    type             = "forward"
-    target_group_arn = data.aws_lb_target_group.demo_api.arn
+    type = "forward"
+
+    target_group_arn = data.terraform_remote_state.development_runtime.outputs.demo_api_target_group_arn
   }
 }
