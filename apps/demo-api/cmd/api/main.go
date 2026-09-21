@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -36,6 +38,18 @@ type versionResponse struct {
 	Version string `json:"version"`
 }
 
+type readinessState struct {
+	ready atomic.Bool
+}
+
+func (state *readinessState) set(ready bool) {
+	state.ready.Store(ready)
+}
+
+func (state *readinessState) isReady() bool {
+	return state.ready.Load()
+}
+
 func main() {
 	runtimeContract := os.Getenv("RUNTIME_CONTRACT")
 
@@ -55,7 +69,11 @@ func main() {
 	}
 
 	address := ":" + port
-	server := newHTTPServer(address, newHandler(version))
+	readiness := &readinessState{}
+	server := newHTTPServer(
+		address,
+		newHandler(version, readiness),
+	)
 
 	shutdownContext, stop := signal.NotifyContext(
 		context.Background(),
@@ -66,7 +84,12 @@ func main() {
 
 	log.Printf("demo-api version=%s listening on %s", version, address)
 
-	if err := runHTTPServer(shutdownContext, server, shutdownTimeout); err != nil {
+	if err := runHTTPServer(
+		shutdownContext,
+		server,
+		readiness,
+		shutdownTimeout,
+	); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
 }
@@ -85,16 +108,28 @@ func newHTTPServer(address string, handler http.Handler) *http.Server {
 func runHTTPServer(
 	shutdownContext context.Context,
 	server *http.Server,
+	readiness *readinessState,
 	gracePeriod time.Duration,
 ) error {
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen HTTP: %w", err)
+	}
+	defer listener.Close()
+
+	readiness.set(true)
+	log.Printf("readiness changed: ready")
+
 	serverErrors := make(chan error, 1)
 
 	go func() {
-		serverErrors <- server.ListenAndServe()
+		serverErrors <- server.Serve(listener)
 	}()
 
 	select {
 	case err := <-serverErrors:
+		readiness.set(false)
+
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
@@ -102,6 +137,8 @@ func runHTTPServer(
 		return fmt.Errorf("serve HTTP: %w", err)
 
 	case <-shutdownContext.Done():
+		readiness.set(false)
+		log.Printf("readiness changed: not ready")
 		log.Printf("shutdown requested")
 
 		gracefulContext, cancel := context.WithTimeout(
@@ -142,7 +179,10 @@ func validateRuntimeContract(expected, observed string) error {
 	return nil
 }
 
-func newHandler(appVersion string) http.Handler {
+func newHandler(
+	appVersion string,
+	readiness *readinessState,
+) http.Handler {
 	if appVersion == "" {
 		appVersion = "dev"
 	}
@@ -156,6 +196,13 @@ func newHandler(appVersion string) http.Handler {
 	})
 
 	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, _ *http.Request) {
+		if !readiness.isReady() {
+			writeJSON(w, http.StatusServiceUnavailable, statusResponse{
+				Status: "not_ready",
+			})
+			return
+		}
+
 		writeJSON(w, http.StatusOK, statusResponse{
 			Status: "ready",
 		})
