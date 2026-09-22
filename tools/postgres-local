@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd
+)"
+
+ROOT_DIR="$(
+  cd -- "${SCRIPT_DIR}/.."
+  pwd
+)"
+
+COMPOSE_FILE="${ROOT_DIR}/infra/local/compose.yaml"
+MIGRATIONS_DIR="${ROOT_DIR}/apps/demo-api/migrations"
+MIGRATE_BUILD_DIR="${ROOT_DIR}/tools/migrate"
+
+MIGRATE_VERSION="${MIGRATE_VERSION:-v4.20.1}"
+MIGRATE_IMAGE="${MIGRATE_IMAGE:-zero-to-prod-migrate:${MIGRATE_VERSION}}"
+
+POSTGRES_DB="${ZTP_POSTGRES_DB:-zero_to_prod}"
+POSTGRES_ADMIN_USER="${ZTP_POSTGRES_ADMIN_USER:-zero_to_prod_admin}"
+POSTGRES_MIGRATOR_USER="${ZTP_POSTGRES_MIGRATOR_USER:-zero_to_prod_migrator}"
+POSTGRES_MIGRATOR_PASSWORD="${ZTP_POSTGRES_MIGRATOR_PASSWORD:-zero-to-prod-local-migrator}"
+
+MIGRATOR_DATABASE_URL="${ZTP_MIGRATOR_DATABASE_URL:-postgres://${POSTGRES_MIGRATOR_USER}:${POSTGRES_MIGRATOR_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable}"
+
+COMPOSE_PROJECT_NAME="zero-to-prod-local"
+NETWORK="${COMPOSE_PROJECT_NAME}_default"
+
+usage() {
+  cat <<EOF_USAGE
+Usage:
+  ./tools/postgres-local start
+  ./tools/postgres-local stop
+  ./tools/postgres-local destroy
+  ./tools/postgres-local status
+  ./tools/postgres-local build-migrate
+  ./tools/postgres-local migrate-up
+  ./tools/postgres-local migrate-version
+  ./tools/postgres-local roles
+  ./tools/postgres-local schema
+
+Commands:
+  start             Start PostgreSQL and wait until healthy.
+  stop              Stop PostgreSQL without deleting its data.
+  destroy           Remove PostgreSQL containers, network, and data volume.
+  status            Show PostgreSQL container state.
+  build-migrate     Build the pinned golang-migrate CLI image.
+  migrate-up        Apply all pending migrations explicitly.
+  migrate-version   Show the current migration version.
+  roles             Show PostgreSQL roles.
+  schema            Show public tables and the work_items schema.
+
+Environment overrides:
+  MIGRATE_VERSION
+  MIGRATE_IMAGE
+  ZTP_POSTGRES_DB
+  ZTP_POSTGRES_ADMIN_USER
+  ZTP_POSTGRES_MIGRATOR_USER
+  ZTP_POSTGRES_MIGRATOR_PASSWORD
+  ZTP_MIGRATOR_DATABASE_URL
+EOF_USAGE
+}
+
+require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker is required" >&2
+    exit 1
+  fi
+
+  docker compose version >/dev/null
+}
+
+compose() {
+  docker compose \
+    -f "$COMPOSE_FILE" \
+    "$@"
+}
+
+wait_for_postgres() {
+  local container_id
+  local health=""
+
+  for _ in {1..30}; do
+    container_id="$(compose ps -q postgres)"
+
+    if [[ -n "$container_id" ]]; then
+      health="$(
+        docker inspect \
+          --format '{{.State.Health.Status}}' \
+          "$container_id" 2>/dev/null || true
+      )"
+    fi
+
+    echo "health=${health:-unknown}"
+
+    if [[ "$health" == "healthy" ]]; then
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "error: PostgreSQL did not become healthy" >&2
+  return 1
+}
+
+start_postgres() {
+  compose up -d postgres
+  wait_for_postgres
+}
+
+stop_postgres() {
+  compose stop postgres
+}
+
+destroy_postgres() {
+  compose down -v
+}
+
+status_postgres() {
+  compose ps -a postgres
+}
+
+build_migrate() {
+  docker build \
+    --build-arg "MIGRATE_VERSION=${MIGRATE_VERSION}" \
+    --tag "$MIGRATE_IMAGE" \
+    "$MIGRATE_BUILD_DIR"
+}
+
+run_migrate() {
+  docker run --rm \
+    --network "$NETWORK" \
+    -v "${MIGRATIONS_DIR}:/migrations:ro" \
+    "$MIGRATE_IMAGE" \
+    -path=/migrations \
+    -database "$MIGRATOR_DATABASE_URL" \
+    "$@"
+}
+
+show_roles() {
+  compose exec -T postgres \
+    psql \
+      -U "$POSTGRES_ADMIN_USER" \
+      -d "$POSTGRES_DB" \
+      -c '\du+'
+}
+
+show_schema() {
+  compose exec -T postgres \
+    psql \
+      -U "$POSTGRES_ADMIN_USER" \
+      -d "$POSTGRES_DB" \
+      -c '\dt'
+
+  echo
+
+  compose exec -T postgres \
+    psql \
+      -U "$POSTGRES_ADMIN_USER" \
+      -d "$POSTGRES_DB" \
+      -c '\d+ work_items'
+}
+
+require_docker
+
+case "${1:-}" in
+  start)
+    start_postgres
+    ;;
+  stop)
+    stop_postgres
+    ;;
+  destroy)
+    destroy_postgres
+    ;;
+  status)
+    status_postgres
+    ;;
+  build-migrate)
+    build_migrate
+    ;;
+  migrate-up)
+    run_migrate up
+    ;;
+  migrate-version)
+    run_migrate version
+    ;;
+  roles)
+    show_roles
+    ;;
+  schema)
+    show_schema
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  "")
+    usage >&2
+    exit 2
+    ;;
+  *)
+    echo "error: unknown command: $1" >&2
+    echo >&2
+    usage >&2
+    exit 2
+    ;;
+esac
