@@ -6,7 +6,7 @@ The demo API can be developed and verified locally without AWS credentials or cl
 
 Required for the native workflow:
 
-- Go 1.24.2
+- Go 1.27.0 or newer (Go 1.27.1 preferred by `go.mod`)
 - Bash
 - curl
 
