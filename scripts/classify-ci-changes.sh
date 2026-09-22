@@ -23,6 +23,10 @@ for changed_file in "$@"; do
     docs/*|README.md|LICENSE)
       ;;
 
+    apps/demo-api/migrations/*)
+      app=true
+      ;;
+
     apps/demo-api/*)
       app=true
       deploy=true

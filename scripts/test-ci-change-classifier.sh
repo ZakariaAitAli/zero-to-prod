@@ -24,6 +24,7 @@ assert_case() {
 }
 
 docs_expected=$'app=false\nterraform=false\nworkflow=false\ndeploy=false'
+app_no_deploy_expected=$'app=true\nterraform=false\nworkflow=false\ndeploy=false'
 app_expected=$'app=true\nterraform=false\nworkflow=false\ndeploy=true'
 deploy_sensitive_expected=$'app=true\nterraform=true\nworkflow=true\ndeploy=true'
 terraform_expected=$'app=false\nterraform=true\nworkflow=false\ndeploy=false'
@@ -34,6 +35,11 @@ assert_case \
   "docs-only" \
   "$docs_expected" \
   docs/sprint-02/change-aware-ci.md
+
+assert_case \
+  "database migration" \
+  "$app_no_deploy_expected" \
+  apps/demo-api/migrations/000001_create_work_items.up.sql
 
 assert_case \
   "Go source" \
