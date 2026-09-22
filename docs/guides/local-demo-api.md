@@ -88,9 +88,11 @@ HTTP 503
 {"status":"not_ready"}
 ```
 
-The current AWS development target group still uses `/health` for its load balancer health check. That target group is not yet managed by Terraform in this repository, so this guide does not claim that `/ready` currently controls AWS traffic routing.
+The AWS development target group is Terraform-owned and uses `/ready` for its load balancer health check.
 
-Deployment verification does require `/ready` to report `ready` before a deployment can be considered verified.
+The ECS container health check remains on `/health`, while load-balancer routing uses `/ready` so traffic acceptance reflects application readiness.
+
+Deployment verification also requires `/ready` to report `ready` before a deployment can be considered verified.
 
 ## Overrides
 
