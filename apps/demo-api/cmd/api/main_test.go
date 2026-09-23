@@ -14,7 +14,7 @@ func readyTestHandler(appVersion string) http.Handler {
 	readiness := &readinessState{}
 	readiness.set(true)
 
-	return newHandler(appVersion, readiness)
+	return newHandler(appVersion, readiness, availableDatabase())
 }
 
 func TestStatusEndpoints(t *testing.T) {
@@ -78,7 +78,11 @@ func TestStatusEndpoints(t *testing.T) {
 
 func TestReadinessEndpointTracksState(t *testing.T) {
 	readiness := &readinessState{}
-	handler := newHandler("test-version", readiness)
+	handler := newHandler(
+		"test-version",
+		readiness,
+		availableDatabase(),
+	)
 
 	assertReadiness := func(
 		wantCode int,
@@ -132,6 +136,46 @@ func TestReadinessEndpointTracksState(t *testing.T) {
 		http.StatusServiceUnavailable,
 		"not_ready",
 	)
+}
+
+func TestReadinessEndpointReportsDatabaseUnavailable(t *testing.T) {
+	readiness := &readinessState{}
+	readiness.set(true)
+
+	handler := newHandler(
+		"test-version",
+		readiness,
+		&stubApplicationStore{
+			readinessErr: context.DeadlineExceeded,
+		},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf(
+			"expected status code %d, got %d",
+			http.StatusServiceUnavailable,
+			response.Code,
+		)
+	}
+
+	var body statusResponse
+
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode readiness response: %v", err)
+	}
+
+	if body.Status != "not_ready" {
+		t.Fatalf(
+			"expected readiness status %q, got %q",
+			"not_ready",
+			body.Status,
+		)
+	}
 }
 
 func TestVersionEndpoint(t *testing.T) {
@@ -251,7 +295,11 @@ func TestRunHTTPServerGracefulShutdown(t *testing.T) {
 
 	server := newHTTPServer(
 		"127.0.0.1:0",
-		newHandler("test-version", readiness),
+		newHandler(
+			"test-version",
+			readiness,
+			availableDatabase(),
+		),
 	)
 
 	result := make(chan error, 1)
@@ -300,7 +348,11 @@ func TestRunHTTPServerReturnsUnexpectedListenError(t *testing.T) {
 
 	server := newHTTPServer(
 		"127.0.0.1:99999",
-		newHandler("test-version", readiness),
+		newHandler(
+			"test-version",
+			readiness,
+			availableDatabase(),
+		),
 	)
 
 	err := runHTTPServer(
