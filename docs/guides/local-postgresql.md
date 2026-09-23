@@ -22,6 +22,7 @@ The PostgreSQL image and migration-tool build inputs are pinned for reproducibil
     apps/demo-api/migrations/
     tools/migrate/Dockerfile
     tools/postgres-local
+    tools/postgres-backup-local
 
 ## Responsibility boundaries
 
@@ -216,6 +217,174 @@ A fresh environment can then be recreated entirely from repository-defined confi
 
 This proves that schema state is reproducible from migrations rather than depending on an existing workstation database.
 
+## Create a Work Item backup
+
+Issue #99 adds a repository-owned logical backup tool for the current Work Item data:
+
+    ./tools/postgres-backup-local create .local/postgres-backups/work-items.dump
+
+The backup uses PostgreSQL custom format and is intentionally data-only.
+
+Its scope is exactly:
+
+    public.work_items table data
+    public.work_items_id_seq sequence state
+
+Schema definitions, migration metadata, ownership, and privileges are not part of this backup contract.
+
+Repository migrations remain authoritative for those responsibilities.
+
+The backup path:
+
+    .local/postgres-backups/
+
+is outside the active PostgreSQL data volume and is ignored by Git.
+
+Backup creation refuses to overwrite an existing artifact.
+
+## Inspect and validate a backup
+
+Inspect the PostgreSQL archive:
+
+    ./tools/postgres-backup-local inspect .local/postgres-backups/work-items.dump
+
+Validate that it contains only the expected recovery scope:
+
+    ./tools/postgres-backup-local validate .local/postgres-backups/work-items.dump
+
+Validation requires exactly:
+
+    TABLE DATA public work_items
+    SEQUENCE SET public work_items_id_seq
+
+A missing, empty, corrupt, unreadable, or wrong-scope archive fails non-zero.
+
+A full logical database dump is therefore not accepted by this restore workflow.
+
+## Destructive Work Item recovery
+
+Recovery is deliberately migration-first.
+
+Destroying PostgreSQL removes the active local database volume:
+
+    ./tools/postgres-local destroy
+
+Recreate the PostgreSQL foundation:
+
+    ./tools/postgres-local start
+    ./tools/postgres-local build-migrate
+
+Apply migrations explicitly:
+
+    ./tools/postgres-local migrate-up
+    ./tools/postgres-local migrate-version
+
+Only after the required schema exists, restore the retained application-data backup:
+
+    ./tools/postgres-backup-local restore .local/postgres-backups/work-items.dump
+
+The restore command does not run migrations and does not create schema.
+
+If migrations have not been applied, it fails with:
+
+    error: restore target schema is not ready; apply migrations explicitly first
+
+The restore target must also be empty.
+
+If `public.work_items` already contains rows, restore is refused rather than silently duplicating or overwriting application data.
+
+Restore uses PostgreSQL:
+
+    --exit-on-error
+    --single-transaction
+
+for the tested data-only archive.
+
+## Verify recovered state
+
+After recovery, verify migration state:
+
+    ./tools/postgres-local migrate-version
+
+Inspect the restored rows directly in PostgreSQL:
+
+    docker compose \
+      -f infra/local/compose.yaml \
+      exec -T postgres \
+      psql \
+        -U zero_to_prod_admin \
+        -d zero_to_prod \
+        -c 'SELECT id, title, created_at FROM public.work_items ORDER BY id;'
+
+Then start or verify the demo API using the normal application workflow and confirm:
+
+    GET /items
+
+returns the same recovered Work Items.
+
+Recovery verification should use both datastore evidence and application behavior.
+
+## Backup boundary
+
+This backup model is a manual logical snapshot.
+
+Rows committed before backup creation are candidates for recovery.
+
+Rows created after that backup boundary are not contained in the existing artifact and are lost if the active database is later destroyed.
+
+The Issue #99 experiment demonstrated this explicitly:
+
+    before backup:
+      id=1 before-backup-alpha
+      id=2 before-backup-beta
+
+    after backup:
+      id=3 after-backup-gamma
+
+After destructive recovery from that backup, only IDs 1 and 2 were restored.
+
+This demonstrates the effective recovery point of the tested snapshot.
+
+It is not point-in-time recovery and is not a production RPO guarantee.
+
+## Recovery responsibility boundary
+
+The local recovery model separates responsibilities:
+
+    repository bootstrap
+        -> PostgreSQL roles and database foundation
+
+    repository migrations
+        -> schema + runtime privileges
+
+    tools/postgres-backup-local
+        -> Work Item data + sequence backup/restore
+
+    zero_to_prod_app
+        -> normal application runtime access
+
+The backup and restore workflow uses:
+
+    zero_to_prod_migrator
+
+It does not broaden `zero_to_prod_app` into a migration or administrative role.
+
+The destructive recovery experiment confirmed the runtime role still could not create schema, update rows, or delete rows after restore.
+
+For the full Issue #99 decision, experiment evidence, failure cases, and measurements, see:
+
+    docs/sprint-03/postgresql-backup-restore.md
+
+## Clean up local backup artifacts
+
+Backup files are generated local artifacts and are not intended for Git.
+
+Remove a retained backup explicitly when it is no longer needed:
+
+    rm -f .local/postgres-backups/work-items.dump
+
+Removing the backup does not modify the active PostgreSQL database.
+
 ## Cloud cost
 
 This workflow uses local Docker resources only.
@@ -235,12 +404,18 @@ The current local-first implementation now includes:
 - dependency-aware API readiness
 - explicit migration lifecycle
 - PostgreSQL restart persistence and recovery experiments
+- repository-owned Work Item logical backup
+- migration-first destructive recovery
+- backup validation and restore-target safety checks
+- direct database and API-level restored-data verification
 
 It does not yet implement:
 
 - schema A/AB/B compatibility
 - dirty migration recovery
-- backup and restore
+- physical PostgreSQL backup
+- WAL archiving or point-in-time recovery
+- scheduled or production retention policy
 - managed PostgreSQL
 - replication or high availability
 - Redis

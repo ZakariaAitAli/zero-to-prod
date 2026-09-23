@@ -328,6 +328,7 @@ jobs:
           bash -n scripts/collect-deployment-diagnostics.sh
           bash -n scripts/record-verified-deployment.sh
           bash -n tools/demo-api-local
+          bash -n tools/postgres-backup-local
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh

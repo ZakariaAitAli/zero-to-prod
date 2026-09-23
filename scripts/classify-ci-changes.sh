@@ -72,7 +72,7 @@ for changed_file in "$@"; do
       terraform=true
       ;;
 
-    scripts/verify-rollback-eligibility.sh|scripts/test-rollback-eligibility.sh|scripts/runtime-config-digest.sh|scripts/test-runtime-config-digest.sh|tools/demo-api-local)
+    scripts/verify-rollback-eligibility.sh|scripts/test-rollback-eligibility.sh|scripts/runtime-config-digest.sh|scripts/test-runtime-config-digest.sh|tools/demo-api-local|tools/postgres-backup-local)
       workflow=true
       ;;
 
