@@ -24,11 +24,12 @@ import (
 var version = "dev"
 
 const (
-	readHeaderTimeout = 5 * time.Second
-	readTimeout       = 10 * time.Second
-	writeTimeout      = 10 * time.Second
-	idleTimeout       = 60 * time.Second
-	shutdownTimeout   = 10 * time.Second
+	readHeaderTimeout        = 5 * time.Second
+	readTimeout              = 10 * time.Second
+	writeTimeout             = 10 * time.Second
+	idleTimeout              = 60 * time.Second
+	shutdownTimeout          = 10 * time.Second
+	databaseReadinessTimeout = 2 * time.Second
 )
 
 type statusResponse struct {
@@ -57,11 +58,22 @@ func main() {
 		port = "8080"
 	}
 
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
+
+	store, err := newPostgresStore(context.Background(), databaseURL)
+	if err != nil {
+		log.Fatalf("initialize PostgreSQL store: %v", err)
+	}
+	defer store.Close()
+
 	address := ":" + port
 	readiness := &readinessState{}
 	server := newHTTPServer(
 		address,
-		newHandler(version, readiness),
+		newHandler(version, readiness, store),
 	)
 
 	shutdownContext, stop := signal.NotifyContext(
@@ -155,6 +167,7 @@ func runHTTPServer(
 func newHandler(
 	appVersion string,
 	readiness *readinessState,
+	store applicationStore,
 ) http.Handler {
 	if appVersion == "" {
 		appVersion = "dev"
@@ -168,8 +181,21 @@ func newHandler(
 		})
 	})
 
-	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
 		if !readiness.isReady() {
+			writeJSON(w, http.StatusServiceUnavailable, statusResponse{
+				Status: "not_ready",
+			})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(
+			r.Context(),
+			databaseReadinessTimeout,
+		)
+		defer cancel()
+
+		if err := store.Ready(ctx); err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, statusResponse{
 				Status: "not_ready",
 			})
@@ -186,6 +212,8 @@ func newHandler(
 			Version: appVersion,
 		})
 	})
+
+	registerWorkItemHandlers(mux, store)
 
 	return mux
 }

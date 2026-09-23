@@ -18,6 +18,7 @@ EXPECTED_VERSION="${EXPECTED_VERSION:-${VERSION}}"
 PORT="${PORT:-8080}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${PORT}}"
 BINARY="${DEMO_API_BINARY:-${TMPDIR:-/tmp}/zero-to-prod-demo-api}"
+DATABASE_URL="${DATABASE_URL:-postgres://zero_to_prod_app:zero-to-prod-local-app@127.0.0.1:55432/zero_to_prod?sslmode=disable}"
 
 usage() {
   cat <<EOF_USAGE
@@ -33,6 +34,7 @@ Environment overrides:
   PORT=<port>                    local API port (default: 8080)
   BASE_URL=<url>                 verification base URL
   DEMO_API_BINARY=<path>         native binary output path
+  DATABASE_URL=<url>             PostgreSQL runtime connection URL
 EOF_USAGE
 }
 
@@ -87,6 +89,7 @@ run_app() {
 
   exec env \
     PORT="$PORT" \
+    DATABASE_URL="$DATABASE_URL" \
     "$BINARY"
 }
 

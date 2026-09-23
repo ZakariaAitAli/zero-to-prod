@@ -2,7 +2,7 @@
 
 Zero-to-Prod uses a local PostgreSQL environment to verify relational-database lifecycle behavior without AWS infrastructure.
 
-This guide covers the database and migration foundation only. The demo API does not connect to PostgreSQL yet.
+This guide covers the local PostgreSQL lifecycle, explicit schema migrations, runtime privileges, and the demo API persistence dependency.
 
 ## Components
 
@@ -61,9 +61,13 @@ This role:
 - can connect to the application database
 - has USAGE on the public schema
 - cannot create schema objects
-- does not currently have access to work_items
+- can SELECT the `id`, `title`, and `created_at` columns from `work_items`
+- can INSERT only the `title` column into `work_items`
+- has USAGE on the `work_items` identity sequence
+- cannot UPDATE or DELETE `work_items`
+- cannot create, alter, or drop application schema objects
 
-Runtime table permissions will be added when application persistence is implemented.
+The application uses this identity for normal runtime access.
 
 The application must not use the administrator or migration identity for normal runtime access.
 
@@ -132,7 +136,12 @@ Inspect the current migration version:
 
     ./tools/postgres-local migrate-version
 
-After migration 000001 is applied, the expected version is 1.
+The current migration set is:
+
+- `000001_create_work_items` — creates the Work Items schema
+- `000002_grant_work_items_runtime_privileges` — grants the minimum runtime privileges required by `zero_to_prod_app`
+
+After both migrations are applied, the expected version is 2.
 
 Re-running migrate-up when the database is current is expected to make no schema changes.
 
@@ -150,9 +159,30 @@ The lifecycle is:
         ↓
     inspect migration and schema state
         ↓
-    later: start application
+    start application with zero_to_prod_app
 
 The demo API must not automatically mutate the database schema during normal startup.
+
+If the API starts before the required schema exists, the process can remain alive, but `/ready` returns `503` and persistence operations fail until migrations are applied explicitly.
+
+## Application persistence behavior
+
+The demo API uses PostgreSQL for the current Work Items endpoints:
+
+    POST /items
+    GET /items
+
+The API reads and writes through `zero_to_prod_app`.
+
+Readiness uses a bounded, read-only query against the exact columns required by the application. It does not inspect migration-version metadata and does not perform migrations.
+
+The observed behavior is:
+
+- PostgreSQL available with required schema -> `/ready` returns `200`
+- PostgreSQL unavailable -> `/health` remains `200`, `/ready` returns `503`
+- PostgreSQL available but required schema missing -> `/ready` returns `503`
+- persistence operations during database failure -> HTTP `503` with `{"error":"persistence_unavailable"}`
+- PostgreSQL recovery -> the same API process can become ready again without restart
 
 ## Failure behavior
 
@@ -196,14 +226,23 @@ Expected cloud infrastructure cost: $0.
 
 ## Scope boundary
 
-This foundation does not yet implement:
+The current local-first implementation now includes:
 
-- application persistence
-- POST /items
-- GET /items
+- persistent Work Items
+- `POST /items`
+- `GET /items`
+- least-privilege runtime database access
 - dependency-aware API readiness
+- explicit migration lifecycle
+- PostgreSQL restart persistence and recovery experiments
+
+It does not yet implement:
+
 - schema A/AB/B compatibility
 - dirty migration recovery
 - backup and restore
 - managed PostgreSQL
 - replication or high availability
+- Redis
+- messaging or asynchronous workers
+- Kubernetes
