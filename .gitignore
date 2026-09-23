@@ -142,3 +142,6 @@ dist
 *.tfplan
 crash.log
 crash.*.log
+
+# Local PostgreSQL backup artifacts
+.local/postgres-backups/

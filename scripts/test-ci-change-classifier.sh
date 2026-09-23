@@ -121,6 +121,11 @@ assert_case \
   tools/demo-api-local
 
 assert_case \
+  "PostgreSQL backup local tooling" \
+  "$workflow_only_expected" \
+  tools/postgres-backup-local
+
+assert_case \
   "unknown path remains conservative" \
   "$workflow_expected" \
   some/future/unclassified-file.txt

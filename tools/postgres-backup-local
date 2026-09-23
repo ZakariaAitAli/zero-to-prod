@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd
+)"
+
+ROOT_DIR="$(
+  cd -- "${SCRIPT_DIR}/.."
+  pwd
+)"
+
+COMPOSE_FILE="${ROOT_DIR}/infra/local/compose.yaml"
+
+POSTGRES_DB="${ZTP_POSTGRES_DB:-zero_to_prod}"
+POSTGRES_MIGRATOR_USER="${ZTP_POSTGRES_MIGRATOR_USER:-zero_to_prod_migrator}"
+POSTGRES_MIGRATOR_PASSWORD="${ZTP_POSTGRES_MIGRATOR_PASSWORD:-zero-to-prod-local-migrator}"
+
+usage() {
+  cat <<EOF_USAGE
+Usage:
+  ./tools/postgres-backup-local create <backup-path>
+  ./tools/postgres-backup-local inspect <backup-path>
+  ./tools/postgres-backup-local validate <backup-path>
+  ./tools/postgres-backup-local restore <backup-path>
+
+Commands:
+  create    Create a custom-format, data-only backup of public.work_items.
+  inspect   List the PostgreSQL archive contents without restoring it.
+  validate  Verify that the archive contains only the expected Work Item data.
+  restore   Restore Work Item data into an already-migrated empty target.
+
+Restore contract:
+  - migrations must already be applied explicitly
+  - public.work_items must exist
+  - public.work_items must be empty
+  - restore runs in a single transaction
+  - schema creation and migration execution are not performed here
+
+Environment overrides:
+  ZTP_POSTGRES_DB
+  ZTP_POSTGRES_MIGRATOR_USER
+  ZTP_POSTGRES_MIGRATOR_PASSWORD
+EOF_USAGE
+}
+
+require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker is required" >&2
+    exit 1
+  fi
+
+  docker compose version >/dev/null
+}
+
+compose() {
+  docker compose \
+    -f "$COMPOSE_FILE" \
+    "$@"
+}
+
+resolve_backup_path() {
+  local input_path="$1"
+
+  if [[ "$input_path" == /* ]]; then
+    printf '%s\n' "$input_path"
+  else
+    printf '%s\n' "${ROOT_DIR}/${input_path}"
+  fi
+}
+
+require_backup_file() {
+  local backup_path="$1"
+
+  if [[ ! -f "$backup_path" ]]; then
+    echo "error: backup file does not exist: ${backup_path}" >&2
+    return 1
+  fi
+
+  if [[ ! -s "$backup_path" ]]; then
+    echo "error: backup file is empty: ${backup_path}" >&2
+    return 1
+  fi
+}
+
+inspect_backup() {
+  local backup_path="$1"
+
+  require_backup_file "$backup_path"
+
+  compose exec -T postgres \
+    pg_restore --list \
+    < "$backup_path"
+}
+
+validate_backup() {
+  local backup_path="$1"
+  local archive_list
+  local entry_count
+
+  require_backup_file "$backup_path"
+
+  if ! archive_list="$(
+    compose exec -T postgres \
+      pg_restore --list \
+      < "$backup_path"
+  )"; then
+    echo "error: backup archive is not readable: ${backup_path}" >&2
+    return 1
+  fi
+
+  entry_count="$(
+    printf '%s\n' "$archive_list" \
+      | awk '!/^;/ && NF { count++ } END { print count + 0 }'
+  )"
+
+  if [[ "$entry_count" != "2" ]]; then
+    echo "error: unexpected backup archive contents (${entry_count} entries)" >&2
+    return 1
+  fi
+
+  if ! printf '%s\n' "$archive_list" \
+    | grep -Eq '^[0-9]+; [0-9]+ [0-9]+ TABLE DATA public work_items '
+  then
+    echo "error: backup archive is missing Work Item table data" >&2
+    return 1
+  fi
+
+  if ! printf '%s\n' "$archive_list" \
+    | grep -Eq '^[0-9]+; [0-9]+ [0-9]+ SEQUENCE SET public work_items_id_seq '
+  then
+    echo "error: backup archive is missing Work Item sequence state" >&2
+    return 1
+  fi
+
+  echo "valid=${backup_path}"
+}
+
+create_backup() {
+  local backup_path="$1"
+  local temporary_path
+
+  if [[ -e "$backup_path" ]]; then
+    echo "error: refusing to overwrite existing backup: ${backup_path}" >&2
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$backup_path")"
+
+  temporary_path="${backup_path}.tmp.$$"
+
+  if ! compose exec -T \
+    -e "PGPASSWORD=${POSTGRES_MIGRATOR_PASSWORD}" \
+    postgres \
+    pg_dump \
+      -h 127.0.0.1 \
+      -U "$POSTGRES_MIGRATOR_USER" \
+      -d "$POSTGRES_DB" \
+      --format=custom \
+      --data-only \
+      --no-owner \
+      --no-privileges \
+      --table=public.work_items \
+      > "$temporary_path"
+  then
+    rm -f "$temporary_path"
+    echo "error: PostgreSQL backup failed" >&2
+    return 1
+  fi
+
+  mv "$temporary_path" "$backup_path"
+
+  echo "backup=${backup_path}"
+}
+
+require_empty_restore_target() {
+  local relation
+  local row_count
+
+  relation="$(
+    compose exec -T \
+      -e "PGPASSWORD=${POSTGRES_MIGRATOR_PASSWORD}" \
+      postgres \
+      psql \
+        -h 127.0.0.1 \
+        -U "$POSTGRES_MIGRATOR_USER" \
+        -d "$POSTGRES_DB" \
+        -Atc "SELECT to_regclass('public.work_items');"
+  )"
+
+  if [[ "$relation" != "work_items" ]]; then
+    echo \
+      "error: restore target schema is not ready; apply migrations explicitly first" \
+      >&2
+    return 1
+  fi
+
+  row_count="$(
+    compose exec -T \
+      -e "PGPASSWORD=${POSTGRES_MIGRATOR_PASSWORD}" \
+      postgres \
+      psql \
+        -h 127.0.0.1 \
+        -U "$POSTGRES_MIGRATOR_USER" \
+        -d "$POSTGRES_DB" \
+        -Atc 'SELECT COUNT(*) FROM public.work_items;'
+  )"
+
+  if [[ "$row_count" != "0" ]]; then
+    echo \
+      "error: restore target public.work_items is not empty (${row_count} rows)" \
+      >&2
+    return 1
+  fi
+}
+
+restore_backup() {
+  local backup_path="$1"
+
+  require_backup_file "$backup_path"
+
+  # Validate archive readability and scope before touching target data.
+  validate_backup "$backup_path" >/dev/null
+
+  # Recovery is deliberately migration-first and restore-into-empty.
+  require_empty_restore_target
+
+  compose exec -T \
+    -e "PGPASSWORD=${POSTGRES_MIGRATOR_PASSWORD}" \
+    postgres \
+    pg_restore \
+      -h 127.0.0.1 \
+      -U "$POSTGRES_MIGRATOR_USER" \
+      -d "$POSTGRES_DB" \
+      --exit-on-error \
+      --single-transaction \
+      < "$backup_path"
+
+  echo "restored=${backup_path}"
+}
+
+require_one_path_argument() {
+  if [[ "$#" -ne 1 ]]; then
+    echo "error: exactly one backup path is required" >&2
+    echo >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+require_docker
+
+case "${1:-}" in
+  create)
+    shift
+    require_one_path_argument "$@"
+    create_backup "$(resolve_backup_path "$1")"
+    ;;
+  inspect)
+    shift
+    require_one_path_argument "$@"
+    inspect_backup "$(resolve_backup_path "$1")"
+    ;;
+  validate)
+    shift
+    require_one_path_argument "$@"
+    validate_backup "$(resolve_backup_path "$1")"
+    ;;
+  restore)
+    shift
+    require_one_path_argument "$@"
+    restore_backup "$(resolve_backup_path "$1")"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  "")
+    usage >&2
+    exit 2
+    ;;
+  *)
+    echo "error: unknown command: $1" >&2
+    echo >&2
+    usage >&2
+    exit 2
+    ;;
+esac

@@ -71,11 +71,13 @@ From the repository root:
 
 Schema migrations remain an explicit lifecycle step and are not run by application startup.
 
+Local PostgreSQL Work Item data can also be backed up and recovered after destructive data-volume loss using repository-owned tooling. Recovery remains migration-first: schema and privileges are reconstructed through explicit migrations before application data is restored.
+
 The current application deployment mode is `local-only`. The API now requires PostgreSQL, while the existing AWS development runtime does not yet provide that dependency, so CI validates the application but deliberately does not publish or deploy it.
 
 The workflow requires no AWS credentials or cloud infrastructure.
 
-See the [local demo API development guide](docs/guides/local-demo-api.md) and [local PostgreSQL guide](docs/guides/local-postgresql.md) for prerequisites, persistence behavior, migration lifecycle, configuration overrides, and environment boundaries.
+See the [local demo API development guide](docs/guides/local-demo-api.md), [local PostgreSQL guide](docs/guides/local-postgresql.md), [Sprint 03 PostgreSQL backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md), and [Sprint 03 recovery runbook](docs/sprint-03/runbook.md) for prerequisites, persistence behavior, migration lifecycle, backup/recovery behavior, and environment boundaries.
 
 ## Implemented capability — Sprint 02
 
