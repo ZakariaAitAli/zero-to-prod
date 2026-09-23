@@ -54,20 +54,28 @@ L5 breadth with selected L6 operational depth
 
 ## Local development
 
-The existing demo API has a cloud-independent native development workflow for fast local feedback.
+The demo API has a local-first development workflow with PostgreSQL persistence and no AWS dependency.
 
 From the repository root:
 
 ```text
+./tools/postgres-local start
+./tools/postgres-local build-migrate
+./tools/postgres-local migrate-up
+
 ./tools/demo-api-local test
 ./tools/demo-api-local build
 ./tools/demo-api-local run
 ./tools/demo-api-local verify
 ```
 
+Schema migrations remain an explicit lifecycle step and are not run by application startup.
+
+The current application deployment mode is `local-only`. The API now requires PostgreSQL, while the existing AWS development runtime does not yet provide that dependency, so CI validates the application but deliberately does not publish or deploy it.
+
 The workflow requires no AWS credentials or cloud infrastructure.
 
-See the [local demo API development guide](docs/guides/local-demo-api.md) for prerequisites, configuration overrides, verification behavior, and environment boundaries.
+See the [local demo API development guide](docs/guides/local-demo-api.md) and [local PostgreSQL guide](docs/guides/local-postgresql.md) for prerequisites, persistence behavior, migration lifecycle, configuration overrides, and environment boundaries.
 
 ## Implemented capability — Sprint 02
 
