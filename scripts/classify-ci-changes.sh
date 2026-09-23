@@ -1,6 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd
+)"
+
+ROOT_DIR="$(
+  cd -- "${SCRIPT_DIR}/.."
+  pwd
+)"
+
+DEPLOYMENT_MODE_FILE="${ROOT_DIR}/apps/demo-api/deployment-mode"
+
+if [[ ! -f "$DEPLOYMENT_MODE_FILE" ]]; then
+  echo "error: missing demo API deployment mode: ${DEPLOYMENT_MODE_FILE}" >&2
+  exit 1
+fi
+
+deployment_mode="$(
+  tr -d '[:space:]' < "$DEPLOYMENT_MODE_FILE"
+)"
+
+case "$deployment_mode" in
+  local-only|cloud-ready)
+    ;;
+  *)
+    echo "error: unsupported demo API deployment mode: ${deployment_mode:-<empty>}" >&2
+    exit 1
+    ;;
+esac
+
 app=false
 terraform=false
 workflow=false
@@ -25,6 +55,12 @@ for changed_file in "$@"; do
 
     apps/demo-api/migrations/*)
       app=true
+      ;;
+
+    apps/demo-api/deployment-mode)
+      app=true
+      workflow=true
+      deploy=true
       ;;
 
     apps/demo-api/*)
@@ -61,6 +97,10 @@ for changed_file in "$@"; do
       ;;
   esac
 done
+
+if [[ "$deploy" == "true" && "$deployment_mode" == "local-only" ]]; then
+  deploy=false
+fi
 
 printf 'app=%s\n' "$app"
 printf 'terraform=%s\n' "$terraform"
