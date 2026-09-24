@@ -231,6 +231,125 @@ func (store *postgresStore) AcceptProcessingJob(
 	return job, nil
 }
 
+func (store *postgresStore) BeginOutboxPublishAttempt(
+	ctx context.Context,
+) (outboxMessage, error) {
+	const query = `
+		WITH next_message AS (
+			SELECT id
+			FROM public.outbox_messages
+			WHERE published_at IS NULL
+			ORDER BY id
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		UPDATE public.outbox_messages AS message
+		SET publish_attempts = message.publish_attempts + 1
+		FROM next_message
+		WHERE message.id = next_message.id
+		RETURNING
+			message.id,
+			message.processing_job_id,
+			message.event_type,
+			message.payload,
+			message.publish_attempts
+	`
+
+	var message outboxMessage
+
+	err := store.pool.QueryRow(
+		ctx,
+		query,
+	).Scan(
+		&message.ID,
+		&message.ProcessingJobID,
+		&message.EventType,
+		&message.Payload,
+		&message.PublishAttempts,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return outboxMessage{}, errNoOutboxMessage
+	}
+	if err != nil {
+		return outboxMessage{}, fmt.Errorf(
+			"begin outbox publish attempt: %w",
+			err,
+		)
+	}
+
+	return message, nil
+}
+
+func (store *postgresStore) MarkOutboxPublished(
+	ctx context.Context,
+	messageID int64,
+) error {
+	const query = `
+		UPDATE public.outbox_messages
+		SET
+			published_at = CURRENT_TIMESTAMP,
+			last_error_code = NULL
+		WHERE id = $1
+		  AND published_at IS NULL
+	`
+
+	result, err := store.pool.Exec(
+		ctx,
+		query,
+		messageID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"mark outbox message published: %w",
+			err,
+		)
+	}
+
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"mark outbox message published: expected 1 row, updated %d",
+			result.RowsAffected(),
+		)
+	}
+
+	return nil
+}
+
+func (store *postgresStore) RecordOutboxPublishFailure(
+	ctx context.Context,
+	messageID int64,
+	errorCode string,
+) error {
+	const query = `
+		UPDATE public.outbox_messages
+		SET last_error_code = $2
+		WHERE id = $1
+		  AND published_at IS NULL
+	`
+
+	result, err := store.pool.Exec(
+		ctx,
+		query,
+		messageID,
+		errorCode,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"record outbox publish failure: %w",
+			err,
+		)
+	}
+
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"record outbox publish failure: expected 1 row, updated %d",
+			result.RowsAffected(),
+		)
+	}
+
+	return nil
+}
+
 func (store *postgresStore) ListWorkItems(
 	ctx context.Context,
 ) ([]workItem, error) {
