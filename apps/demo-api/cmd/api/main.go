@@ -214,6 +214,7 @@ func newHandler(
 	})
 
 	registerWorkItemHandlers(mux, store)
+	registerProcessingHandlers(mux, store)
 
 	return mux
 }
