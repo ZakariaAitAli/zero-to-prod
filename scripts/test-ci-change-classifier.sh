@@ -126,6 +126,41 @@ assert_case \
   tools/postgres-backup-local
 
 assert_case \
+  "PostgreSQL local lifecycle tooling" \
+  "$workflow_only_expected" \
+  tools/postgres-local
+
+assert_case \
+  "local Compose runtime" \
+  "$workflow_only_expected" \
+  infra/local/compose.yaml
+
+assert_case \
+  "local PostgreSQL bootstrap" \
+  "$workflow_only_expected" \
+  infra/local/postgres/init/001-roles.sh
+
+assert_case \
+  "local RabbitMQ configuration" \
+  "$workflow_only_expected" \
+  infra/local/rabbitmq/rabbitmq.conf
+
+assert_case \
+  "local worker lifecycle tooling" \
+  "$workflow_only_expected" \
+  tools/worker-local
+
+assert_case \
+  "local RabbitMQ lifecycle tooling" \
+  "$workflow_only_expected" \
+  tools/rabbitmq-local
+
+assert_case \
+  "worker Go source blocked while local-only" \
+  "$app_local_only_expected" \
+  apps/demo-api/cmd/worker/main.go
+
+assert_case \
   "unknown path remains conservative" \
   "$workflow_expected" \
   some/future/unclassified-file.txt

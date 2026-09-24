@@ -328,7 +328,11 @@ jobs:
           bash -n scripts/collect-deployment-diagnostics.sh
           bash -n scripts/record-verified-deployment.sh
           bash -n tools/demo-api-local
+          bash -n tools/postgres-local
           bash -n tools/postgres-backup-local
+          bash -n infra/local/postgres/init/001-roles.sh
+
+          docker compose -f infra/local/compose.yaml config --quiet
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
