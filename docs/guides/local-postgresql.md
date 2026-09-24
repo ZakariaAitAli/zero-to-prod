@@ -62,8 +62,8 @@ This role:
 - can connect to the application database
 - has USAGE on the public schema
 - cannot create schema objects
-- can SELECT the `id`, `title`, and `created_at` columns from `work_items`
-- can INSERT only the `title` column into `work_items`
+- can SELECT the `id`, `title`, `status`, and `created_at` columns from `work_items`
+- can INSERT the `title` and `status` columns into `work_items`
 - has USAGE on the `work_items` identity sequence
 - cannot UPDATE or DELETE `work_items`
 - cannot create, alter, or drop application schema objects
@@ -124,12 +124,25 @@ Apply all pending migrations explicitly:
 
     ./tools/postgres-local migrate-up
 
-The initial migration creates:
+The initial migration creates Schema A:
 
     work_items
     ├── id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY
     ├── title       TEXT NOT NULL
     └── created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+Migration 000003 expands that table to Schema AB:
+
+    work_items
+    ├── id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY
+    ├── title       TEXT NOT NULL
+    ├── created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    └── status      TEXT NOT NULL DEFAULT 'pending'
+
+The `status` constraint accepts:
+
+    pending
+    done
 
 Migration state is maintained by golang-migrate in the schema_migrations table.
 
@@ -139,10 +152,11 @@ Inspect the current migration version:
 
 The current migration set is:
 
-- `000001_create_work_items` — creates the Work Items schema
-- `000002_grant_work_items_runtime_privileges` — grants the minimum runtime privileges required by `zero_to_prod_app`
+- `000001_create_work_items` — creates Schema A
+- `000002_grant_work_items_runtime_privileges` — grants the minimum original runtime privileges required by `zero_to_prod_app`
+- `000003_add_work_item_status` — expands Schema A to Schema AB and grants only the additional `status` access required by the evolved application
 
-After both migrations are applied, the expected version is 2.
+After all current migrations are applied, the expected version is 3.
 
 Re-running migrate-up when the database is current is expected to make no schema changes.
 
@@ -197,7 +211,32 @@ Starting it again preserves migration and schema state:
 
     ./tools/postgres-local start
 
-A deliberate dirty-migration recovery experiment is outside this foundation issue and belongs to later schema-evolution work.
+## Dirty migration recovery
+
+Issue #101 deliberately exercised a failed migration that left golang-migrate reporting a dirty version.
+
+A dirty migration must not be repaired by automatically forcing the previous version.
+
+First inspect the physical database and determine which migration version accurately represents the real schema.
+
+Only after that review, reconcile migration metadata explicitly:
+
+    ./tools/postgres-local migrate-force <version>
+
+For the tested Issue #101 failure, PostgreSQL rolled back the failed DDL completely, the physical schema remained at version 3, and the migration metadata was therefore safely reconciled with:
+
+    ./tools/postgres-local migrate-force 3
+
+After forcing metadata, verify both:
+
+    ./tools/postgres-local migrate-version
+    ./tools/postgres-local migrate-up
+
+The force command changes migration metadata. It does not inspect or repair partial schema changes automatically.
+
+Detailed evidence is recorded in:
+
+    docs/sprint-03/postgresql-schema-evolution.md
 
 ## Destroy and recreate
 
@@ -314,7 +353,7 @@ Inspect the restored rows directly in PostgreSQL:
       psql \
         -U zero_to_prod_admin \
         -d zero_to_prod \
-        -c 'SELECT id, title, created_at FROM public.work_items ORDER BY id;'
+        -c 'SELECT id, title, status, created_at FROM public.work_items ORDER BY id;'
 
 Then start or verify the demo API using the normal application workflow and confirm:
 
@@ -411,8 +450,9 @@ The current local-first implementation now includes:
 
 It does not yet implement:
 
-- schema A/AB/B compatibility
-- dirty migration recovery
+- destructive Schema B contraction
+- arbitrary cross-version schema compatibility
+- cross-version backup restore
 - physical PostgreSQL backup
 - WAL archiving or point-in-time recovery
 - scheduled or production retention policy

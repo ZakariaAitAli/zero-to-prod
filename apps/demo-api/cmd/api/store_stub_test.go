@@ -5,8 +5,10 @@ import "context"
 type stubApplicationStore struct {
 	readinessErr error
 
-	createItem workItem
-	createErr  error
+	createItem   workItem
+	createErr    error
+	createTitle  string
+	createStatus string
 
 	listItems []workItem
 	listErr   error
@@ -17,9 +19,13 @@ func (store *stubApplicationStore) Ready(context.Context) error {
 }
 
 func (store *stubApplicationStore) CreateWorkItem(
-	context.Context,
-	string,
+	_ context.Context,
+	title string,
+	status string,
 ) (workItem, error) {
+	store.createTitle = title
+	store.createStatus = status
+
 	return store.createItem, store.createErr
 }
 

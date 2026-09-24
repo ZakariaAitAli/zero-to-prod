@@ -76,7 +76,11 @@ Verify migration state:
 
 For the current migration set, the expected version is:
 
-    2
+    3
+
+Issue #101 expanded the Work Item schema with `status`.
+
+Recovery remains migration-first: reconstruct the current schema before restoring current-version Work Item data.
 
 Restore Work Item data:
 
@@ -101,7 +105,7 @@ Inspect recovered rows directly:
       psql \
         -U zero_to_prod_admin \
         -d zero_to_prod \
-        -c 'SELECT id, title, created_at FROM public.work_items ORDER BY id;'
+        -c 'SELECT id, title, status, created_at FROM public.work_items ORDER BY id;'
 
 Verify migration state again:
 
@@ -149,7 +153,7 @@ The API must continue using:
 The tested post-recovery privilege boundary is:
 
     schema CREATE: false
-    INSERT title: true
+    INSERT title/status: true
     UPDATE: false
     DELETE: false
 

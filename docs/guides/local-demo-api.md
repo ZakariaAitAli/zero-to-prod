@@ -95,7 +95,7 @@ The two status endpoints have different purposes.
 The datastore check is a bounded, read-only query against the exact `work_items` columns required by the application:
 
 ```sql
-SELECT id, title, created_at
+SELECT id, title, status, created_at
 FROM public.work_items
 LIMIT 0;
 ```
@@ -132,6 +132,31 @@ GET /items
 ```
 
 `POST /items` accepts a JSON body containing a non-empty `title`.
+
+It also accepts an optional `status`:
+
+```json
+{
+  "title": "example",
+  "status": "done"
+}
+```
+
+Supported status values are:
+
+```text
+pending
+done
+```
+
+If `status` is omitted, the application uses `pending`.
+
+An unsupported status returns:
+
+```text
+HTTP 400
+{"error":"invalid_status"}
+```
 
 Both endpoints use the `zero_to_prod_app` runtime identity. Database failures are returned as a generic:
 
