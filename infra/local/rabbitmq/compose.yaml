@@ -1,0 +1,35 @@
+name: zero-to-prod-rabbitmq
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.6-management@sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95
+    hostname: zero-to-prod-rabbitmq
+
+    environment:
+      RABBITMQ_DEFAULT_USER: ${ZTP_RABBITMQ_USER:-zero_to_prod}
+      RABBITMQ_DEFAULT_PASS: ${ZTP_RABBITMQ_PASSWORD:-zero-to-prod-local-rabbitmq}
+      RABBITMQ_DEFAULT_VHOST: ${ZTP_RABBITMQ_VHOST:-zero_to_prod}
+
+    ports:
+      - "127.0.0.1:${ZTP_RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "127.0.0.1:${ZTP_RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "rabbitmq-diagnostics",
+          "-q",
+          "ping"
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+volumes:
+  rabbitmq_data:

@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd
+)"
+
+ROOT_DIR="$(
+  cd -- "${SCRIPT_DIR}/.."
+  pwd
+)"
+
+COMPOSE_FILE="${ROOT_DIR}/infra/local/rabbitmq/compose.yaml"
+COMPOSE_PROJECT_NAME="zero-to-prod-rabbitmq"
+
+usage() {
+  cat <<EOF_USAGE
+Usage:
+  ./tools/rabbitmq-local start
+  ./tools/rabbitmq-local stop
+  ./tools/rabbitmq-local destroy
+  ./tools/rabbitmq-local status
+  ./tools/rabbitmq-local diagnostics
+
+Commands:
+  start        Start RabbitMQ and wait until healthy.
+  stop         Stop RabbitMQ without deleting broker data.
+  destroy      Remove only RabbitMQ containers, network, and data volume.
+  status       Show RabbitMQ container state.
+  diagnostics  Verify the broker and show non-secret local broker metadata.
+
+Environment overrides:
+  ZTP_RABBITMQ_USER
+  ZTP_RABBITMQ_PASSWORD
+  ZTP_RABBITMQ_VHOST
+  ZTP_RABBITMQ_AMQP_PORT
+  ZTP_RABBITMQ_MANAGEMENT_PORT
+EOF_USAGE
+}
+
+require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker is required" >&2
+    exit 1
+  fi
+
+  docker compose version >/dev/null
+}
+
+compose() {
+  docker compose \
+    --project-name "$COMPOSE_PROJECT_NAME" \
+    -f "$COMPOSE_FILE" \
+    "$@"
+}
+
+wait_for_rabbitmq() {
+  local container_id
+  local health=""
+
+  for _ in {1..60}; do
+    container_id="$(compose ps -q rabbitmq)"
+
+    if [[ -n "$container_id" ]]; then
+      health="$(
+        docker inspect \
+          --format '{{.State.Health.Status}}' \
+          "$container_id" 2>/dev/null || true
+      )"
+    fi
+
+    echo "health=${health:-unknown}"
+
+    if [[ "$health" == "healthy" ]]; then
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "error: RabbitMQ did not become healthy" >&2
+  return 1
+}
+
+start_rabbitmq() {
+  compose up -d rabbitmq
+  wait_for_rabbitmq
+}
+
+stop_rabbitmq() {
+  compose stop rabbitmq
+}
+
+destroy_rabbitmq() {
+  compose down -v
+}
+
+status_rabbitmq() {
+  compose ps -a rabbitmq
+}
+
+show_diagnostics() {
+  compose exec -T rabbitmq rabbitmq-diagnostics -q ping
+
+  echo
+  echo "RabbitMQ version:"
+  compose exec -T rabbitmq rabbitmqctl version
+
+  echo
+  echo "Virtual hosts:"
+  compose exec -T rabbitmq rabbitmqctl list_vhosts name
+
+  echo
+  echo "Users:"
+  compose exec -T rabbitmq rabbitmqctl list_users
+}
+
+require_docker
+
+case "${1:-}" in
+  start)
+    start_rabbitmq
+    ;;
+  stop)
+    stop_rabbitmq
+    ;;
+  destroy)
+    destroy_rabbitmq
+    ;;
+  status)
+    status_rabbitmq
+    ;;
+  diagnostics)
+    show_diagnostics
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  "")
+    usage >&2
+    exit 2
+    ;;
+  *)
+    echo "error: unknown command: $1" >&2
+    echo >&2
+    usage >&2
+    exit 2
+    ;;
+esac
