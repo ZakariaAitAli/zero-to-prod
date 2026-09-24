@@ -11,8 +11,14 @@ import (
 
 const databaseOperationTimeout = 3 * time.Second
 
+const (
+	workItemStatusPending = "pending"
+	workItemStatusDone    = "done"
+)
+
 type createWorkItemRequest struct {
-	Title string `json:"title"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
 }
 
 type errorResponse struct {
@@ -44,13 +50,30 @@ func registerWorkItemHandlers(
 			return
 		}
 
+		request.Status = strings.TrimSpace(request.Status)
+		if request.Status == "" {
+			request.Status = workItemStatusPending
+		}
+
+		if request.Status != workItemStatusPending &&
+			request.Status != workItemStatusDone {
+			writeJSON(w, http.StatusBadRequest, errorResponse{
+				Error: "invalid_status",
+			})
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(
 			r.Context(),
 			databaseOperationTimeout,
 		)
 		defer cancel()
 
-		item, err := store.CreateWorkItem(ctx, request.Title)
+		item, err := store.CreateWorkItem(
+			ctx,
+			request.Title,
+			request.Status,
+		)
 		if err != nil {
 			log.Printf("create work item failed: %v", err)
 

@@ -255,3 +255,141 @@ func TestListWorkItemsReturnsEmptyArray(t *testing.T) {
 		t.Fatalf("expected empty JSON array, got %q", body)
 	}
 }
+
+func TestCreateWorkItemDefaultsStatusToPending(t *testing.T) {
+	store := &stubApplicationStore{
+		createItem: workItem{
+			ID:     100,
+			Title:  "default status",
+			Status: workItemStatusPending,
+		},
+	}
+
+	readiness := &readinessState{}
+	readiness.set(true)
+
+	handler := newHandler(
+		"test-version",
+		readiness,
+		store,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/items",
+		strings.NewReader(`{"title":"default status"}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status code %d, got %d",
+			http.StatusCreated,
+			response.Code,
+		)
+	}
+
+	if store.createStatus != workItemStatusPending {
+		t.Fatalf(
+			"expected default status %q, got %q",
+			workItemStatusPending,
+			store.createStatus,
+		)
+	}
+}
+
+func TestCreateWorkItemAcceptsDoneStatus(t *testing.T) {
+	store := &stubApplicationStore{
+		createItem: workItem{
+			ID:     101,
+			Title:  "completed item",
+			Status: workItemStatusDone,
+		},
+	}
+
+	readiness := &readinessState{}
+	readiness.set(true)
+
+	handler := newHandler(
+		"test-version",
+		readiness,
+		store,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/items",
+		strings.NewReader(`{"title":"completed item","status":"done"}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status code %d, got %d",
+			http.StatusCreated,
+			response.Code,
+		)
+	}
+
+	if store.createStatus != workItemStatusDone {
+		t.Fatalf(
+			"expected status %q, got %q",
+			workItemStatusDone,
+			store.createStatus,
+		)
+	}
+}
+
+func TestCreateWorkItemRejectsUnknownStatus(t *testing.T) {
+	store := &stubApplicationStore{}
+
+	readiness := &readinessState{}
+	readiness.set(true)
+
+	handler := newHandler(
+		"test-version",
+		readiness,
+		store,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/items",
+		strings.NewReader(`{"title":"invalid status","status":"blocked"}`),
+	)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status code %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if store.createTitle != "" || store.createStatus != "" {
+		t.Fatalf(
+			"store was called for invalid status: title=%q status=%q",
+			store.createTitle,
+			store.createStatus,
+		)
+	}
+
+	var responseBody errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&responseBody); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+
+	if responseBody.Error != "invalid_status" {
+		t.Fatalf(
+			"expected invalid_status, got %q",
+			responseBody.Error,
+		)
+	}
+}

@@ -38,6 +38,7 @@ Usage:
   ./tools/postgres-local build-migrate
   ./tools/postgres-local migrate-up
   ./tools/postgres-local migrate-version
+  ./tools/postgres-local migrate-force <version>
   ./tools/postgres-local roles
   ./tools/postgres-local schema
 
@@ -49,6 +50,7 @@ Commands:
   build-migrate     Build the pinned golang-migrate CLI image.
   migrate-up        Apply all pending migrations explicitly.
   migrate-version   Show the current migration version.
+  migrate-force     Explicitly set migration metadata to a reviewed version.
   roles             Show PostgreSQL roles.
   schema            Show public tables and the work_items schema.
 
@@ -187,6 +189,14 @@ case "${1:-}" in
     ;;
   migrate-version)
     run_migrate version
+    ;;
+  migrate-force)
+    if [[ -z "${2:-}" || ! "${2:-}" =~ ^[0-9]+$ ]]; then
+      echo "error: migrate-force requires a numeric migration version" >&2
+      exit 2
+    fi
+
+    run_migrate force "$2"
     ;;
   roles)
     show_roles

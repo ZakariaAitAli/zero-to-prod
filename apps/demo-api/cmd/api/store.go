@@ -11,12 +11,13 @@ import (
 type workItem struct {
 	ID        int64     `json:"id"`
 	Title     string    `json:"title"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 type applicationStore interface {
 	Ready(context.Context) error
-	CreateWorkItem(context.Context, string) (workItem, error)
+	CreateWorkItem(context.Context, string, string) (workItem, error)
 	ListWorkItems(context.Context) ([]workItem, error)
 }
 
@@ -50,7 +51,7 @@ func newPostgresStore(
 
 func (store *postgresStore) Ready(ctx context.Context) error {
 	const query = `
-		SELECT id, title, created_at
+		SELECT id, title, status, created_at
 		FROM public.work_items
 		LIMIT 0
 	`
@@ -67,11 +68,12 @@ func (store *postgresStore) Ready(ctx context.Context) error {
 func (store *postgresStore) CreateWorkItem(
 	ctx context.Context,
 	title string,
+	status string,
 ) (workItem, error) {
 	const query = `
-		INSERT INTO public.work_items (title)
-		VALUES ($1)
-		RETURNING id, title, created_at
+		INSERT INTO public.work_items (title, status)
+		VALUES ($1, $2)
+		RETURNING id, title, status, created_at
 	`
 
 	var item workItem
@@ -80,9 +82,11 @@ func (store *postgresStore) CreateWorkItem(
 		ctx,
 		query,
 		title,
+		status,
 	).Scan(
 		&item.ID,
 		&item.Title,
+		&item.Status,
 		&item.CreatedAt,
 	)
 	if err != nil {
@@ -96,7 +100,7 @@ func (store *postgresStore) ListWorkItems(
 	ctx context.Context,
 ) ([]workItem, error) {
 	const query = `
-		SELECT id, title, created_at
+		SELECT id, title, status, created_at
 		FROM public.work_items
 		ORDER BY id
 	`
@@ -115,6 +119,7 @@ func (store *postgresStore) ListWorkItems(
 		if err := rows.Scan(
 			&item.ID,
 			&item.Title,
+			&item.Status,
 			&item.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan work item: %w", err)
