@@ -8,7 +8,10 @@ import (
 
 const outboxPublishFailureCode = "broker_publish_failed"
 
-var errNoOutboxMessage = errors.New("no unpublished outbox message")
+var (
+	errNoOutboxMessage = errors.New("no unpublished outbox message")
+	errBrokerPublish   = errors.New("broker publish failed")
+)
 
 type outboxMessage struct {
 	ID              int64
@@ -47,7 +50,7 @@ func publishNextOutboxMessage(
 	if err := publisher.Publish(ctx, message); err != nil {
 		publishErr := fmt.Errorf(
 			"publish outbox message: %w",
-			err,
+			errors.Join(errBrokerPublish, err),
 		)
 
 		if recordErr := store.RecordOutboxPublishFailure(
