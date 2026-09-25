@@ -298,3 +298,304 @@ func TestCompleteProcessingJobRejectsUnexpectedAcceptedFallback(
 		)
 	}
 }
+
+func TestRecordProcessingFailureKeepsJobRetryableBeforeLimit(
+	t *testing.T,
+) {
+	errorCode := "processing_failed"
+
+	db := &workerStubDB{
+		rows: []pgx.Row{
+			workerJobRow(workerProcessingJob{
+				ID:           1001,
+				WorkItemID:   2001,
+				State:        "accepted",
+				AttemptCount: 1,
+				LastError:    &errorCode,
+			}),
+		},
+	}
+
+	store := &workerStore{db: db}
+
+	result, err := store.RecordProcessingFailure(
+		context.Background(),
+		1001,
+		2001,
+		errorCode,
+		3,
+	)
+	if err != nil {
+		t.Fatalf(
+			"record retryable processing failure: %v",
+			err,
+		)
+	}
+
+	if result.Disposition != processingFailureRetryable {
+		t.Fatalf(
+			"expected %q, got %q",
+			processingFailureRetryable,
+			result.Disposition,
+		)
+	}
+
+	if result.Job.State != "accepted" {
+		t.Fatalf(
+			"retryable failure changed state to %q",
+			result.Job.State,
+		)
+	}
+
+	if result.Job.AttemptCount != 1 {
+		t.Fatalf(
+			"expected attempt_count=1, got %d",
+			result.Job.AttemptCount,
+		)
+	}
+
+	if result.Job.LastError == nil ||
+		*result.Job.LastError != errorCode {
+		t.Fatalf(
+			"expected last_error_code=%q, got %#v",
+			errorCode,
+			result.Job.LastError,
+		)
+	}
+
+	if result.Job.FinishedAt != nil {
+		t.Fatal(
+			"retryable failure unexpectedly set finished_at",
+		)
+	}
+
+	if len(db.calls) != 1 {
+		t.Fatalf(
+			"expected one database query, got %d",
+			len(db.calls),
+		)
+	}
+
+	if !strings.Contains(
+		db.calls[0].query,
+		"attempt_count = attempt_count + 1",
+	) {
+		t.Fatal(
+			"failure update does not durably increment attempt_count",
+		)
+	}
+
+	if !strings.Contains(
+		db.calls[0].query,
+		"attempt_count + 1 >= $4",
+	) {
+		t.Fatal(
+			"failure update does not atomically enforce retry boundary",
+		)
+	}
+}
+
+func TestRecordProcessingFailureMarksJobFailedAtLimit(
+	t *testing.T,
+) {
+	errorCode := "processing_failed"
+	finishedAt := time.Now().UTC()
+
+	db := &workerStubDB{
+		rows: []pgx.Row{
+			workerJobRow(workerProcessingJob{
+				ID:           3001,
+				WorkItemID:   4001,
+				State:        "failed",
+				AttemptCount: 3,
+				LastError:    &errorCode,
+				FinishedAt:   &finishedAt,
+			}),
+		},
+	}
+
+	store := &workerStore{db: db}
+
+	result, err := store.RecordProcessingFailure(
+		context.Background(),
+		3001,
+		4001,
+		errorCode,
+		3,
+	)
+	if err != nil {
+		t.Fatalf(
+			"record exhausted processing failure: %v",
+			err,
+		)
+	}
+
+	if result.Disposition != processingFailureTerminal {
+		t.Fatalf(
+			"expected %q, got %q",
+			processingFailureTerminal,
+			result.Disposition,
+		)
+	}
+
+	if result.Job.State != "failed" {
+		t.Fatalf(
+			"expected failed state, got %q",
+			result.Job.State,
+		)
+	}
+
+	if result.Job.AttemptCount != 3 {
+		t.Fatalf(
+			"expected attempt_count=3, got %d",
+			result.Job.AttemptCount,
+		)
+	}
+
+	if result.Job.LastError == nil ||
+		*result.Job.LastError != errorCode {
+		t.Fatalf(
+			"expected last_error_code=%q, got %#v",
+			errorCode,
+			result.Job.LastError,
+		)
+	}
+
+	if result.Job.FinishedAt == nil {
+		t.Fatal(
+			"terminal processing failure did not set finished_at",
+		)
+	}
+}
+
+func TestRecordProcessingFailureClassifiesTerminalRedelivery(
+	t *testing.T,
+) {
+	errorCode := "processing_failed"
+	finishedAt := time.Now().UTC()
+
+	db := &workerStubDB{
+		rows: []pgx.Row{
+			workerErrorRow(pgx.ErrNoRows),
+			workerJobRow(workerProcessingJob{
+				ID:           5001,
+				WorkItemID:   6001,
+				State:        "failed",
+				AttemptCount: 3,
+				LastError:    &errorCode,
+				FinishedAt:   &finishedAt,
+			}),
+		},
+	}
+
+	store := &workerStore{db: db}
+
+	result, err := store.RecordProcessingFailure(
+		context.Background(),
+		5001,
+		6001,
+		errorCode,
+		3,
+	)
+	if err != nil {
+		t.Fatalf(
+			"classify terminal failure redelivery: %v",
+			err,
+		)
+	}
+
+	if result.Disposition != processingFailureAlreadyTerminal {
+		t.Fatalf(
+			"expected %q, got %q",
+			processingFailureAlreadyTerminal,
+			result.Disposition,
+		)
+	}
+
+	if result.Job.AttemptCount != 3 {
+		t.Fatalf(
+			"terminal redelivery changed attempt_count: %d",
+			result.Job.AttemptCount,
+		)
+	}
+
+	if len(db.calls) != 2 {
+		t.Fatalf(
+			"expected guarded update plus lookup, got %d queries",
+			len(db.calls),
+		)
+	}
+}
+
+func TestRecordProcessingFailureDoesNotInventAttemptOnDatabaseError(
+	t *testing.T,
+) {
+	databaseErr := errors.New(
+		"PostgreSQL temporarily unavailable",
+	)
+
+	db := &workerStubDB{
+		rows: []pgx.Row{
+			workerErrorRow(databaseErr),
+		},
+	}
+
+	store := &workerStore{db: db}
+
+	_, err := store.RecordProcessingFailure(
+		context.Background(),
+		7001,
+		8001,
+		"processing_failed",
+		3,
+	)
+
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected original database error %v, got %v",
+			databaseErr,
+			err,
+		)
+	}
+
+	if len(db.calls) != 1 {
+		t.Fatalf(
+			"database failure unexpectedly triggered %d queries",
+			len(db.calls),
+		)
+	}
+}
+
+func TestRecordProcessingFailureValidatesRetryPolicy(
+	t *testing.T,
+) {
+	store := &workerStore{
+		db: &workerStubDB{},
+	}
+
+	_, err := store.RecordProcessingFailure(
+		context.Background(),
+		1,
+		2,
+		"processing_failed",
+		0,
+	)
+	if err == nil {
+		t.Fatal(
+			"non-positive max attempts unexpectedly accepted",
+		)
+	}
+
+	_, err = store.RecordProcessingFailure(
+		context.Background(),
+		1,
+		2,
+		"",
+		3,
+	)
+	if err == nil {
+		t.Fatal(
+			"empty failure code unexpectedly accepted",
+		)
+	}
+}
