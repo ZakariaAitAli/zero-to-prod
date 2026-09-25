@@ -81,6 +81,57 @@ func scanWorkerProcessingJob(
 	return job, nil
 }
 
+func (store *workerStore) GetProcessingJob(
+	ctx context.Context,
+	jobID int64,
+	workItemID int64,
+) (workerProcessingJob, error) {
+	const query = `
+		SELECT
+			id,
+			work_item_id,
+			state,
+			attempt_count,
+			last_error_code,
+			finished_at
+		FROM public.processing_jobs
+		WHERE id = $1
+	`
+
+	job, err := scanWorkerProcessingJob(
+		store.db.QueryRow(
+			ctx,
+			query,
+			jobID,
+		),
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return workerProcessingJob{}, fmt.Errorf(
+			"%w: id=%d",
+			errProcessingJobNotFound,
+			jobID,
+		)
+	}
+	if err != nil {
+		return workerProcessingJob{}, fmt.Errorf(
+			"inspect processing job: %w",
+			err,
+		)
+	}
+
+	if job.WorkItemID != workItemID {
+		return workerProcessingJob{}, fmt.Errorf(
+			"%w: job_id=%d expected_work_item_id=%d actual_work_item_id=%d",
+			errProcessingJobMismatch,
+			jobID,
+			workItemID,
+			job.WorkItemID,
+		)
+	}
+
+	return job, nil
+}
+
 func (store *workerStore) CompleteProcessingJob(
 	ctx context.Context,
 	jobID int64,

@@ -599,3 +599,108 @@ func TestRecordProcessingFailureValidatesRetryPolicy(
 		)
 	}
 }
+
+func TestGetProcessingJobReturnsMatchingJob(
+	t *testing.T,
+) {
+	db := &workerStubDB{
+		rows: []pgx.Row{
+			workerJobRow(workerProcessingJob{
+				ID:           9001,
+				WorkItemID:   9002,
+				State:        "accepted",
+				AttemptCount: 2,
+			}),
+		},
+	}
+
+	store := &workerStore{
+		db: db,
+	}
+
+	job, err := store.GetProcessingJob(
+		context.Background(),
+		9001,
+		9002,
+	)
+	if err != nil {
+		t.Fatalf(
+			"get processing job: %v",
+			err,
+		)
+	}
+
+	if job.ID != 9001 ||
+		job.WorkItemID != 9002 ||
+		job.State != "accepted" ||
+		job.AttemptCount != 2 {
+		t.Fatalf(
+			"unexpected processing job: %+v",
+			job,
+		)
+	}
+}
+
+func TestGetProcessingJobRejectsUnknownJob(
+	t *testing.T,
+) {
+	db := &workerStubDB{
+		rows: []pgx.Row{
+			workerErrorRow(pgx.ErrNoRows),
+		},
+	}
+
+	store := &workerStore{
+		db: db,
+	}
+
+	_, err := store.GetProcessingJob(
+		context.Background(),
+		9101,
+		9102,
+	)
+
+	if !errors.Is(
+		err,
+		errProcessingJobNotFound,
+	) {
+		t.Fatalf(
+			"expected not-found error, got %v",
+			err,
+		)
+	}
+}
+
+func TestGetProcessingJobRejectsWorkItemMismatch(
+	t *testing.T,
+) {
+	db := &workerStubDB{
+		rows: []pgx.Row{
+			workerJobRow(workerProcessingJob{
+				ID:         9201,
+				WorkItemID: 9202,
+				State:      "accepted",
+			}),
+		},
+	}
+
+	store := &workerStore{
+		db: db,
+	}
+
+	_, err := store.GetProcessingJob(
+		context.Background(),
+		9201,
+		9999,
+	)
+
+	if !errors.Is(
+		err,
+		errProcessingJobMismatch,
+	) {
+		t.Fatalf(
+			"expected identity mismatch, got %v",
+			err,
+		)
+	}
+}

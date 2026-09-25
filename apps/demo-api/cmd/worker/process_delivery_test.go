@@ -13,6 +13,21 @@ type orderedCompleter struct {
 	events *[]string
 	result processingCompletion
 	err    error
+
+	failureResult processingFailure
+	failureErr    error
+}
+
+func (store *orderedCompleter) GetProcessingJob(
+	_ context.Context,
+	jobID int64,
+	workItemID int64,
+) (workerProcessingJob, error) {
+	return workerProcessingJob{
+		ID:         jobID,
+		WorkItemID: workItemID,
+		State:      "accepted",
+	}, nil
 }
 
 func (store *orderedCompleter) CompleteProcessingJob(
@@ -26,6 +41,37 @@ func (store *orderedCompleter) CompleteProcessingJob(
 	)
 
 	return store.result, store.err
+}
+
+func (store *orderedCompleter) RecordProcessingFailure(
+	_ context.Context,
+	jobID int64,
+	workItemID int64,
+	_ string,
+	_ int,
+) (processingFailure, error) {
+	*store.events = append(
+		*store.events,
+		"database_failure",
+	)
+
+	if store.failureErr != nil {
+		return processingFailure{}, store.failureErr
+	}
+
+	if store.failureResult.Disposition != "" {
+		return store.failureResult, nil
+	}
+
+	return processingFailure{
+		Disposition: processingFailureRetryable,
+		Job: workerProcessingJob{
+			ID:           jobID,
+			WorkItemID:   workItemID,
+			State:        "accepted",
+			AttemptCount: 1,
+		},
+	}, nil
 }
 
 type orderedAcknowledger struct {
@@ -449,6 +495,7 @@ func TestProcessRabbitMQDeliveryRequeuesProcessingFailureBeforeDatabaseCompletio
 
 	expectedEvents := []string{
 		"processing_attempt",
+		"database_failure",
 		"nack",
 	}
 

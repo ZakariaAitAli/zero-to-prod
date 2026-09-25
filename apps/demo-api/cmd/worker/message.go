@@ -12,6 +12,9 @@ import (
 const (
 	workItemProcessMessageType    = "work_item.process"
 	workItemProcessMessageVersion = 1
+
+	workerProcessingFailureCode = "processing_failed"
+	workerProcessingMaxAttempts = 3
 )
 
 type workerMessage struct {
@@ -30,11 +33,25 @@ const (
 )
 
 type processingJobCompleter interface {
+	GetProcessingJob(
+		context.Context,
+		int64,
+		int64,
+	) (workerProcessingJob, error)
+
 	CompleteProcessingJob(
 		context.Context,
 		int64,
 		int64,
 	) (processingCompletion, error)
+
+	RecordProcessingFailure(
+		context.Context,
+		int64,
+		int64,
+		string,
+		int,
+	) (processingFailure, error)
 }
 
 func decodeWorkerMessage(
@@ -135,14 +152,124 @@ func handleWorkerMessageWithProcessor(
 		return settlementReject, err
 	}
 
-	if err := processor.Process(
+	job, err := store.GetProcessingJob(
+		ctx,
+		message.JobID,
+		message.WorkItemID,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, errProcessingJobNotFound):
+			return settlementReject, fmt.Errorf(
+				"reject unknown processing job: %w",
+				err,
+			)
+
+		case errors.Is(err, errProcessingJobMismatch):
+			return settlementReject, fmt.Errorf(
+				"reject processing job identity mismatch: %w",
+				err,
+			)
+
+		default:
+			return settlementNackRequeue, fmt.Errorf(
+				"processing job inspection unavailable: %w",
+				err,
+			)
+		}
+	}
+
+	switch job.State {
+	case "succeeded", "failed":
+		return settlementAck, nil
+
+	case "accepted":
+		// Continue with the processing attempt.
+
+	default:
+		return settlementNackRequeue, fmt.Errorf(
+			"%w: job_id=%d unexpected_state=%q",
+			errProcessingJobConflict,
+			message.JobID,
+			job.State,
+		)
+	}
+
+	processingErr := processor.Process(
 		ctx,
 		message,
-	); err != nil {
-		return settlementNackRequeue, fmt.Errorf(
-			"process work item job: %w",
-			err,
+	)
+	if processingErr != nil {
+		failure, failureErr := store.RecordProcessingFailure(
+			ctx,
+			message.JobID,
+			message.WorkItemID,
+			workerProcessingFailureCode,
+			workerProcessingMaxAttempts,
 		)
+		if failureErr != nil {
+			switch {
+			case errors.Is(
+				failureErr,
+				errProcessingJobNotFound,
+			):
+				return settlementReject, errors.Join(
+					fmt.Errorf(
+						"process work item job: %w",
+						processingErr,
+					),
+					fmt.Errorf(
+						"reject unknown processing job while recording failure: %w",
+						failureErr,
+					),
+				)
+
+			case errors.Is(
+				failureErr,
+				errProcessingJobMismatch,
+			):
+				return settlementReject, errors.Join(
+					fmt.Errorf(
+						"process work item job: %w",
+						processingErr,
+					),
+					fmt.Errorf(
+						"reject processing job identity mismatch while recording failure: %w",
+						failureErr,
+					),
+				)
+
+			default:
+				return settlementNackRequeue, errors.Join(
+					fmt.Errorf(
+						"process work item job: %w",
+						processingErr,
+					),
+					fmt.Errorf(
+						"record processing failure: %w",
+						failureErr,
+					),
+				)
+			}
+		}
+
+		switch failure.Disposition {
+		case processingFailureRetryable:
+			return settlementNackRequeue, fmt.Errorf(
+				"process work item job: %w",
+				processingErr,
+			)
+
+		case processingFailureTerminal,
+			processingFailureAlreadyTerminal:
+			return settlementAck, nil
+
+		default:
+			return settlementNackRequeue, fmt.Errorf(
+				"unexpected processing failure disposition: %q",
+				failure.Disposition,
+			)
+		}
 	}
 
 	completion, err := store.CompleteProcessingJob(

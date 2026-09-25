@@ -13,6 +13,38 @@ type stubProcessingJobCompleter struct {
 	calls      int
 	jobID      int64
 	workItemID int64
+
+	inspectJob   workerProcessingJob
+	inspectErr   error
+	inspectCalls int
+
+	failureResult processingFailure
+	failureErr    error
+	failureCalls  int
+	failureCode   string
+	maxAttempts   int
+}
+
+func (store *stubProcessingJobCompleter) GetProcessingJob(
+	_ context.Context,
+	jobID int64,
+	workItemID int64,
+) (workerProcessingJob, error) {
+	store.inspectCalls++
+
+	if store.inspectErr != nil {
+		return workerProcessingJob{}, store.inspectErr
+	}
+
+	if store.inspectJob.ID != 0 {
+		return store.inspectJob, nil
+	}
+
+	return workerProcessingJob{
+		ID:         jobID,
+		WorkItemID: workItemID,
+		State:      "accepted",
+	}, nil
 }
 
 func (store *stubProcessingJobCompleter) CompleteProcessingJob(
@@ -25,6 +57,36 @@ func (store *stubProcessingJobCompleter) CompleteProcessingJob(
 	store.workItemID = workItemID
 
 	return store.result, store.err
+}
+
+func (store *stubProcessingJobCompleter) RecordProcessingFailure(
+	_ context.Context,
+	jobID int64,
+	workItemID int64,
+	errorCode string,
+	maxAttempts int,
+) (processingFailure, error) {
+	store.failureCalls++
+	store.failureCode = errorCode
+	store.maxAttempts = maxAttempts
+
+	if store.failureErr != nil {
+		return processingFailure{}, store.failureErr
+	}
+
+	if store.failureResult.Disposition != "" {
+		return store.failureResult, nil
+	}
+
+	return processingFailure{
+		Disposition: processingFailureRetryable,
+		Job: workerProcessingJob{
+			ID:           jobID,
+			WorkItemID:   workItemID,
+			State:        "accepted",
+			AttemptCount: 1,
+		},
+	}, nil
 }
 
 func TestHandleWorkerMessageAcksNewCompletion(
@@ -462,6 +524,329 @@ func TestHandleWorkerMessageRequeuesProcessingFailureWithoutClaimingCompletion(
 		t.Fatalf(
 			"processing failure falsely attempted durable success %d times",
 			store.calls,
+		)
+	}
+}
+
+func TestHandleWorkerMessageSkipsProcessorForTerminalJob(
+	t *testing.T,
+) {
+	processor := &stubProcessingJobProcessor{
+		err: errors.New(
+			"processor must not run for terminal job",
+		),
+	}
+
+	store := &stubProcessingJobCompleter{
+		inspectJob: workerProcessingJob{
+			ID:           1501,
+			WorkItemID:   1601,
+			State:        "failed",
+			AttemptCount: workerProcessingMaxAttempts,
+		},
+	}
+
+	settlement, err := handleWorkerMessageWithProcessor(
+		context.Background(),
+		store,
+		processor,
+		[]byte(`{
+			"type":"work_item.process",
+			"version":1,
+			"job_id":1501,
+			"work_item_id":1601
+		}`),
+	)
+	if err != nil {
+		t.Fatalf(
+			"terminal redelivery returned error: %v",
+			err,
+		)
+	}
+
+	if settlement != settlementAck {
+		t.Fatalf(
+			"expected terminal redelivery ACK, got %q",
+			settlement,
+		)
+	}
+
+	if processor.calls != 0 {
+		t.Fatalf(
+			"terminal job was processed %d times",
+			processor.calls,
+		)
+	}
+
+	if store.calls != 0 {
+		t.Fatalf(
+			"terminal job attempted completion %d times",
+			store.calls,
+		)
+	}
+
+	if store.failureCalls != 0 {
+		t.Fatalf(
+			"terminal job recorded failure %d times",
+			store.failureCalls,
+		)
+	}
+}
+
+func TestHandleWorkerMessageRejectsUnknownJobBeforeProcessor(
+	t *testing.T,
+) {
+	processor := &stubProcessingJobProcessor{}
+
+	store := &stubProcessingJobCompleter{
+		inspectErr: errProcessingJobNotFound,
+	}
+
+	settlement, err := handleWorkerMessageWithProcessor(
+		context.Background(),
+		store,
+		processor,
+		[]byte(`{
+			"type":"work_item.process",
+			"version":1,
+			"job_id":1701,
+			"work_item_id":1801
+		}`),
+	)
+
+	if settlement != settlementReject {
+		t.Fatalf(
+			"expected unknown job reject, got %q",
+			settlement,
+		)
+	}
+
+	if !errors.Is(
+		err,
+		errProcessingJobNotFound,
+	) {
+		t.Fatalf(
+			"expected not-found error, got %v",
+			err,
+		)
+	}
+
+	if processor.calls != 0 {
+		t.Fatalf(
+			"unknown job reached processor %d times",
+			processor.calls,
+		)
+	}
+}
+
+func TestHandleWorkerMessageRecordsRetryableFailureBeforeRequeue(
+	t *testing.T,
+) {
+	processingErr := errors.New(
+		"representative processing failure",
+	)
+
+	processor := &stubProcessingJobProcessor{
+		err: processingErr,
+	}
+
+	store := &stubProcessingJobCompleter{
+		failureResult: processingFailure{
+			Disposition: processingFailureRetryable,
+			Job: workerProcessingJob{
+				ID:           1901,
+				WorkItemID:   2001,
+				State:        "accepted",
+				AttemptCount: 1,
+			},
+		},
+	}
+
+	settlement, err := handleWorkerMessageWithProcessor(
+		context.Background(),
+		store,
+		processor,
+		[]byte(`{
+			"type":"work_item.process",
+			"version":1,
+			"job_id":1901,
+			"work_item_id":2001
+		}`),
+	)
+
+	if settlement != settlementNackRequeue {
+		t.Fatalf(
+			"expected retryable failure to requeue, got %q",
+			settlement,
+		)
+	}
+
+	if !errors.Is(err, processingErr) {
+		t.Fatalf(
+			"expected processing error %v, got %v",
+			processingErr,
+			err,
+		)
+	}
+
+	if store.failureCalls != 1 {
+		t.Fatalf(
+			"expected one durable failure record, got %d",
+			store.failureCalls,
+		)
+	}
+
+	if store.failureCode != workerProcessingFailureCode {
+		t.Fatalf(
+			"expected stable failure code %q, got %q",
+			workerProcessingFailureCode,
+			store.failureCode,
+		)
+	}
+
+	if store.maxAttempts != workerProcessingMaxAttempts {
+		t.Fatalf(
+			"expected max attempts %d, got %d",
+			workerProcessingMaxAttempts,
+			store.maxAttempts,
+		)
+	}
+
+	if store.calls != 0 {
+		t.Fatalf(
+			"retryable processing failure falsely completed job %d times",
+			store.calls,
+		)
+	}
+}
+
+func TestHandleWorkerMessageAcksDurableTerminalFailure(
+	t *testing.T,
+) {
+	processingErr := errors.New(
+		"representative processing failure",
+	)
+
+	processor := &stubProcessingJobProcessor{
+		err: processingErr,
+	}
+
+	store := &stubProcessingJobCompleter{
+		failureResult: processingFailure{
+			Disposition: processingFailureTerminal,
+			Job: workerProcessingJob{
+				ID:           2101,
+				WorkItemID:   2201,
+				State:        "failed",
+				AttemptCount: workerProcessingMaxAttempts,
+			},
+		},
+	}
+
+	settlement, err := handleWorkerMessageWithProcessor(
+		context.Background(),
+		store,
+		processor,
+		[]byte(`{
+			"type":"work_item.process",
+			"version":1,
+			"job_id":2101,
+			"work_item_id":2201
+		}`),
+	)
+	if err != nil {
+		t.Fatalf(
+			"durably exhausted failure returned error: %v",
+			err,
+		)
+	}
+
+	if settlement != settlementAck {
+		t.Fatalf(
+			"expected terminal failure ACK, got %q",
+			settlement,
+		)
+	}
+
+	if processor.calls != 1 {
+		t.Fatalf(
+			"expected one processing attempt, got %d",
+			processor.calls,
+		)
+	}
+
+	if store.failureCalls != 1 {
+		t.Fatalf(
+			"expected one durable failure record, got %d",
+			store.failureCalls,
+		)
+	}
+
+	if store.calls != 0 {
+		t.Fatalf(
+			"terminal processing failure falsely completed job %d times",
+			store.calls,
+		)
+	}
+}
+
+func TestHandleWorkerMessageRequeuesWhenFailureRecordIsUnavailable(
+	t *testing.T,
+) {
+	processingErr := errors.New(
+		"representative processing failure",
+	)
+	databaseErr := errors.New(
+		"PostgreSQL temporarily unavailable",
+	)
+
+	processor := &stubProcessingJobProcessor{
+		err: processingErr,
+	}
+
+	store := &stubProcessingJobCompleter{
+		failureErr: databaseErr,
+	}
+
+	settlement, err := handleWorkerMessageWithProcessor(
+		context.Background(),
+		store,
+		processor,
+		[]byte(`{
+			"type":"work_item.process",
+			"version":1,
+			"job_id":2301,
+			"work_item_id":2401
+		}`),
+	)
+
+	if settlement != settlementNackRequeue {
+		t.Fatalf(
+			"expected unavailable failure record to requeue, got %q",
+			settlement,
+		)
+	}
+
+	if !errors.Is(err, processingErr) {
+		t.Fatalf(
+			"combined error lost processing error %v: %v",
+			processingErr,
+			err,
+		)
+	}
+
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"combined error lost database error %v: %v",
+			databaseErr,
+			err,
+		)
+	}
+
+	if store.failureCalls != 1 {
+		t.Fatalf(
+			"expected one attempted failure record, got %d",
+			store.failureCalls,
 		)
 	}
 }

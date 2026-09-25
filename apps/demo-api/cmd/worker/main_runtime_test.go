@@ -14,12 +14,42 @@ type stubWorkerRuntimeStore struct {
 	closeCalls atomic.Int32
 }
 
+func (store *stubWorkerRuntimeStore) GetProcessingJob(
+	_ context.Context,
+	jobID int64,
+	workItemID int64,
+) (workerProcessingJob, error) {
+	return workerProcessingJob{
+		ID:         jobID,
+		WorkItemID: workItemID,
+		State:      "accepted",
+	}, nil
+}
+
 func (store *stubWorkerRuntimeStore) CompleteProcessingJob(
 	context.Context,
 	int64,
 	int64,
 ) (processingCompletion, error) {
 	return processingCompletion{}, nil
+}
+
+func (store *stubWorkerRuntimeStore) RecordProcessingFailure(
+	_ context.Context,
+	jobID int64,
+	workItemID int64,
+	_ string,
+	_ int,
+) (processingFailure, error) {
+	return processingFailure{
+		Disposition: processingFailureRetryable,
+		Job: workerProcessingJob{
+			ID:           jobID,
+			WorkItemID:   workItemID,
+			State:        "accepted",
+			AttemptCount: 1,
+		},
+	}, nil
 }
 
 func (store *stubWorkerRuntimeStore) Close() {
