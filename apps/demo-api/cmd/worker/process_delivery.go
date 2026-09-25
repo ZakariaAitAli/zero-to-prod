@@ -17,9 +17,26 @@ func processRabbitMQDelivery(
 	store processingJobCompleter,
 	delivery amqp.Delivery,
 ) (deliveryProcessingResult, error) {
-	settlement, handlingErr := handleWorkerMessage(
+	return processRabbitMQDeliveryWithProcessor(
 		ctx,
 		store,
+		processingJobProcessorFunc(
+			successfulProcessingJobProcessor,
+		),
+		delivery,
+	)
+}
+
+func processRabbitMQDeliveryWithProcessor(
+	ctx context.Context,
+	store processingJobCompleter,
+	processor processingJobProcessor,
+	delivery amqp.Delivery,
+) (deliveryProcessingResult, error) {
+	settlement, handlingErr := handleWorkerMessageWithProcessor(
+		ctx,
+		store,
+		processor,
 		delivery.Body,
 	)
 

@@ -110,6 +110,22 @@ func handleWorkerMessage(
 	store processingJobCompleter,
 	payload []byte,
 ) (deliverySettlement, error) {
+	return handleWorkerMessageWithProcessor(
+		ctx,
+		store,
+		processingJobProcessorFunc(
+			successfulProcessingJobProcessor,
+		),
+		payload,
+	)
+}
+
+func handleWorkerMessageWithProcessor(
+	ctx context.Context,
+	store processingJobCompleter,
+	processor processingJobProcessor,
+	payload []byte,
+) (deliverySettlement, error) {
 	message, err := decodeWorkerMessage(payload)
 	if err != nil {
 		return settlementReject, err
@@ -117,6 +133,16 @@ func handleWorkerMessage(
 
 	if err := validateWorkerMessage(message); err != nil {
 		return settlementReject, err
+	}
+
+	if err := processor.Process(
+		ctx,
+		message,
+	); err != nil {
+		return settlementNackRequeue, fmt.Errorf(
+			"process work item job: %w",
+			err,
+		)
 	}
 
 	completion, err := store.CompleteProcessingJob(

@@ -330,3 +330,138 @@ func TestHandleWorkerMessageRequeuesCompletionConflict(
 		)
 	}
 }
+
+type stubProcessingJobProcessor struct {
+	err error
+
+	calls      int
+	jobID      int64
+	workItemID int64
+}
+
+func (processor *stubProcessingJobProcessor) Process(
+	_ context.Context,
+	message workerMessage,
+) error {
+	processor.calls++
+	processor.jobID = message.JobID
+	processor.workItemID = message.WorkItemID
+
+	return processor.err
+}
+
+func TestHandleWorkerMessageRunsProcessorBeforeDurableCompletion(
+	t *testing.T,
+) {
+	processor := &stubProcessingJobProcessor{}
+
+	store := &stubProcessingJobCompleter{
+		result: processingCompletion{
+			Disposition: completionApplied,
+		},
+	}
+
+	settlement, err := handleWorkerMessageWithProcessor(
+		context.Background(),
+		store,
+		processor,
+		[]byte(`{
+			"type":"work_item.process",
+			"version":1,
+			"job_id":1101,
+			"work_item_id":1201
+		}`),
+	)
+	if err != nil {
+		t.Fatalf(
+			"handle valid worker message with processor: %v",
+			err,
+		)
+	}
+
+	if settlement != settlementAck {
+		t.Fatalf(
+			"expected %q, got %q",
+			settlementAck,
+			settlement,
+		)
+	}
+
+	if processor.calls != 1 {
+		t.Fatalf(
+			"expected one processing attempt, got %d",
+			processor.calls,
+		)
+	}
+
+	if processor.jobID != 1101 ||
+		processor.workItemID != 1201 {
+		t.Fatalf(
+			"unexpected processor identity: job=%d work_item=%d",
+			processor.jobID,
+			processor.workItemID,
+		)
+	}
+
+	if store.calls != 1 {
+		t.Fatalf(
+			"expected durable completion after processor success, got %d calls",
+			store.calls,
+		)
+	}
+}
+
+func TestHandleWorkerMessageRequeuesProcessingFailureWithoutClaimingCompletion(
+	t *testing.T,
+) {
+	processingErr := errors.New(
+		"representative processing temporarily failed",
+	)
+
+	processor := &stubProcessingJobProcessor{
+		err: processingErr,
+	}
+
+	store := &stubProcessingJobCompleter{}
+
+	settlement, err := handleWorkerMessageWithProcessor(
+		context.Background(),
+		store,
+		processor,
+		[]byte(`{
+			"type":"work_item.process",
+			"version":1,
+			"job_id":1301,
+			"work_item_id":1401
+		}`),
+	)
+
+	if settlement != settlementNackRequeue {
+		t.Fatalf(
+			"expected processing failure to request requeue, got %q",
+			settlement,
+		)
+	}
+
+	if !errors.Is(err, processingErr) {
+		t.Fatalf(
+			"expected original processing error %v, got %v",
+			processingErr,
+			err,
+		)
+	}
+
+	if processor.calls != 1 {
+		t.Fatalf(
+			"expected one processing attempt, got %d",
+			processor.calls,
+		)
+	}
+
+	if store.calls != 0 {
+		t.Fatalf(
+			"processing failure falsely attempted durable success %d times",
+			store.calls,
+		)
+	}
+}

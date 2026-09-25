@@ -376,3 +376,90 @@ func TestProcessRabbitMQDeliveryStillAttemptsRejectWhenHandlingReturnsError(
 		)
 	}
 }
+
+type orderedProcessingJobProcessor struct {
+	events *[]string
+	err    error
+}
+
+func (processor *orderedProcessingJobProcessor) Process(
+	_ context.Context,
+	_ workerMessage,
+) error {
+	*processor.events = append(
+		*processor.events,
+		"processing_attempt",
+	)
+
+	return processor.err
+}
+
+func TestProcessRabbitMQDeliveryRequeuesProcessingFailureBeforeDatabaseCompletion(
+	t *testing.T,
+) {
+	events := make([]string, 0, 2)
+
+	processingErr := errors.New(
+		"representative processing temporarily failed",
+	)
+
+	processor := &orderedProcessingJobProcessor{
+		events: &events,
+		err:    processingErr,
+	}
+
+	store := &orderedCompleter{
+		events: &events,
+	}
+
+	ack := &orderedAcknowledger{
+		events: &events,
+	}
+
+	result, err := processRabbitMQDeliveryWithProcessor(
+		context.Background(),
+		store,
+		processor,
+		validWorkerDelivery(ack),
+	)
+	if err != nil {
+		t.Fatalf(
+			"successful processing-failure requeue returned broker error: %v",
+			err,
+		)
+	}
+
+	if result.Settlement != settlementNackRequeue {
+		t.Fatalf(
+			"expected NACK/requeue settlement, got %q",
+			result.Settlement,
+		)
+	}
+
+	if !errors.Is(
+		result.HandlingErr,
+		processingErr,
+	) {
+		t.Fatalf(
+			"expected processing error %v, got %v",
+			processingErr,
+			result.HandlingErr,
+		)
+	}
+
+	expectedEvents := []string{
+		"processing_attempt",
+		"nack",
+	}
+
+	if !reflect.DeepEqual(
+		events,
+		expectedEvents,
+	) {
+		t.Fatalf(
+			"expected processing failure ordering %v, got %v",
+			expectedEvents,
+			events,
+		)
+	}
+}
