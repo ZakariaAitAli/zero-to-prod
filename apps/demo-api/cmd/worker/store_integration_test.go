@@ -2,56 +2,27 @@ package main
 
 import (
 	"context"
-	"os"
-	"strconv"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestCompleteProcessingJobPostgresIntegration(
 	t *testing.T,
 ) {
-	databaseURL := os.Getenv("WORKER_DATABASE_URL")
-	jobIDRaw := os.Getenv("WORKER_TEST_JOB_ID")
-	workItemIDRaw := os.Getenv("WORKER_TEST_WORK_ITEM_ID")
-
-	if databaseURL == "" ||
-		jobIDRaw == "" ||
-		workItemIDRaw == "" {
-		t.Skip(
-			"WORKER_DATABASE_URL, WORKER_TEST_JOB_ID, and WORKER_TEST_WORK_ITEM_ID are required",
-		)
-	}
-
-	jobID, err := strconv.ParseInt(jobIDRaw, 10, 64)
-	if err != nil {
-		t.Fatalf("parse worker test job id: %v", err)
-	}
-
-	workItemID, err := strconv.ParseInt(
-		workItemIDRaw,
-		10,
-		64,
-	)
-	if err != nil {
-		t.Fatalf("parse worker test work item id: %v", err)
-	}
-
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
 		5*time.Second,
 	)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("create worker PostgreSQL pool: %v", err)
-	}
-	defer pool.Close()
+	fixture := requireWorkerPostgresIntegrationFixture(
+		t,
+		ctx,
+	)
 
-	store := &workerStore{db: pool}
+	store := fixture.Store
+	jobID := fixture.JobID
+	workItemID := fixture.WorkItemID
 
 	first, err := store.CompleteProcessingJob(
 		ctx,

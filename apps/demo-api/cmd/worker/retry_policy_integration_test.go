@@ -4,12 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strconv"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type integrationFailingProcessor struct {
@@ -28,65 +24,20 @@ func (processor *integrationFailingProcessor) Process(
 func TestHandleWorkerMessageRetryExhaustionPostgresIntegration(
 	t *testing.T,
 ) {
-	databaseURL := os.Getenv("WORKER_DATABASE_URL")
-	jobIDRaw := os.Getenv("WORKER_FAILURE_TEST_JOB_ID")
-	workItemIDRaw := os.Getenv(
-		"WORKER_FAILURE_TEST_WORK_ITEM_ID",
-	)
-
-	if databaseURL == "" ||
-		jobIDRaw == "" ||
-		workItemIDRaw == "" {
-		t.Skip(
-			"WORKER_DATABASE_URL, WORKER_FAILURE_TEST_JOB_ID, and WORKER_FAILURE_TEST_WORK_ITEM_ID are required",
-		)
-	}
-
-	jobID, err := strconv.ParseInt(
-		jobIDRaw,
-		10,
-		64,
-	)
-	if err != nil {
-		t.Fatalf(
-			"parse retry-policy job id: %v",
-			err,
-		)
-	}
-
-	workItemID, err := strconv.ParseInt(
-		workItemIDRaw,
-		10,
-		64,
-	)
-	if err != nil {
-		t.Fatalf(
-			"parse retry-policy work item id: %v",
-			err,
-		)
-	}
-
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
 		5*time.Second,
 	)
 	defer cancel()
 
-	pool, err := pgxpool.New(
+	fixture := requireWorkerPostgresIntegrationFixture(
+		t,
 		ctx,
-		databaseURL,
 	)
-	if err != nil {
-		t.Fatalf(
-			"create worker PostgreSQL pool: %v",
-			err,
-		)
-	}
-	defer pool.Close()
 
-	store := &workerStore{
-		db: pool,
-	}
+	store := fixture.Store
+	jobID := fixture.JobID
+	workItemID := fixture.WorkItemID
 
 	processingErr := errors.New(
 		"synthetic representative processing failure",
@@ -339,69 +290,20 @@ func (processor *integrationFailOnceProcessor) Process(
 func TestHandleWorkerMessageTransientFailureEventuallySucceedsPostgresIntegration(
 	t *testing.T,
 ) {
-	databaseURL := os.Getenv(
-		"WORKER_DATABASE_URL",
-	)
-	jobIDRaw := os.Getenv(
-		"WORKER_TRANSIENT_TEST_JOB_ID",
-	)
-	workItemIDRaw := os.Getenv(
-		"WORKER_TRANSIENT_TEST_WORK_ITEM_ID",
-	)
-
-	if databaseURL == "" ||
-		jobIDRaw == "" ||
-		workItemIDRaw == "" {
-		t.Skip(
-			"WORKER_DATABASE_URL, WORKER_TRANSIENT_TEST_JOB_ID, and WORKER_TRANSIENT_TEST_WORK_ITEM_ID are required",
-		)
-	}
-
-	jobID, err := strconv.ParseInt(
-		jobIDRaw,
-		10,
-		64,
-	)
-	if err != nil {
-		t.Fatalf(
-			"parse transient-retry job id: %v",
-			err,
-		)
-	}
-
-	workItemID, err := strconv.ParseInt(
-		workItemIDRaw,
-		10,
-		64,
-	)
-	if err != nil {
-		t.Fatalf(
-			"parse transient-retry Work Item id: %v",
-			err,
-		)
-	}
-
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
 		5*time.Second,
 	)
 	defer cancel()
 
-	pool, err := pgxpool.New(
+	fixture := requireWorkerPostgresIntegrationFixture(
+		t,
 		ctx,
-		databaseURL,
 	)
-	if err != nil {
-		t.Fatalf(
-			"create worker PostgreSQL pool: %v",
-			err,
-		)
-	}
-	defer pool.Close()
 
-	store := &workerStore{
-		db: pool,
-	}
+	store := fixture.Store
+	jobID := fixture.JobID
+	workItemID := fixture.WorkItemID
 
 	processingErr := errors.New(
 		"synthetic transient representative processing failure",
@@ -553,7 +455,7 @@ func TestHandleWorkerMessageTransientFailureEventuallySucceedsPostgresIntegratio
 
 	var workItemStatus string
 
-	if err := pool.QueryRow(
+	if err := store.db.QueryRow(
 		ctx,
 		`
 			SELECT status
