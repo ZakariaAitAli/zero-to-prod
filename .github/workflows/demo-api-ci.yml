@@ -147,7 +147,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     defaults:
       run:
@@ -186,8 +186,115 @@ jobs:
       - name: Run Go vet
         run: go vet ./...
 
-      - name: Run automated tests
+      - name: Run dependency-free tests
         run: go test ./... -v -count=1
+
+      - name: Start local integration dependencies
+        working-directory: .
+        run: |
+          ./tools/postgres-local start
+          ./tools/postgres-local build-migrate
+          ./tools/postgres-local migrate-up
+          ./tools/rabbitmq-local start
+
+      - name: Run API integration tests
+        env:
+          OUTBOX_INTEGRATION_DATABASE_URL: postgres://zero_to_prod_app:zero-to-prod-local-app@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          ACCEPTANCE_FAILURE_MIGRATOR_DATABASE_URL: postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          RABBITMQ_PUBLISHER_URL: amqp://zero_to_prod_publisher:zero-to-prod-local-rabbitmq-publisher@127.0.0.1:5672/zero_to_prod
+          RABBITMQ_QUEUE: work_item_processing
+        run: |
+          output="${RUNNER_TEMP}/demo-api-api-integration.out"
+
+          go test ./cmd/api \
+            -v \
+            -count=1 \
+            2>&1 | tee "$output"
+
+          if grep -q -- '--- SKIP:' "$output"; then
+            echo "::error::API integration validation skipped one or more tests."
+            grep -- '--- SKIP:' "$output"
+            exit 1
+          fi
+
+      - name: Reset shared RabbitMQ integration boundary
+        working-directory: .
+        run: |
+          docker compose \
+            --project-name zero-to-prod-rabbitmq \
+            --file infra/local/rabbitmq/compose.yaml \
+            exec -T rabbitmq \
+            rabbitmqctl \
+              -p zero_to_prod \
+              purge_queue \
+              work_item_processing
+
+          queue_state="$(
+            docker compose \
+              --project-name zero-to-prod-rabbitmq \
+              --file infra/local/rabbitmq/compose.yaml \
+              exec -T rabbitmq \
+              rabbitmqctl \
+                -p zero_to_prod \
+                list_queues \
+                name \
+                messages_ready \
+                messages_unacknowledged \
+                messages \
+                consumers \
+              2>/dev/null \
+            | awk '
+                $1 == "work_item_processing" {
+                  print $2 "|" $3 "|" $4 "|" $5
+                }
+              '
+          )"
+
+          echo "RabbitMQ integration boundary: ${queue_state}"
+
+          if [ "$queue_state" != "0|0|0|0" ]; then
+            echo "::error::RabbitMQ integration queue is not clean: ${queue_state}"
+            exit 1
+          fi
+
+      - name: Run worker integration tests
+        env:
+          WORKER_DATABASE_URL: postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          WORKER_FIXTURE_DATABASE_URL: postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          RABBITMQ_WORKER_URL: amqp://zero_to_prod_worker:zero-to-prod-local-rabbitmq-worker@127.0.0.1:5672/zero_to_prod
+          RABBITMQ_FIXTURE_URL: amqp://zero_to_prod:zero-to-prod-local-rabbitmq@127.0.0.1:5672/zero_to_prod
+          RABBITMQ_QUEUE: work_item_processing
+        run: |
+          output="${RUNNER_TEMP}/demo-api-worker-integration.out"
+
+          go test ./cmd/worker \
+            -v \
+            -count=1 \
+            2>&1 | tee "$output"
+
+          if grep -q -- '--- SKIP:' "$output"; then
+            echo "::error::Worker integration validation skipped one or more tests."
+            grep -- '--- SKIP:' "$output"
+            exit 1
+          fi
+
+      - name: Clean up local integration dependencies
+        if: always()
+        working-directory: .
+        run: |
+          rabbitmq_rc=0
+          postgres_rc=0
+
+          ./tools/rabbitmq-local destroy || rabbitmq_rc=$?
+          ./tools/postgres-local destroy || postgres_rc=$?
+
+          if [ "$rabbitmq_rc" -ne 0 ] ||
+             [ "$postgres_rc" -ne 0 ]; then
+            echo "::error::Local integration dependency cleanup failed."
+            echo "RabbitMQ cleanup exit code: ${rabbitmq_rc}"
+            echo "PostgreSQL cleanup exit code: ${postgres_rc}"
+            exit 1
+          fi
 
       - name: Build Docker image
         env:
@@ -330,6 +437,7 @@ jobs:
           bash -n tools/demo-api-local
           bash -n tools/postgres-local
           bash -n tools/postgres-backup-local
+          bash -n tools/rabbitmq-local
           bash -n infra/local/postgres/init/001-roles.sh
 
           docker compose -f infra/local/compose.yaml config --quiet
