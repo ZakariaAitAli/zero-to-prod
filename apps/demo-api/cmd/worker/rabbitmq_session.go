@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+const rabbitMQWorkerSessionCloseTimeout = 2 * time.Second
+
 type rabbitMQWorkerSessionChannel interface {
 	rabbitMQConsumerChannel
-	Close() error
 }
 
 type rabbitMQWorkerSessionConnection interface {
@@ -18,7 +20,7 @@ type rabbitMQWorkerSessionConnection interface {
 		rabbitMQWorkerSessionChannel,
 		error,
 	)
-	Close() error
+	CloseWithin(time.Duration) error
 }
 
 type rabbitMQWorkerDialer func(
@@ -30,7 +32,6 @@ type rabbitMQWorkerDialer func(
 
 type rabbitMQWorkerSession struct {
 	connection rabbitMQWorkerSessionConnection
-	channel    rabbitMQWorkerSessionChannel
 	deliveries <-chan amqp.Delivery
 }
 
@@ -55,7 +56,9 @@ func newRabbitMQWorkerSessionWithDialer(
 			err,
 		)
 
-		closeErr := connection.Close()
+		closeErr := connection.CloseWithin(
+			rabbitMQWorkerSessionCloseTimeout,
+		)
 		if closeErr != nil &&
 			!errors.Is(closeErr, amqp.ErrClosed) {
 			return nil, errors.Join(
@@ -83,7 +86,6 @@ func newRabbitMQWorkerSessionWithDialer(
 
 		session := &rabbitMQWorkerSession{
 			connection: connection,
-			channel:    channel,
 		}
 
 		if closeErr := session.Close(); closeErr != nil {
@@ -98,7 +100,6 @@ func newRabbitMQWorkerSessionWithDialer(
 
 	return &rabbitMQWorkerSession{
 		connection: connection,
-		channel:    channel,
 		deliveries: deliveries,
 	}, nil
 }
@@ -108,33 +109,19 @@ func (session *rabbitMQWorkerSession) Deliveries() <-chan amqp.Delivery {
 }
 
 func (session *rabbitMQWorkerSession) Close() error {
-	var closeErrors []error
-
-	if session.channel != nil {
-		if err := session.channel.Close(); err != nil &&
-			!errors.Is(err, amqp.ErrClosed) {
-			closeErrors = append(
-				closeErrors,
-				fmt.Errorf(
-					"close RabbitMQ worker channel: %w",
-					err,
-				),
-			)
-		}
+	if session.connection == nil {
+		return nil
 	}
 
-	if session.connection != nil {
-		if err := session.connection.Close(); err != nil &&
-			!errors.Is(err, amqp.ErrClosed) {
-			closeErrors = append(
-				closeErrors,
-				fmt.Errorf(
-					"close RabbitMQ worker connection: %w",
-					err,
-				),
-			)
-		}
+	if err := session.connection.CloseWithin(
+		rabbitMQWorkerSessionCloseTimeout,
+	); err != nil &&
+		!errors.Is(err, amqp.ErrClosed) {
+		return fmt.Errorf(
+			"close RabbitMQ worker connection: %w",
+			err,
+		)
 	}
 
-	return errors.Join(closeErrors...)
+	return nil
 }

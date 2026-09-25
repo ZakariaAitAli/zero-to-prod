@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -30,8 +31,12 @@ func (connection *amqpWorkerConnection) OpenChannel() (
 	return channel, nil
 }
 
-func (connection *amqpWorkerConnection) Close() error {
-	return connection.connection.Close()
+func (connection *amqpWorkerConnection) CloseWithin(
+	timeout time.Duration,
+) error {
+	return connection.connection.CloseDeadline(
+		time.Now().Add(timeout),
+	)
 }
 
 func dialRabbitMQWorker(

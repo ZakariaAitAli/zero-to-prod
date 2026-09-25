@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -38,8 +39,9 @@ type stubRabbitMQWorkerSessionConnection struct {
 	openChannelCalls int
 	openChannelErr   error
 
-	closeCalls int
-	closeErr   error
+	closeCalls   int
+	closeErr     error
+	closeTimeout time.Duration
 }
 
 func (connection *stubRabbitMQWorkerSessionConnection) OpenChannel() (
@@ -62,8 +64,11 @@ func (connection *stubRabbitMQWorkerSessionConnection) OpenChannel() (
 	return connection.channel, nil
 }
 
-func (connection *stubRabbitMQWorkerSessionConnection) Close() error {
+func (connection *stubRabbitMQWorkerSessionConnection) CloseWithin(
+	timeout time.Duration,
+) error {
 	connection.closeCalls++
+	connection.closeTimeout = timeout
 
 	if connection.events != nil {
 		*connection.events = append(
@@ -181,7 +186,6 @@ func TestNewRabbitMQWorkerSessionOwnsConfiguredConsumerResources(
 		"channel_open",
 		"qos",
 		"consume",
-		"channel_close",
 		"connection_close",
 	}
 
@@ -193,6 +197,22 @@ func TestNewRabbitMQWorkerSessionOwnsConfiguredConsumerResources(
 			"expected lifecycle order %v, got %v",
 			expectedAll,
 			events,
+		)
+	}
+
+	if connection.closeTimeout !=
+		rabbitMQWorkerSessionCloseTimeout {
+		t.Fatalf(
+			"expected bounded connection close timeout %s, got %s",
+			rabbitMQWorkerSessionCloseTimeout,
+			connection.closeTimeout,
+		)
+	}
+
+	if channel.closeCalls != 0 {
+		t.Fatalf(
+			"session performed direct channel close %d times",
+			channel.closeCalls,
 		)
 	}
 }
@@ -333,9 +353,9 @@ func TestNewRabbitMQWorkerSessionClosesResourcesWhenConsumerSetupFails(
 		)
 	}
 
-	if channel.closeCalls != 1 {
+	if channel.closeCalls != 0 {
 		t.Fatalf(
-			"expected channel cleanup once, got %d",
+			"consumer setup failure performed direct channel close %d times",
 			channel.closeCalls,
 		)
 	}
@@ -348,22 +368,18 @@ func TestNewRabbitMQWorkerSessionClosesResourcesWhenConsumerSetupFails(
 	}
 }
 
-func TestRabbitMQWorkerSessionCloseAttemptsBothResourcesAndJoinsErrors(
+func TestRabbitMQWorkerSessionCloseUsesBoundedConnectionShutdown(
 	t *testing.T,
 ) {
-	channelErr := errors.New(
-		"close channel failed",
-	)
 	connectionErr := errors.New(
 		"close connection failed",
 	)
 
-	events := make([]string, 0, 2)
+	events := make([]string, 0, 1)
 
 	channel := &stubRabbitMQWorkerSessionChannel{
 		stubRabbitMQConsumerChannel: &stubRabbitMQConsumerChannel{},
 		events:                      &events,
-		closeErr:                    channelErr,
 	}
 
 	connection := &stubRabbitMQWorkerSessionConnection{
@@ -373,18 +389,9 @@ func TestRabbitMQWorkerSessionCloseAttemptsBothResourcesAndJoinsErrors(
 
 	session := &rabbitMQWorkerSession{
 		connection: connection,
-		channel:    channel,
 	}
 
 	err := session.Close()
-
-	if !errors.Is(err, channelErr) {
-		t.Fatalf(
-			"expected channel close error %v, got %v",
-			channelErr,
-			err,
-		)
-	}
 
 	if !errors.Is(err, connectionErr) {
 		t.Fatalf(
@@ -394,8 +401,30 @@ func TestRabbitMQWorkerSessionCloseAttemptsBothResourcesAndJoinsErrors(
 		)
 	}
 
+	if connection.closeCalls != 1 {
+		t.Fatalf(
+			"expected one bounded connection close, got %d",
+			connection.closeCalls,
+		)
+	}
+
+	if connection.closeTimeout !=
+		rabbitMQWorkerSessionCloseTimeout {
+		t.Fatalf(
+			"expected close timeout %s, got %s",
+			rabbitMQWorkerSessionCloseTimeout,
+			connection.closeTimeout,
+		)
+	}
+
+	if channel.closeCalls != 0 {
+		t.Fatalf(
+			"session performed direct channel close %d times",
+			channel.closeCalls,
+		)
+	}
+
 	expectedEvents := []string{
-		"channel_close",
 		"connection_close",
 	}
 
@@ -404,7 +433,7 @@ func TestRabbitMQWorkerSessionCloseAttemptsBothResourcesAndJoinsErrors(
 		expectedEvents,
 	) {
 		t.Fatalf(
-			"expected both cleanup attempts %v, got %v",
+			"expected bounded connection cleanup %v, got %v",
 			expectedEvents,
 			events,
 		)
