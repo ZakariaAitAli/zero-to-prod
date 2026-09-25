@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -122,4 +126,86 @@ func runWorkerProcess(
 	)
 }
 
-func main() {}
+func main() {
+	config, err := loadWorkerConfig(
+		os.Getenv,
+	)
+	if err != nil {
+		log.Fatalf(
+			"worker configuration: %v",
+			err,
+		)
+	}
+
+	shutdownContext, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	storeFactory := func(
+		ctx context.Context,
+		databaseURL string,
+	) (
+		workerRuntimeStore,
+		error,
+	) {
+		return newPostgresWorkerStore(
+			ctx,
+			databaseURL,
+		)
+	}
+
+	sessionFactory := func(
+		ctx context.Context,
+		connectionURL string,
+		queueName string,
+	) (
+		workerDeliverySession,
+		error,
+	) {
+		return newRabbitMQWorkerSession(
+			ctx,
+			connectionURL,
+			queueName,
+		)
+	}
+
+	reportExit := func(err error) {
+		if err == nil {
+			log.Printf(
+				"worker session ended unexpectedly without error; retrying",
+			)
+
+			return
+		}
+
+		log.Printf(
+			"worker session ended; retrying: %v",
+			err,
+		)
+	}
+
+	log.Printf(
+		"worker starting queue=%s",
+		config.QueueName,
+	)
+
+	if err := runWorkerProcess(
+		shutdownContext,
+		config,
+		storeFactory,
+		sessionFactory,
+		reportExit,
+	); err != nil {
+		log.Fatalf(
+			"worker stopped: %v",
+			err,
+		)
+	}
+
+	log.Printf(
+		"worker shutdown complete",
+	)
+}
