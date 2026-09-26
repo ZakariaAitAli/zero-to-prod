@@ -1,420 +1,381 @@
-# Zero-to-Prod Platform
+# Zero-to-Prod
 
-Zero-to-Prod is an evidence-driven DevOps and Cloud Engineering laboratory for learning how to design, build, secure, deploy, observe, operate, compare, recover, and evolve real software systems across local, open-source, and multi-cloud environments.
+Zero-to-Prod is an evidence-driven DevOps and Cloud Engineering learning laboratory for understanding how real software systems are designed, built, secured, tested, deployed, observed, operated, recovered, evolved, compared, and eventually retired.
 
-The project is technology- and provider-neutral. AWS is currently the deepest implemented cloud environment, but it is an implementation context rather than the permanent project boundary.
+The project is deliberately technology- and provider-neutral.
 
-Zero-to-Prod develops production-oriented reference implementations and deliberately does **not** claim production readiness without evidence.
+Technologies are introduced because an engineering problem justifies them, not because the project needs to collect tools.
 
-The long-term mission, engineering principles, learning model, environment strategy, and capability roadmap are defined in the:
+Zero-to-Prod develops production-oriented engineering skills and reference implementations, but it does **not** claim production readiness without evidence.
 
-[Zero-to-Prod v2 rebaseline specification](docs/rebaseline/zero-to-prod-v2-specification.md)
+The long-term mission, engineering principles, learning model, environment strategy, and capability roadmap are defined in the [Zero-to-Prod v2 rebaseline specification](docs/rebaseline/zero-to-prod-v2-specification.md).
 
-## Current implemented baseline
+## Engineering approach
 
-The repository currently contains two completed, evidence-backed capability layers centered on a small Go API and an AWS ECS Fargate development environment:
-
-```text
-Sprint 01
-tested immutable deployment + external verification + manual rollback
-
-Sprint 02
-recoverable Terraform state + diagnostics + verified release evidence
-+ machine-verifiable rollback eligibility + runtime-config compatibility
-```
-
-The AWS sandbox used for those experiments is:
+Zero-to-Prod follows a problem-driven learning cycle:
 
 ```text
-account = 333534066371
-region  = eu-west-3
+understand the problem
+        ↓
+identify constraints
+        ↓
+identify viable architectures
+        ↓
+examine credible alternatives
+        ↓
+implement representative solutions
+        ↓
+break and measure them
+        ↓
+compare trade-offs
+        ↓
+make a defensible decision
+        ↓
+operate the chosen system
+        ↓
+recover, evolve, migrate, or retire it
 ```
 
-These sprints remain the historical implementation baseline. They do not define the permanent technology or provider scope of Zero-to-Prod v2.
+Core principles include:
 
-## Zero-to-Prod v2 direction
+- problem before technology;
+- concepts before providers;
+- alternatives before decisions;
+- evidence before claims;
+- failure as part of architecture;
+- measurement before optimization;
+- local-first experimentation where behavior is portable;
+- real providers where provider semantics are part of the lesson;
+- security, observability, operations, and cost as cross-cutting concerns;
+- explicit lifecycle decisions for experimental scaffolding.
 
-Future work starts from engineering problems and capabilities rather than from a predetermined tool or cloud provider.
+## Learning model
 
-The project will progressively expand across local environments, open-source systems, and real cloud providers where provider-specific behavior is part of the learning objective. Technologies such as AWS, Azure, GCP, Kubernetes, Terraform, databases, messaging systems, and observability platforms are implementation options to evaluate rather than default answers.
+Capabilities are tracked using evidence-backed learning levels rather than marking entire technologies as "learned."
 
-Future work follows these principles:
+| Level | Meaning |
+| --- | --- |
+| L0 — Uncovered | No meaningful hands-on exposure |
+| L1 — Exposed | Encountered the concept |
+| L2 — Explain | Can explain the problem, purpose, and mechanics |
+| L3 — Implement | Can build a working implementation |
+| L4 — Experiment | Has deliberately tested or broken it and understands important failure behavior |
+| L5 — Compare & Decide | Can compare credible alternatives and defend an architectural choice |
+| L6 — Operate | Has sustained operational experience with upgrades, incidents, maintenance, failure, and recovery |
+
+The current evidence-backed levels and remaining unknowns are maintained in the [current capability baseline](docs/learning/current-capability-baseline.md).
+
+## Current reference system — Work Items
+
+The current reference system is **Work Items**.
+
+Its implementation currently lives under `apps/demo-api`, a name inherited from the earlier project baseline. The directory name does not define the long-term application architecture.
+
+The current system contains two executable processes:
+
+- an HTTP API;
+- an asynchronous worker.
+
+It currently uses PostgreSQL for durable state and RabbitMQ for message delivery.
 
 ```text
-problem before technology
-concept before provider
-alternatives before decisions
-evidence before claims
-failure as part of design
-measure before optimizing
-local-first where behavior is portable
-real providers where provider semantics matter
-L5 breadth with selected L6 operational depth
+Client
+  │
+  ▼
+Work Items API
+  │
+  ├──────────────► PostgreSQL
+  │                 ├─ Work Items
+  │                 ├─ Processing Jobs
+  │                 └─ Transactional Outbox
+  │
+  │                 durable acceptance
+  │                       │
+  │                       ▼
+  └──── API-side outbox publisher
+                          │
+                          ▼
+                       RabbitMQ
+                          │
+                          ▼
+                        Worker
+                          │
+                          ▼
+                      PostgreSQL
 ```
+
+The API currently exposes health, readiness, version, Work Item, and processing operations.
+
+The asynchronous path uses a transactional outbox so acceptance of processing responsibility is committed durably in PostgreSQL before publication to RabbitMQ.
+
+The worker consumes with manual acknowledgement, bounded retry behavior, terminal failure handling, and guarded durable state transitions.
+
+The design currently provides **at-least-once processing with idempotent effects**. Exactly-once delivery or publication is not claimed.
+
+## Current implemented capabilities
+
+Sprint 03 has expanded the reference system into a local-first stateful application backbone.
+
+Evidence-backed capabilities currently include:
+
+- persistent Work Items in PostgreSQL;
+- explicit version-controlled database migrations;
+- separate database administration, migration, application, and worker identities;
+- least-privilege runtime database access;
+- dependency-aware readiness;
+- additive schema evolution and application/schema compatibility experiments;
+- logical Work Item backup and destructive recovery;
+- transactional creation of processing jobs and outbox messages;
+- confirmed RabbitMQ publication;
+- separate RabbitMQ publisher and worker identities;
+- manual-ACK worker consumption;
+- bounded processing retries;
+- terminal processing failure;
+- idempotent processing effects;
+- recovery across API, broker, worker, and datastore failures;
+- restart and redelivery experiments;
+- graceful in-flight worker shutdown behavior.
+
+Important current limitations include:
+
+- no exactly-once guarantee;
+- no broker high-availability experiment;
+- no horizontal worker-scaling experiment;
+- no distributed tracing;
+- no representative messaging-architecture comparison;
+- no sustained-operation L6 claim;
+- PostgreSQL backup currently protects Work Item data only, not the complete asynchronous processing state.
+
+These limitations are experiment boundaries rather than hidden production-readiness assumptions.
 
 ## Local development
 
-The demo API has a local-first development workflow with PostgreSQL persistence and no AWS dependency.
+The current implementation is local-first.
 
-From the repository root:
+PostgreSQL and RabbitMQ are real local dependencies rather than cloud-service emulations.
 
-```text
+### PostgreSQL
+
+Start PostgreSQL and apply migrations explicitly:
+
+```bash
 ./tools/postgres-local start
 ./tools/postgres-local build-migrate
 ./tools/postgres-local migrate-up
+```
 
-./tools/demo-api-local test
-./tools/demo-api-local build
+Useful PostgreSQL operations include:
+
+```bash
+./tools/postgres-local status
+./tools/postgres-local migrate-version
+./tools/postgres-local roles
+./tools/postgres-local schema
+```
+
+Schema migrations are an explicit lifecycle operation. Application startup does not automatically migrate the database.
+
+See the [local PostgreSQL guide](docs/guides/local-postgresql.md).
+
+### RabbitMQ
+
+Start RabbitMQ and ensure the repository-defined runtime topology:
+
+```bash
+./tools/rabbitmq-local start
+```
+
+Inspect the local broker with:
+
+```bash
+./tools/rabbitmq-local status
+./tools/rabbitmq-local diagnostics
+```
+
+The local topology uses separate publisher and worker identities with different permissions.
+
+### API
+
+Run the API:
+
+```bash
 ./tools/demo-api-local run
+```
+
+In another terminal, verify its basic runtime contract:
+
+```bash
 ./tools/demo-api-local verify
 ```
 
-Schema migrations remain an explicit lifecycle step and are not run by application startup.
+The helper also provides:
 
-Local PostgreSQL Work Item data can also be backed up and recovered after destructive data-volume loss using repository-owned tooling. Recovery remains migration-first: schema and privileges are reconstructed through explicit migrations before application data is restored.
-
-The current application deployment mode is `local-only`. The API now requires PostgreSQL, while the existing AWS development runtime does not yet provide that dependency, so CI validates the application but deliberately does not publish or deploy it.
-
-The workflow requires no AWS credentials or cloud infrastructure.
-
-See the [local demo API development guide](docs/guides/local-demo-api.md), [local PostgreSQL guide](docs/guides/local-postgresql.md), [Sprint 03 PostgreSQL backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md), and [Sprint 03 recovery runbook](docs/sprint-03/runbook.md) for prerequisites, persistence behavior, migration lifecycle, backup/recovery behavior, and environment boundaries.
-
-## Implemented capability — Sprint 02
-
-Sprint 02 focuses on:
-
-> Recoverable, Observable, and Cost-Controlled Deployments
-
-Given a tested change on `main`, the current development path can:
-
-```text
-classify the change
-    ↓
-run only required validation
-    ↓
-build the application artifact once
-    ↓
-publish an immutable full-SHA image to Amazon ECR
-    ↓
-initialize durable remote Terraform state
-    ↓
-create temporary verification infrastructure
-    ↓
-deploy to Amazon ECS Fargate
-    ↓
-wait for ECS stability
-    ↓
-externally verify /health
-    ↓
-externally verify exact /version
-    ↓
-persist verified deployment evidence
-    ↓
-scale ECS back to zero
-    ↓
-destroy temporary verification infrastructure
+```bash
+./tools/demo-api-local test
+./tools/demo-api-local build
 ```
 
-If deployment fails while the runner remains available, bounded diagnostics correlate ECS state, stopped-task/container metadata, CloudWatch application logs, and external-verifier evidence before cleanup.
+### Worker
 
-If cleanup never executes, a fresh runner can initialize the same remote Terraform backend, recover the Terraform-owned temporary resources, review an exact saved destroy plan, and remove only the expected resources.
+Run the asynchronous worker:
 
-## Rollback model
-
-Rollback remains an explicit operator action through:
-
-```text
-Demo API Rollback
+```bash
+./tools/worker-local run
 ```
 
-The operator supplies:
+The helper also provides:
 
-```text
-full target Git SHA
-+
-explicit ROLLBACK confirmation
+```bash
+./tools/worker-local test
+./tools/worker-local build
 ```
 
-Before runtime mutation, the workflow requires machine-verifiable evidence that the target is eligible.
+### Backup and recovery
 
-Current rollback eligibility requires:
+Work Item data can be backed up using repository-owned tooling:
 
-```text
-target environment
-+
-immutable ECR image
-+
-schema-v2 verified deployment record
-+
-matching image digest
-+
-matching runtime_config_digest
-+
-successful historical health verification
-+
-successful historical exact-version verification
+```bash
+./tools/postgres-backup-local create <backup-path>
+./tools/postgres-backup-local inspect <backup-path>
+./tools/postgres-backup-local validate <backup-path>
+./tools/postgres-backup-local restore <backup-path>
 ```
 
-Only then can the workflow:
+Recovery is migration-first: the target schema and privileges must already exist, and the Work Item restore target must be empty.
+
+The current backup contract covers Work Item data and sequence state. It does **not** yet provide complete recovery of processing jobs or transactional outbox state.
+
+See the [Sprint 03 PostgreSQL backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md) and [Sprint 03 recovery runbook](docs/sprint-03/runbook.md).
+
+## CI
+
+GitHub Actions currently provides change-aware validation of the local-first system.
+
+Application validation includes:
+
+- Go formatting;
+- `go vet`;
+- Go tests;
+- PostgreSQL integration setup and migrations;
+- API integration tests;
+- RabbitMQ integration setup;
+- worker integration tests;
+- container build validation.
+
+The current CI path requires no AWS credentials and performs no cloud deployment.
+
+## Historical capability layers
+
+Zero-to-Prod preserves completed experiments as historical evidence even after their implementation is no longer part of the active system.
+
+### Sprint 01
+
+Sprint 01 explored an AWS-based immutable application delivery path, including:
+
+- immutable container artifacts;
+- GitHub Actions OIDC authentication;
+- ECS Fargate deployment;
+- external runtime verification;
+- controlled deployment failure;
+- operator-assisted rollback;
+- cleanup.
+
+Its documentation remains under [`docs/sprint-01`](docs/sprint-01).
+
+### Sprint 02
+
+Sprint 02 deepened the AWS delivery system through experiments involving:
+
+- recoverable Terraform state;
+- state locking;
+- fresh-runner recovery;
+- brownfield Terraform ownership;
+- deployment diagnostics;
+- durable verified deployment records;
+- rollback eligibility;
+- runtime-configuration compatibility;
+- IAM boundaries;
+- cloud cost controls.
+
+Its documentation remains under [`docs/sprint-02`](docs/sprint-02), with durable historical evidence under [`evidence/sprint-02`](evidence/sprint-02).
+
+The pre-rebaseline AWS runtime, delivery infrastructure, IAM identity, container registry, Terraform state backends, and executable AWS/Terraform implementation have since been deliberately retired.
+
+Their removal does not invalidate the capabilities learned through those experiments.
+
+### Sprint 03
+
+Sprint 03 moved the project into a local-first stateful-system backbone.
+
+The work so far includes:
+
+- PostgreSQL persistence and migration foundations;
+- runtime database privilege separation;
+- backup and destructive recovery;
+- additive schema evolution;
+- application/schema compatibility;
+- durable asynchronous processing;
+- RabbitMQ delivery;
+- distributed partial-failure and recovery experiments.
+
+Sprint 03 remains active while the system continues to develop deeper engineering understanding rather than simply accumulating technologies.
+
+## Current direction
+
+Future work is selected from engineering problems and capability gaps rather than from a predetermined technology roadmap.
+
+A new technology should answer questions such as:
 
 ```text
-register a fresh task-definition revision
-    ↓
-deploy the historical image
-    ↓
-wait for ECS stability
-    ↓
-freshly verify /health
-    ↓
-freshly verify exact /version
-    ↓
-return to the zero-runtime baseline
+What problem are we solving?
+What constraints exist?
+What credible alternatives exist?
+What would this technology teach us?
+How does it fail?
+How is it secured and observed?
+What operational burden does it introduce?
+What evidence would justify keeping it?
+When would we choose differently?
 ```
 
-Historical verification authorizes a rollback attempt. It does not replace fresh post-rollback verification.
+Local environments are preferred where the important behavior is portable.
 
-## Release identity
+Real cloud providers are introduced when provider-specific behavior is itself part of the learning objective.
 
-Sprint 02 demonstrated that an immutable image alone is not a complete rollback-safe release.
+The project aims for broad **L5 — Compare & Decide** capability across important engineering domains and selected **L6 — Operate** depth earned through sustained operation.
 
-The tested release/rollback identity is:
+## Repository map
 
 ```text
-environment
-+
-immutable image digest
-+
-runtime configuration digest
+zero-to-prod/
+├── apps/
+│   └── demo-api/       current Work Items implementation
+├── infra/
+│   └── local/          local PostgreSQL and RabbitMQ infrastructure
+├── docs/
+│   ├── guides/         implementation and local-operation guides
+│   ├── learning/       evidence-backed capability baseline
+│   ├── rebaseline/     v2 mission and engineering model
+│   ├── reference/      durable reference information
+│   ├── sprint-01/      historical Sprint 01 experiments
+│   ├── sprint-02/      historical Sprint 02 experiments
+│   └── sprint-03/      current Sprint 03 experiments
+├── evidence/           durable experiment and retirement evidence
+├── scripts/            repository and CI controls
+├── tools/              local development and operational helpers
+└── .github/            continuous integration
 ```
 
-The runtime configuration digest represents the ECS task-definition registration document except for the application image.
+The repository structure evolves only when a demonstrated architectural boundary justifies the change.
 
-Rollback does not restore the historical ECS task definition. It uses the selected historical image with the current task-definition configuration only when the historical and current runtime-configuration identities match.
+## Documentation
 
-The digest does not prove compatibility for mutable external state such as:
+Start with:
 
-```text
-secret values behind unchanged references
-database contents or schema
-external API contracts
-mutable external service configuration
-```
+- [Zero-to-Prod v2 rebaseline specification](docs/rebaseline/zero-to-prod-v2-specification.md) — mission, principles, learning model, environment strategy, and roadmap;
+- [Current capability baseline](docs/learning/current-capability-baseline.md) — evidence-backed learning levels and remaining gaps;
+- [Local demo API guide](docs/guides/local-demo-api.md) — current application workflow;
+- [Local PostgreSQL guide](docs/guides/local-postgresql.md) — datastore and migration lifecycle;
+- [Sprint 03 reliable asynchronous processing](docs/sprint-03/reliable-async-processing.md) — current asynchronous architecture and failure experiments.
 
-Those remain explicit limitations and future experiment boundaries.
-
-## Recovery model
-
-Terraform state for development verification is stored in versioned Amazon S3 and uses native S3 locking.
-
-A tested hard-interruption recovery followed:
-
-```text
-runner A creates temporary ALB/listener
-    ↓
-runner A is force-cancelled before cleanup
-    ↓
-durable S3 Terraform state remains
-    ↓
-fresh runner B starts with no local Terraform state
-    ↓
-terraform init reconnects to remote state
-    ↓
-saved destroy plan is generated
-    ↓
-destructive changes are allowlisted
-    ↓
-only ALB + listener are destroyed
-    ↓
-AWS independently confirms both are absent
-```
-
-The recovery design does not disable Terraform locking.
-
-## Observability
-
-Application stdout/stderr is sent to:
-
-```text
-/zero-to-prod/development/demo-api
-```
-
-with:
-
-```text
-CloudWatch Logs retention = 7 days
-```
-
-Failed-deployment diagnostics correlate evidence from multiple layers.
-
-| Failure                        | Primary evidence                |
-| ------------------------------ | ------------------------------- |
-| Application startup exit       | stopped-task/container metadata |
-| Container-health failure       | ECS events + task health        |
-| Service stabilization failure  | ECS service events              |
-| External `/health` failure     | verifier evidence               |
-| Exact `/version` mismatch      | verifier evidence               |
-| Historical application context | CloudWatch Logs                 |
-
-Diagnostics are bounded and best-effort so they do not prevent cleanup.
-
-## Security and IAM
-
-GitHub Actions uses OIDC-issued temporary AWS credentials instead of long-lived AWS access keys.
-
-The design favors narrow permissions and fail-closed behavior.
-
-Examples tested during Sprint 02 include:
-
-```text
-exact Terraform state/lock access
-deterministic deployment-record object access
-no requirement for broad S3 ListBucket just to test record existence
-rollback rejection when required evidence is inaccessible
-no IAM expansion merely to make a secondary evidence assertion pass
-```
-
-Immutable SHA-tagged ECR images, guarded rollback inputs, pinned GitHub Actions dependencies, deployment concurrency, Terraform locking, and temporary verification ingress remain part of the security boundary.
-
-Sprint 01 security details:
-
-[Sprint 01 security decisions](docs/sprint-01/security-decisions.md)
-
-Sprint 02 security/IAM decisions and lessons:
-
-[Sprint 02 architecture](docs/sprint-02/architecture.md)
-
-[Sprint 02 reflection](docs/sprint-02/reflection.md)
-
-## Cost controls
-
-The Sprint 02 personal AWS guardrails are:
-
-```text
-target Sprint 02 AWS cost <= $3
-hard personal ceiling       $5
-existing AWS Budget         $20/month
-```
-
-The Issue #44 Cost Explorer console snapshot showed approximately:
-
-```text
-September MTD = $0.54
-```
-
-The largest visible cost driver was Elastic Load Balancing from temporary verification-ALB experiments.
-
-No intentionally always-on compute or load balancer was added.
-
-Current storage controls include:
-
-```text
-CloudWatch Logs retention = 7 days
-ECR tags = immutable full SHA
-Terraform state = versioned S3
-deployment records = versioned S3
-```
-
-No blind age- or count-based ECR lifecycle rule is enabled because such a rule cannot determine whether an image is still required by retained rollback evidence.
-
-Image cleanup must first protect:
-
-```text
-current ECS image
-+
-images required by retained rollback evidence
-```
-
-## Normal resting state
-
-The intended development baseline is:
-
-```text
-ECS desired = 0
-ECS running = 0
-ECS pending = 0
-running ECS tasks = none
-temporary verification ALB = absent
-temporary Terraform managed resources = none
-```
-
-Issue #44 independently verified this baseline after the Sprint 02 experiments.
-
-The retained target group is intentional baseline infrastructure and is not owned by the temporary verification Terraform state.
-
-## Sprint 02 documentation
-
-Architecture and system boundaries:
-
-[Sprint 02 architecture](docs/sprint-02/architecture.md)
-
-Operational deployment, recovery, rollback, and cleanup procedures:
-
-[Sprint 02 operations runbook](docs/sprint-02/runbook.md)
-
-Integrated evidence chain for the final Sprint 02 capability:
-
-[Sprint 02 reproducible demonstration](docs/sprint-02/demonstration.md)
-
-Mistakes, corrections, cost decisions, knowledge gaps, focused time, and next experiment:
-
-[Sprint 02 reflection](docs/sprint-02/reflection.md)
-
-Focused experiment evidence:
-
-* [Target capability and failure model](docs/sprint-02/target-capability.md)
-* [Remote Terraform state](docs/sprint-02/remote-terraform-state.md)
-* [Change-aware CI](docs/sprint-02/change-aware-ci.md)
-* [Terraform state locking](docs/sprint-02/terraform-state-locking.md)
-* [Fresh-runner recovery](docs/sprint-02/fresh-runner-recovery.md)
-* [ECS CloudWatch logging](docs/sprint-02/ecs-cloudwatch-logging.md)
-* [Failed-deployment diagnostics](docs/sprint-02/failed-deployment-diagnostics.md)
-* [Verified deployment records](docs/sprint-02/verified-deployment-records.md)
-* [Rollback eligibility](docs/sprint-02/rollback-eligibility.md)
-* [Runtime-configuration rollback compatibility](docs/sprint-02/runtime-config-rollback-compatibility.md)
-
-## Sprint 01 foundation
-
-Sprint 01 established the original development delivery path:
-
-```text
-test
-→ build immutable artifact
-→ publish to ECR
-→ deploy to ECS Fargate
-→ externally verify
-→ clean up
-→ operator-assisted rollback
-```
-
-Its documentation remains as the historical foundation for Sprint 02:
-
-* [Sprint 01 architecture](docs/sprint-01/architecture.md)
-* [Sprint 01 security decisions](docs/sprint-01/security-decisions.md)
-* [Sprint 01 operations runbook](docs/sprint-01/runbook.md)
-* [Sprint 01 reproducible demonstration](docs/sprint-01/demonstration.md)
-* [Sprint 01 final reflection](docs/sprint-01/reflection.md)
-
-## Known limitations
-
-The currently implemented Sprint 01 and Sprint 02 baseline remains a development learning environment.
-
-Current known limitations include:
-
-```text
-no production-readiness claim
-no automatic rollback
-no zero-downtime deployment guarantee
-operator-triggered rollback
-temporary public HTTP verification ingress
-desired ECS count returns to zero after verification
-no multi-account promotion
-no multi-region recovery
-no EKS/Kubernetes or GitOps deployment model
-no full historical task-definition restoration
-no secret-value rollback
-no database/schema rollback
-no external API compatibility guarantee
-no recovery guarantee for every possible Terraform/state failure
-```
-
-These limitations describe the currently implemented Sprint 01 and Sprint 02 baseline. They do not define the long-term scope or the next experiment. Future work is selected according to the Zero-to-Prod v2 rebaseline specification and its capability, learning, evidence, and technology-selection principles.
+Historical Sprint 01 and Sprint 02 documents are intentionally preserved as factual records of what was implemented and learned at the time.

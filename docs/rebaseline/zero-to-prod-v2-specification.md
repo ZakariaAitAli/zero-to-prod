@@ -2,7 +2,7 @@
 
 **Version:** `v1.0-draft`
 **Date:** 2026-09-20
-**Status:** Design specification — no repository migration or Sprint 03 implementation has started.
+**Status:** Active project specification — rebaseline implemented and Sprint 03 in progress.
 
 This document defines what Zero-to-Prod is becoming after Sprint 01 and Sprint 02. It does **not** invalidate those sprints. Their strongest result was the engineering method they established: evidence-first reasoning, explicit failure models, fail-closed behavior, IAM discipline, honest limitations, and cost awareness.
 
@@ -1204,7 +1204,7 @@ These are among the strongest attributes identified by the audit.
 
 ## 30. Immediate rebaseline constraints
 
-Until the rebaseline moves into implementation:
+The following constraints governed the transition from design into implementation:
 
 ```text
 Do not rewrite Sprint 01.
@@ -1265,9 +1265,13 @@ RETHINK
   ↓
 SPECIFY
   ↓
-────────────── WE ARE HERE ──────────────
-  ↓
 IMPLEMENT THE REBASELINE
   ↓
 DESIGN SPRINT 03
+  ↓
+IMPLEMENT AND EXPERIMENT
+  ↓
+────────────── WE ARE HERE ──────────────
+  ↓
+CONTINUE EVIDENCE-DRIVEN SPRINT 03
 ```
