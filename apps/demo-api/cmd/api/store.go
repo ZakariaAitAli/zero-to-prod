@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,10 +17,21 @@ type workItem struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type processingJob struct {
+	ID           int64     `json:"id"`
+	WorkItemID   int64     `json:"work_item_id"`
+	State        string    `json:"state"`
+	AttemptCount int       `json:"attempt_count"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+var errWorkItemNotFound = errors.New("work item not found")
+
 type applicationStore interface {
 	Ready(context.Context) error
 	CreateWorkItem(context.Context, string, string) (workItem, error)
 	ListWorkItems(context.Context) ([]workItem, error)
+	AcceptProcessingJob(context.Context, int64) (processingJob, error)
 }
 
 type postgresStore struct {
@@ -50,17 +63,47 @@ func newPostgresStore(
 }
 
 func (store *postgresStore) Ready(ctx context.Context) error {
-	const query = `
-		SELECT id, title, status, created_at
-		FROM public.work_items
-		LIMIT 0
-	`
-
-	rows, err := store.pool.Query(ctx, query)
-	if err != nil {
-		return fmt.Errorf("check PostgreSQL readiness: %w", err)
+	queries := []string{
+		`
+			SELECT id, title, status, created_at
+			FROM public.work_items
+			LIMIT 0
+		`,
+		`
+			SELECT
+				id,
+				work_item_id,
+				state,
+				attempt_count,
+				last_error_code,
+				created_at,
+				finished_at
+			FROM public.processing_jobs
+			LIMIT 0
+		`,
+		`
+			SELECT
+				id,
+				processing_job_id,
+				event_type,
+				payload,
+				publish_attempts,
+				last_error_code,
+				created_at,
+				published_at
+			FROM public.outbox_messages
+			LIMIT 0
+		`,
 	}
-	rows.Close()
+
+	for _, query := range queries {
+		rows, err := store.pool.Query(ctx, query)
+		if err != nil {
+			return fmt.Errorf("check PostgreSQL readiness: %w", err)
+		}
+
+		rows.Close()
+	}
 
 	return nil
 }
@@ -94,6 +137,217 @@ func (store *postgresStore) CreateWorkItem(
 	}
 
 	return item, nil
+}
+
+func (store *postgresStore) AcceptProcessingJob(
+	ctx context.Context,
+	workItemID int64,
+) (processingJob, error) {
+	tx, err := store.pool.Begin(ctx)
+	if err != nil {
+		return processingJob{}, fmt.Errorf(
+			"begin processing acceptance transaction: %w",
+			err,
+		)
+	}
+
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	const insertJobQuery = `
+		INSERT INTO public.processing_jobs (work_item_id)
+		SELECT id
+		FROM public.work_items
+		WHERE id = $1
+		RETURNING
+			id,
+			work_item_id,
+			state,
+			attempt_count,
+			created_at
+	`
+
+	var job processingJob
+
+	err = tx.QueryRow(
+		ctx,
+		insertJobQuery,
+		workItemID,
+	).Scan(
+		&job.ID,
+		&job.WorkItemID,
+		&job.State,
+		&job.AttemptCount,
+		&job.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return processingJob{}, errWorkItemNotFound
+	}
+	if err != nil {
+		return processingJob{}, fmt.Errorf(
+			"insert processing job: %w",
+			err,
+		)
+	}
+
+	const insertOutboxQuery = `
+		INSERT INTO public.outbox_messages (
+			processing_job_id,
+			event_type,
+			payload
+		)
+		VALUES (
+			$1::BIGINT,
+			'work_item.process',
+			jsonb_build_object(
+				'type', 'work_item.process',
+				'version', 1,
+				'job_id', $1::BIGINT,
+				'work_item_id', $2::BIGINT
+			)
+		)
+	`
+
+	if _, err := tx.Exec(
+		ctx,
+		insertOutboxQuery,
+		job.ID,
+		job.WorkItemID,
+	); err != nil {
+		return processingJob{}, fmt.Errorf(
+			"insert processing outbox message: %w",
+			err,
+		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return processingJob{}, fmt.Errorf(
+			"commit processing acceptance transaction: %w",
+			err,
+		)
+	}
+
+	return job, nil
+}
+
+func (store *postgresStore) BeginOutboxPublishAttempt(
+	ctx context.Context,
+) (outboxMessage, error) {
+	const query = `
+		WITH next_message AS (
+			SELECT id
+			FROM public.outbox_messages
+			WHERE published_at IS NULL
+			ORDER BY id
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		UPDATE public.outbox_messages AS message
+		SET publish_attempts = message.publish_attempts + 1
+		FROM next_message
+		WHERE message.id = next_message.id
+		RETURNING
+			message.id,
+			message.processing_job_id,
+			message.event_type,
+			message.payload,
+			message.publish_attempts
+	`
+
+	var message outboxMessage
+
+	err := store.pool.QueryRow(
+		ctx,
+		query,
+	).Scan(
+		&message.ID,
+		&message.ProcessingJobID,
+		&message.EventType,
+		&message.Payload,
+		&message.PublishAttempts,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return outboxMessage{}, errNoOutboxMessage
+	}
+	if err != nil {
+		return outboxMessage{}, fmt.Errorf(
+			"begin outbox publish attempt: %w",
+			err,
+		)
+	}
+
+	return message, nil
+}
+
+func (store *postgresStore) MarkOutboxPublished(
+	ctx context.Context,
+	messageID int64,
+) error {
+	const query = `
+		UPDATE public.outbox_messages
+		SET
+			published_at = CURRENT_TIMESTAMP,
+			last_error_code = NULL
+		WHERE id = $1
+		  AND published_at IS NULL
+	`
+
+	result, err := store.pool.Exec(
+		ctx,
+		query,
+		messageID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"mark outbox message published: %w",
+			err,
+		)
+	}
+
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"mark outbox message published: expected 1 row, updated %d",
+			result.RowsAffected(),
+		)
+	}
+
+	return nil
+}
+
+func (store *postgresStore) RecordOutboxPublishFailure(
+	ctx context.Context,
+	messageID int64,
+	errorCode string,
+) error {
+	const query = `
+		UPDATE public.outbox_messages
+		SET last_error_code = $2
+		WHERE id = $1
+		  AND published_at IS NULL
+	`
+
+	result, err := store.pool.Exec(
+		ctx,
+		query,
+		messageID,
+		errorCode,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"record outbox publish failure: %w",
+			err,
+		)
+	}
+
+	if result.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"record outbox publish failure: expected 1 row, updated %d",
+			result.RowsAffected(),
+		)
+	}
+
+	return nil
 }
 
 func (store *postgresStore) ListWorkItems(

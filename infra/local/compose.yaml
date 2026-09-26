@@ -12,6 +12,8 @@ services:
       ZTP_POSTGRES_MIGRATOR_PASSWORD: ${ZTP_POSTGRES_MIGRATOR_PASSWORD:-zero-to-prod-local-migrator}
       ZTP_POSTGRES_APP_USER: ${ZTP_POSTGRES_APP_USER:-zero_to_prod_app}
       ZTP_POSTGRES_APP_PASSWORD: ${ZTP_POSTGRES_APP_PASSWORD:-zero-to-prod-local-app}
+      ZTP_POSTGRES_WORKER_USER: ${ZTP_POSTGRES_WORKER_USER:-zero_to_prod_worker}
+      ZTP_POSTGRES_WORKER_PASSWORD: ${ZTP_POSTGRES_WORKER_PASSWORD:-zero-to-prod-local-worker}
 
     ports:
       - "127.0.0.1:${ZTP_POSTGRES_PORT:-55432}:5432"

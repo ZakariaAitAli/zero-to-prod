@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd
+)"
+
+ROOT_DIR="$(
+  cd -- "${SCRIPT_DIR}/.."
+  pwd
+)"
+
+APP_DIR="${ROOT_DIR}/apps/demo-api"
+
+BINARY="${WORKER_BINARY:-${TMPDIR:-/tmp}/zero-to-prod-worker}"
+DATABASE_URL="${DATABASE_URL:-postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:55432/zero_to_prod?sslmode=disable}"
+RABBITMQ_WORKER_URL="${RABBITMQ_WORKER_URL:-amqp://zero_to_prod_worker:zero-to-prod-local-rabbitmq-worker@127.0.0.1:5672/zero_to_prod}"
+RABBITMQ_QUEUE="${RABBITMQ_QUEUE:-work_item_processing}"
+
+usage() {
+  cat <<EOF_USAGE
+Usage:
+  ./tools/worker-local test
+  ./tools/worker-local build
+  ./tools/worker-local run
+
+Environment overrides:
+  WORKER_BINARY=<path>          native binary output path
+  DATABASE_URL=<url>            PostgreSQL worker connection URL
+  RABBITMQ_WORKER_URL=<url>     RabbitMQ worker connection URL
+  RABBITMQ_QUEUE=<name>         processing queue (default: work_item_processing)
+EOF_USAGE
+}
+
+require_command() {
+  local command_name="$1"
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "error: required command not found: ${command_name}" >&2
+    exit 1
+  fi
+}
+
+test_worker() {
+  require_command go
+
+  echo "Running worker tests..."
+
+  (
+    cd "$APP_DIR"
+    go test ./cmd/worker -count=1
+  )
+}
+
+build_worker() {
+  require_command go
+
+  mkdir -p "$(dirname "$BINARY")"
+
+  echo "Building worker..."
+  echo "Output: ${BINARY}"
+
+  (
+    cd "$APP_DIR"
+
+    go build \
+      -trimpath \
+      -o "$BINARY" \
+      ./cmd/worker
+  )
+}
+
+run_worker() {
+  build_worker
+
+  echo
+  echo "Starting worker..."
+  echo "Queue: ${RABBITMQ_QUEUE}"
+  echo
+
+  exec env \
+    DATABASE_URL="$DATABASE_URL" \
+    RABBITMQ_WORKER_URL="$RABBITMQ_WORKER_URL" \
+    RABBITMQ_QUEUE="$RABBITMQ_QUEUE" \
+    "$BINARY"
+}
+
+case "${1:-}" in
+  test)
+    test_worker
+    ;;
+  build)
+    build_worker
+    ;;
+  run)
+    run_worker
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  "")
+    usage >&2
+    exit 2
+    ;;
+  *)
+    echo "error: unknown command: $1" >&2
+    echo >&2
+    usage >&2
+    exit 2
+    ;;
+esac

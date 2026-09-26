@@ -12,6 +12,10 @@ type stubApplicationStore struct {
 
 	listItems []workItem
 	listErr   error
+
+	acceptJob        processingJob
+	acceptErr        error
+	acceptWorkItemID int64
 }
 
 func (store *stubApplicationStore) Ready(context.Context) error {
@@ -33,6 +37,15 @@ func (store *stubApplicationStore) ListWorkItems(
 	context.Context,
 ) ([]workItem, error) {
 	return store.listItems, store.listErr
+}
+
+func (store *stubApplicationStore) AcceptProcessingJob(
+	_ context.Context,
+	workItemID int64,
+) (processingJob, error) {
+	store.acceptWorkItemID = workItemID
+
+	return store.acceptJob, store.acceptErr
 }
 
 func availableDatabase() applicationStore {

@@ -39,6 +39,7 @@ Usage:
   ./tools/postgres-local migrate-up
   ./tools/postgres-local migrate-version
   ./tools/postgres-local migrate-force <version>
+  ./tools/postgres-local ensure-identities
   ./tools/postgres-local roles
   ./tools/postgres-local schema
 
@@ -51,6 +52,7 @@ Commands:
   migrate-up        Apply all pending migrations explicitly.
   migrate-version   Show the current migration version.
   migrate-force     Explicitly set migration metadata to a reviewed version.
+  ensure-identities Ensure repository-defined runtime identities exist.
   roles             Show PostgreSQL roles.
   schema            Show public tables and the work_items schema.
 
@@ -142,6 +144,11 @@ run_migrate() {
     "$@"
 }
 
+ensure_identities() {
+  compose exec -T postgres \
+    /docker-entrypoint-initdb.d/001-roles.sh
+}
+
 show_roles() {
   compose exec -T postgres \
     psql \
@@ -197,6 +204,9 @@ case "${1:-}" in
     fi
 
     run_migrate force "$2"
+    ;;
+  ensure-identities)
+    ensure_identities
     ;;
   roles)
     show_roles

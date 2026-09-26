@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document records the current evidence-backed learning baseline for Zero-to-Prod after Sprint 01, Sprint 02, Issue #88, and the beginning of the v2 rebaseline implementation.
+This document records the current evidence-backed learning baseline for Zero-to-Prod through Issue #103 in Sprint 03.
 
 It applies the learning model defined in:
 
@@ -12,7 +12,7 @@ The purpose is not to mark technologies as "learned."
 
 The purpose is to identify specific engineering capabilities, the strongest level currently supported by evidence, and the important unknowns that remain.
 
-This baseline is intended to guide Sprint 03 selection.
+This baseline is intended to guide subsequent engineering work.
 
 It is not a certification matrix, résumé checklist, or claim of production readiness.
 
@@ -65,21 +65,21 @@ L6 requires sustained operational experience and cannot be earned through a shor
 | Observability — application logging for deployment diagnosis | L4 | `docs/sprint-02/ecs-cloudwatch-logging.md`, `docs/sprint-02/failed-deployment-diagnostics.md` | Application logs and ECS evidence were correlated during controlled deployment failures and diagnostics were designed to remain bounded and cleanup-safe. | Metrics, traces, SLO-driven signals, dashboards, alerting, cardinality management, and broader observability architecture remain largely uncovered. |
 | Incident/recovery practice — deployment failure diagnosis and cleanup | L4 | `docs/sprint-02/failed-deployment-diagnostics.md`, `docs/sprint-02/fresh-runner-recovery.md` | Multiple failure layers were investigated and recovery was performed from a fresh runner rather than relying on the original execution context. | This is experiment-based recovery, not sustained incident-response operation; no L6 claim is justified. |
 | Backup and restore — local PostgreSQL application data recovery | L4 | `docs/sprint-03/postgresql-backup-restore.md`, `docs/sprint-03/runbook.md`, `docs/guides/local-postgresql.md`, `tools/postgres-backup-local` | A repository-owned data-only logical backup was implemented, PostgreSQL data-volume loss was exercised destructively, recovery was completed through explicit migrations plus restore, recovered rows were verified directly and through the API, sequence continuity was tested, and missing, corrupt, wrong-scope, pre-migration, and non-empty-target failures were deliberately exercised. Issue #101 also regression-tested current-version Schema AB backup/restore with both `pending` and `done` status values plus sequence continuity. | No PITR/WAL recovery, physical backup, scheduled retention, large-dataset recovery, managed PostgreSQL recovery, cross-region recovery, or representative recovery-architecture comparison has been tested; no L5 claim is justified. |
+| Messaging / asynchronous processing | L4 | `docs/sprint-03/reliable-async-processing.md` | A durable PostgreSQL acceptance boundary, transactional outbox, confirmed RabbitMQ publication, manual-ACK worker, bounded retries, terminal failure, and idempotent completion were implemented. Pre-commit failure, post-commit/pre-publication recovery, broker outage, duplicate/redelivered delivery, retry exhaustion, API/worker restart, and graceful in-flight shutdown were deliberately exercised. | Exactly-once delivery/publication is not claimed. Dead-letter handling, long-term replay tooling, ordering guarantees, horizontal worker scaling, production broker operations, broker HA, and representative messaging-architecture comparison remain untested; no L5 claim is justified. |
+| Distributed-system behavior — partial failure and recovery across API, broker, worker, and datastore | L4 | `docs/sprint-03/reliable-async-processing.md` | Failure behavior was deliberately exercised across independent API, RabbitMQ, worker, and PostgreSQL boundaries, including dependency outage, process restart, redelivery ambiguity, post-effect/pre-ACK recovery, durable recovery without caller retry, and explicit distinction between liveness, durable acceptance, publication, and processing outcome. | Network partitions and delay rather than simple outage, cross-job ordering, concurrent workers, load/backpressure, multi-node broker behavior, distributed tracing, and broader consistency-model comparison remain untested; no L5 claim is justified. |
 | FinOps — cost-aware temporary cloud experiments | L3 | `docs/sprint-02/reflection.md`, `docs/sprint-02/development-runtime-terraform-ownership.md` | Actual AWS spend was inspected, expensive resources were identified, runtime is returned to zero, and the project deliberately avoids NAT and always-on ALB/Fargate resources. | No mature unit-cost model, automated attribution, forecasting practice, or architecture comparison based on measured cost. |
 
 ---
 
 ## Important uncovered or shallow capabilities
 
-The strongest Sprint 01 and Sprint 02 evidence is concentrated around delivery, rollback, Terraform state, AWS IAM, and deployment evidence.
+The strongest earlier evidence was concentrated around delivery, rollback, Terraform state, AWS IAM, deployment evidence, and PostgreSQL recovery. Issue #103 materially broadened the system into reliable local asynchronous processing and distributed failure behavior.
 
 The following areas remain intentionally shallow and should influence future work.
 
 | Capability | Current level | Current limitation |
 | --- | --- | --- |
 | Cache architecture | L0 | No cache exists in the reference system. |
-| Messaging / asynchronous processing | L0 | No broker, queue, or worker path exists. |
-| Distributed-system behavior | L1 | The API now depends on PostgreSQL across a network boundary, but broader multi-service, asynchronous, partition, ordering, and consistency behavior has not been explored. |
 | Application metrics | L0 | No meaningful application metrics capability is implemented. |
 | Distributed tracing | L0 | No tracing implementation or experiment exists. |
 | SLOs / error budgets | L0 | Concepts may have been encountered, but no evidence-backed implementation exists. |
@@ -95,7 +95,7 @@ The following areas remain intentionally shallow and should influence future wor
 
 These are gaps, not an instruction to implement all of them.
 
-Sprint 03 should select a coherent engineering problem that advances several related capabilities at once.
+Future work should continue to select coherent engineering problems that advance several related capabilities at once.
 
 ---
 
@@ -185,7 +185,7 @@ Its job is to guide engineering decisions, not inventory every technology encoun
 
 ---
 
-## Immediate implication for Sprint 03
+## Immediate implication for subsequent work
 
 The current system is strongest around:
 
@@ -194,10 +194,13 @@ The current system is strongest around:
 - rollback safety;
 - Terraform state and recovery;
 - AWS IAM;
-- release evidence.
+- release evidence;
+- PostgreSQL persistence and recovery;
+- reliable local asynchronous processing;
+- distributed partial-failure recovery.
 
-The highest-leverage gaps are now outside that narrow release path.
+The asynchronous path is now evidence-backed at L4, so future work should not add messaging complexity merely to increase technology coverage.
 
-Sprint 03 should therefore prefer a problem that broadens the engineering surface of the reference system rather than adding another layer of delivery mechanics.
+The highest-leverage gaps remain capabilities that are still shallow or uncovered, selected only when they support a coherent engineering problem.
 
-The v2 specification remains authoritative for the final Sprint 03 decision.
+The v2 specification remains authoritative for future capability selection.

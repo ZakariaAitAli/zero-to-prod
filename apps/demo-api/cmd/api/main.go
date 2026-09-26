@@ -24,12 +24,16 @@ import (
 var version = "dev"
 
 const (
-	readHeaderTimeout        = 5 * time.Second
-	readTimeout              = 10 * time.Second
-	writeTimeout             = 10 * time.Second
-	idleTimeout              = 60 * time.Second
-	shutdownTimeout          = 10 * time.Second
-	databaseReadinessTimeout = 2 * time.Second
+	readHeaderTimeout              = 5 * time.Second
+	readTimeout                    = 10 * time.Second
+	writeTimeout                   = 10 * time.Second
+	idleTimeout                    = 60 * time.Second
+	shutdownTimeout                = 10 * time.Second
+	databaseReadinessTimeout       = 2 * time.Second
+	outboxPublisherReconnectDelay  = 1 * time.Second
+	outboxPublisherIdlePollDelay   = 500 * time.Millisecond
+	outboxPublisherStoreRetryDelay = 1 * time.Second
+	defaultWorkItemProcessingQueue = "work_item_processing"
 )
 
 type statusResponse struct {
@@ -63,6 +67,16 @@ func main() {
 		log.Fatal("DATABASE_URL is required")
 	}
 
+	rabbitMQPublisherURL := os.Getenv("RABBITMQ_PUBLISHER_URL")
+	if rabbitMQPublisherURL == "" {
+		log.Fatal("RABBITMQ_PUBLISHER_URL is required")
+	}
+
+	rabbitMQQueue := os.Getenv("RABBITMQ_QUEUE")
+	if rabbitMQQueue == "" {
+		rabbitMQQueue = defaultWorkItemProcessingQueue
+	}
+
 	store, err := newPostgresStore(context.Background(), databaseURL)
 	if err != nil {
 		log.Fatalf("initialize PostgreSQL store: %v", err)
@@ -85,13 +99,42 @@ func main() {
 
 	log.Printf("demo-api version=%s listening on %s", version, address)
 
-	if err := runHTTPServer(
+	publisherFactory := func() (
+		closeableBrokerMessagePublisher,
+		error,
+	) {
+		return newRabbitMQPublisher(
+			rabbitMQPublisherURL,
+			rabbitMQQueue,
+		)
+	}
+
+	runHTTP := func(ctx context.Context) error {
+		return runHTTPServer(
+			ctx,
+			server,
+			readiness,
+			shutdownTimeout,
+		)
+	}
+
+	runPublisher := func(ctx context.Context) error {
+		return runOutboxPublisher(
+			ctx,
+			store,
+			publisherFactory,
+			outboxPublisherReconnectDelay,
+			outboxPublisherIdlePollDelay,
+			outboxPublisherStoreRetryDelay,
+		)
+	}
+
+	if err := runApplication(
 		shutdownContext,
-		server,
-		readiness,
-		shutdownTimeout,
+		runHTTP,
+		runPublisher,
 	); err != nil {
-		log.Fatalf("server stopped: %v", err)
+		log.Fatalf("application stopped: %v", err)
 	}
 }
 
@@ -214,6 +257,7 @@ func newHandler(
 	})
 
 	registerWorkItemHandlers(mux, store)
+	registerProcessingHandlers(mux, store)
 
 	return mux
 }

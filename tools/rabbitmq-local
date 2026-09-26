@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd
+)"
+
+ROOT_DIR="$(
+  cd -- "${SCRIPT_DIR}/.."
+  pwd
+)"
+
+COMPOSE_FILE="${ROOT_DIR}/infra/local/rabbitmq/compose.yaml"
+COMPOSE_PROJECT_NAME="zero-to-prod-rabbitmq"
+
+RABBITMQ_ADMIN_USER="${ZTP_RABBITMQ_USER:-zero_to_prod}"
+RABBITMQ_ADMIN_PASSWORD="${ZTP_RABBITMQ_PASSWORD:-zero-to-prod-local-rabbitmq}"
+RABBITMQ_VHOST="${ZTP_RABBITMQ_VHOST:-zero_to_prod}"
+RABBITMQ_MANAGEMENT_PORT="${ZTP_RABBITMQ_MANAGEMENT_PORT:-15672}"
+
+RABBITMQ_PUBLISHER_USER="${ZTP_RABBITMQ_PUBLISHER_USER:-zero_to_prod_publisher}"
+RABBITMQ_PUBLISHER_PASSWORD="${ZTP_RABBITMQ_PUBLISHER_PASSWORD:-zero-to-prod-local-rabbitmq-publisher}"
+
+RABBITMQ_WORKER_USER="${ZTP_RABBITMQ_WORKER_USER:-zero_to_prod_worker}"
+RABBITMQ_WORKER_PASSWORD="${ZTP_RABBITMQ_WORKER_PASSWORD:-zero-to-prod-local-rabbitmq-worker}"
+
+RABBITMQ_QUEUE="${ZTP_RABBITMQ_QUEUE:-work_item_processing}"
+
+usage() {
+  cat <<EOF_USAGE
+Usage:
+  ./tools/rabbitmq-local start
+  ./tools/rabbitmq-local stop
+  ./tools/rabbitmq-local destroy
+  ./tools/rabbitmq-local status
+  ./tools/rabbitmq-local bootstrap
+  ./tools/rabbitmq-local diagnostics
+
+Commands:
+  start        Start RabbitMQ, wait until healthy, and ensure runtime topology.
+  stop         Stop RabbitMQ without deleting broker data.
+  destroy      Remove only RabbitMQ containers, network, and data volume.
+  status       Show RabbitMQ container state.
+  bootstrap    Idempotently ensure runtime users, permissions, and durable queue.
+  diagnostics  Verify the broker and show non-secret broker metadata.
+
+Environment overrides:
+  ZTP_RABBITMQ_USER
+  ZTP_RABBITMQ_PASSWORD
+  ZTP_RABBITMQ_VHOST
+  ZTP_RABBITMQ_AMQP_PORT
+  ZTP_RABBITMQ_MANAGEMENT_PORT
+  ZTP_RABBITMQ_PUBLISHER_USER
+  ZTP_RABBITMQ_PUBLISHER_PASSWORD
+  ZTP_RABBITMQ_WORKER_USER
+  ZTP_RABBITMQ_WORKER_PASSWORD
+  ZTP_RABBITMQ_QUEUE
+EOF_USAGE
+}
+
+require_command() {
+  local command_name="$1"
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "error: required command not found: ${command_name}" >&2
+    exit 1
+  fi
+}
+
+require_docker() {
+  require_command docker
+  docker compose version >/dev/null
+}
+
+compose() {
+  docker compose \
+    --project-name "$COMPOSE_PROJECT_NAME" \
+    -f "$COMPOSE_FILE" \
+    "$@"
+}
+
+wait_for_rabbitmq() {
+  local container_id
+  local health=""
+
+  for _ in {1..60}; do
+    container_id="$(compose ps -q rabbitmq)"
+
+    if [[ -n "$container_id" ]]; then
+      health="$(
+        docker inspect \
+          --format '{{.State.Health.Status}}' \
+          "$container_id" 2>/dev/null || true
+      )"
+    fi
+
+    echo "health=${health:-unknown}"
+
+    if [[ "$health" == "healthy" ]]; then
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "error: RabbitMQ did not become healthy" >&2
+  return 1
+}
+
+wait_for_management_api() {
+  require_command curl
+
+  for _ in {1..30}; do
+    if curl \
+      --fail \
+      --silent \
+      --output /dev/null \
+      --connect-timeout 1 \
+      --max-time 2 \
+      --user "${RABBITMQ_ADMIN_USER}:${RABBITMQ_ADMIN_PASSWORD}" \
+      "http://127.0.0.1:${RABBITMQ_MANAGEMENT_PORT}/api/overview"
+    then
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "error: RabbitMQ management API did not become ready" >&2
+  return 1
+}
+
+user_exists() {
+  local username="$1"
+
+  compose exec -T rabbitmq \
+    rabbitmqctl list_users --silent \
+    | awk '{print $1}' \
+    | grep -Fxq "$username"
+}
+
+ensure_user() {
+  local username="$1"
+  local password="$2"
+
+  if user_exists "$username"; then
+    compose exec -T rabbitmq \
+      rabbitmqctl change_password \
+      "$username" \
+      "$password" \
+      >/dev/null
+  else
+    compose exec -T rabbitmq \
+      rabbitmqctl add_user \
+      "$username" \
+      "$password" \
+      >/dev/null
+  fi
+
+  # Runtime identities deliberately receive no management tags.
+  compose exec -T rabbitmq \
+    rabbitmqctl set_user_tags \
+    "$username" \
+    >/dev/null
+}
+
+ensure_runtime_users() {
+  ensure_user \
+    "$RABBITMQ_PUBLISHER_USER" \
+    "$RABBITMQ_PUBLISHER_PASSWORD"
+
+  ensure_user \
+    "$RABBITMQ_WORKER_USER" \
+    "$RABBITMQ_WORKER_PASSWORD"
+
+  # Publisher:
+  # - cannot configure topology
+  # - can publish only to RabbitMQ's default exchange
+  # - cannot consume
+  compose exec -T rabbitmq \
+    rabbitmqctl set_permissions \
+    --vhost "$RABBITMQ_VHOST" \
+    "$RABBITMQ_PUBLISHER_USER" \
+    '^$' \
+    '^amq\.default$' \
+    '^$' \
+    >/dev/null
+
+  # Worker:
+  # - cannot configure topology
+  # - cannot publish
+  # - can consume only from the processing queue
+  compose exec -T rabbitmq \
+    rabbitmqctl set_permissions \
+    --vhost "$RABBITMQ_VHOST" \
+    "$RABBITMQ_WORKER_USER" \
+    '^$' \
+    '^$' \
+    "^${RABBITMQ_QUEUE}$" \
+    >/dev/null
+}
+
+ensure_processing_queue() {
+  local vhost_path
+  local http_code
+
+  # Our normal vhost is URL-safe. This also handles the common "/" vhost.
+  vhost_path="${RABBITMQ_VHOST//\//%2F}"
+
+  http_code="$(
+    curl \
+      --silent \
+      --show-error \
+      --output /dev/null \
+      --write-out '%{http_code}' \
+      --user "${RABBITMQ_ADMIN_USER}:${RABBITMQ_ADMIN_PASSWORD}" \
+      --request PUT \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "durable": true,
+        "auto_delete": false,
+        "arguments": {}
+      }' \
+      "http://127.0.0.1:${RABBITMQ_MANAGEMENT_PORT}/api/queues/${vhost_path}/${RABBITMQ_QUEUE}"
+  )"
+
+  if [[ "$http_code" != "201" && "$http_code" != "204" ]]; then
+    echo "error: failed to ensure RabbitMQ queue, HTTP ${http_code}" >&2
+    return 1
+  fi
+}
+
+bootstrap_runtime() {
+  wait_for_management_api
+  ensure_runtime_users
+  ensure_processing_queue
+
+  echo "RabbitMQ runtime topology ensured."
+}
+
+start_rabbitmq() {
+  compose up -d rabbitmq
+  wait_for_rabbitmq
+  bootstrap_runtime
+}
+
+stop_rabbitmq() {
+  compose stop rabbitmq
+}
+
+destroy_rabbitmq() {
+  compose down -v
+}
+
+status_rabbitmq() {
+  compose ps -a rabbitmq
+}
+
+show_diagnostics() {
+  compose exec -T rabbitmq rabbitmq-diagnostics -q ping
+
+  echo
+  echo "RabbitMQ version:"
+  compose exec -T rabbitmq rabbitmqctl version
+
+  echo
+  echo "Virtual hosts:"
+  compose exec -T rabbitmq rabbitmqctl list_vhosts name
+
+  echo
+  echo "Users:"
+  compose exec -T rabbitmq rabbitmqctl list_users
+
+  echo
+  echo "Queues:"
+  compose exec -T rabbitmq \
+    rabbitmqctl list_queues \
+      --vhost "$RABBITMQ_VHOST" \
+      name durable auto_delete messages consumers
+}
+
+require_docker
+
+case "${1:-}" in
+  start)
+    start_rabbitmq
+    ;;
+  stop)
+    stop_rabbitmq
+    ;;
+  destroy)
+    destroy_rabbitmq
+    ;;
+  status)
+    status_rabbitmq
+    ;;
+  bootstrap)
+    bootstrap_runtime
+    ;;
+  diagnostics)
+    show_diagnostics
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  "")
+    usage >&2
+    exit 2
+    ;;
+  *)
+    echo "error: unknown command: $1" >&2
+    echo >&2
+    usage >&2
+    exit 2
+    ;;
+esac
