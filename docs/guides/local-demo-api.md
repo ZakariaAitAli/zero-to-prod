@@ -13,7 +13,7 @@ Required for the local workflow:
 
 `test` and `build` remain native Go operations.
 
-`run` and dependency-aware `verify` require the local PostgreSQL lab because the application now has a critical runtime datastore dependency.
+`run` requires the local PostgreSQL and RabbitMQ labs. Dependency-aware `verify` checks the API's HTTP contract, including readiness backed by the critical PostgreSQL persistence dependency.
 
 ## Local interface
 
@@ -39,12 +39,13 @@ The default binary is written outside the repository:
 
 ### Run
 
-Start PostgreSQL and apply migrations explicitly before starting the API:
+Start PostgreSQL, apply migrations explicitly, and start RabbitMQ before starting the API:
 
 ```bash
 ./tools/postgres-local start
 ./tools/postgres-local build-migrate
 ./tools/postgres-local migrate-up
+./tools/rabbitmq-local start
 ./tools/demo-api-local run
 ```
 
@@ -54,6 +55,8 @@ Defaults:
 PORT=8080
 VERSION=local
 DATABASE_URL=postgres://zero_to_prod_app:zero-to-prod-local-app@127.0.0.1:55432/zero_to_prod?sslmode=disable
+RABBITMQ_PUBLISHER_URL=amqp://zero_to_prod_publisher:zero-to-prod-local-rabbitmq-publisher@127.0.0.1:5672/zero_to_prod
+RABBITMQ_QUEUE=work_item_processing
 ```
 
 The default database credentials are development-only credentials from the local lab.
@@ -116,11 +119,7 @@ HTTP 503
 {"status":"not_ready"}
 ```
 
-The AWS development target group is Terraform-owned and uses `/ready` for its load balancer health check.
-
-The ECS container health check remains on `/health`, while load-balancer routing uses `/ready` so traffic acceptance reflects application readiness.
-
-Deployment verification also requires `/ready` to report `ready` before a deployment can be considered verified.
+RabbitMQ availability is deliberately not part of the `/ready` request-time check. Accepted processing work is first persisted in PostgreSQL through the transactional outbox, while the background publisher independently retries broker publication.
 
 ## Persistence endpoints
 
@@ -167,6 +166,30 @@ HTTP 503
 
 Database connection details are not returned in the HTTP response.
 
+## Asynchronous processing
+
+The API can durably accept processing for an existing Work Item:
+
+```text
+POST /items/{id}/process
+```
+
+Acceptance creates the processing responsibility and transactional outbox state in PostgreSQL before returning:
+
+```text
+HTTP 202
+```
+
+RabbitMQ publication is performed asynchronously by the API-side outbox publisher.
+
+This means broker availability is separated from durable request acceptance: an accepted processing request remains represented in PostgreSQL while the publisher retries delivery to RabbitMQ.
+
+The worker is a separate process and can be run with:
+
+```bash
+./tools/worker-local run
+```
+
 ## Overrides
 
 The local interface allows explicit overrides for experiments.
@@ -210,33 +233,9 @@ The local workflow requires no:
 - Terraform state
 - load balancer
 
-PostgreSQL runs only in the local Docker lab.
+PostgreSQL and RabbitMQ run in repository-owned local Docker labs.
 
-This workflow is intended for fast local application and dependency feedback. It does not emulate AWS or claim behavioral parity with the cloud deployment environment.
-
-## Deployment boundary
-
-The repository records the current application deployment compatibility in:
-
-```text
-apps/demo-api/deployment-mode
-```
-
-The current value is:
-
-```text
-local-only
-```
-
-This is deliberate. The application now requires PostgreSQL at runtime, but the existing AWS development task definition does not provide a PostgreSQL dependency or `DATABASE_URL`.
-
-While the mode is `local-only`, CI still performs the required application and workflow validation but forces publish/deploy eligibility to `false`.
-
-A future change that provisions and verifies the required cloud database/runtime configuration can explicitly move this mode to `cloud-ready`. Normal application changes then retain their existing publish/deploy behavior.
-
-This issue does not provision AWS database infrastructure.
-
-Expected additional cloud infrastructure cost for this local-first increment: `$0`.
+This workflow is intentionally local-first. It does not claim parity with a cloud deployment environment that has not been implemented for the current Work Items architecture.
 
 ## Container path
 
