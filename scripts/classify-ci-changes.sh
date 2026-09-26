@@ -1,50 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(
-  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
-  pwd
-)"
-
-ROOT_DIR="$(
-  cd -- "${SCRIPT_DIR}/.."
-  pwd
-)"
-
-DEPLOYMENT_MODE_FILE="${ROOT_DIR}/apps/demo-api/deployment-mode"
-
-if [[ ! -f "$DEPLOYMENT_MODE_FILE" ]]; then
-  echo "error: missing demo API deployment mode: ${DEPLOYMENT_MODE_FILE}" >&2
-  exit 1
-fi
-
-deployment_mode="$(
-  tr -d '[:space:]' < "$DEPLOYMENT_MODE_FILE"
-)"
-
-case "$deployment_mode" in
-  local-only|cloud-ready)
-    ;;
-  *)
-    echo "error: unsupported demo API deployment mode: ${deployment_mode:-<empty>}" >&2
-    exit 1
-    ;;
-esac
-
 app=false
-terraform=false
 workflow=false
-deploy=false
 
 if [ "${1:-}" = "--conservative" ]; then
   app=true
-  terraform=true
   workflow=true
   shift
 elif [ "$#" -eq 0 ]; then
   echo "No changed paths supplied; using conservative validation." >&2
   app=true
-  terraform=true
   workflow=true
 fi
 
@@ -53,60 +19,27 @@ for changed_file in "$@"; do
     docs/*|README.md|LICENSE)
       ;;
 
-    apps/demo-api/migrations/*)
-      app=true
-      ;;
-
-    apps/demo-api/deployment-mode)
-      app=true
-      workflow=true
-      deploy=true
-      ;;
-
     apps/demo-api/*)
       app=true
-      deploy=true
       ;;
 
-    infra/terraform/*)
-      terraform=true
-      ;;
-
-    infra/local/*)
-      workflow=true
-      ;;
-
-    scripts/verify-rollback-eligibility.sh|scripts/test-rollback-eligibility.sh|scripts/runtime-config-digest.sh|scripts/test-runtime-config-digest.sh|tools/demo-api-local|tools/postgres-local|tools/postgres-backup-local|tools/worker-local|tools/rabbitmq-local)
+    infra/local/*|tools/demo-api-local|tools/postgres-local|tools/postgres-backup-local|tools/worker-local|tools/rabbitmq-local)
+      app=true
       workflow=true
       ;;
 
     .github/workflows/*|scripts/classify-ci-changes.sh|scripts/test-ci-change-classifier.sh|scripts/verify-ci-required.sh|scripts/test-ci-required-gate.sh)
       app=true
-      terraform=true
       workflow=true
-      ;;
-
-    infra/aws/ecs/demo-api-task-definition.json|scripts/verify-deployment.sh|scripts/collect-deployment-diagnostics.sh|scripts/record-verified-deployment.sh)
-      app=true
-      terraform=true
-      workflow=true
-      deploy=true
       ;;
 
     *)
       echo "Conservative validation for unclassified path: ${changed_file}" >&2
       app=true
-      terraform=true
       workflow=true
       ;;
   esac
 done
 
-if [[ "$deploy" == "true" && "$deployment_mode" == "local-only" ]]; then
-  deploy=false
-fi
-
 printf 'app=%s\n' "$app"
-printf 'terraform=%s\n' "$terraform"
 printf 'workflow=%s\n' "$workflow"
-printf 'deploy=%s\n' "$deploy"

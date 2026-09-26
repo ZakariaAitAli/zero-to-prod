@@ -3,61 +3,125 @@ set -euo pipefail
 
 gate="./scripts/verify-ci-required.sh"
 
-expect_pass() {
+expect_success() {
   local name="$1"
   shift
 
   if "$gate" "$@" >/dev/null 2>&1; then
     echo "PASS: ${name}"
   else
-    echo "FAIL: ${name}"
+    echo "FAIL: ${name} unexpectedly failed"
     exit 1
   fi
 }
 
-expect_fail() {
+expect_failure() {
   local name="$1"
   shift
 
   if "$gate" "$@" >/dev/null 2>&1; then
-    echo "FAIL: ${name}"
+    echo "FAIL: ${name} unexpectedly succeeded"
     exit 1
   else
     echo "PASS: ${name}"
   fi
 }
 
-expect_pass \
-  "docs-only skips all optional validation" \
-  success false skipped false skipped false skipped
+expect_exit_code() {
+  local name="$1"
+  local expected_rc="$2"
+  shift 2
 
-expect_pass \
-  "application validation succeeds" \
-  success true success false skipped false skipped
+  set +e
+  "$gate" "$@" >/dev/null 2>&1
+  actual_rc=$?
+  set -e
 
-expect_pass \
-  "all validations succeed" \
-  success true success true success true success
+  if [ "$actual_rc" -ne "$expected_rc" ]; then
+    echo "FAIL: ${name}: expected exit ${expected_rc}, got ${actual_rc}"
+    exit 1
+  fi
 
-expect_fail \
-  "required validation failure blocks gate" \
-  success true failure false skipped false skipped
+  echo "PASS: ${name}"
+}
 
-expect_fail \
-  "required validation cannot be skipped" \
-  success true skipped false skipped false skipped
+expect_success \
+  "docs-only skips both validations" \
+  success \
+  false skipped \
+  false skipped
 
-expect_fail \
-  "optional validation cannot unexpectedly run" \
-  success false success false skipped false skipped
+expect_success \
+  "application-only validation succeeds" \
+  success \
+  true success \
+  false skipped
 
-expect_fail \
-  "missing classifier output fails closed" \
-  success "" skipped false skipped false skipped
+expect_success \
+  "full validation succeeds" \
+  success \
+  true success \
+  true success
 
-expect_fail \
-  "change detection failure blocks gate" \
-  failure false skipped false skipped false skipped
+expect_failure \
+  "change detection failure fails closed" \
+  failure \
+  true success \
+  true success
+
+expect_failure \
+  "required application validation cannot fail" \
+  success \
+  true failure \
+  false skipped
+
+expect_failure \
+  "required application validation cannot be skipped" \
+  success \
+  true skipped \
+  false skipped
+
+expect_failure \
+  "required workflow validation cannot fail" \
+  success \
+  true success \
+  true failure
+
+expect_failure \
+  "required workflow validation cannot be skipped" \
+  success \
+  true success \
+  true skipped
+
+expect_failure \
+  "unexpected application execution is rejected" \
+  success \
+  false success \
+  false skipped
+
+expect_failure \
+  "unexpected workflow execution is rejected" \
+  success \
+  false skipped \
+  false success
+
+expect_failure \
+  "invalid application required flag is rejected" \
+  success \
+  maybe success \
+  false skipped
+
+expect_failure \
+  "invalid workflow required flag is rejected" \
+  success \
+  false skipped \
+  maybe success
+
+expect_exit_code \
+  "wrong argument count is usage error" \
+  2 \
+  success \
+  false skipped
 
 echo
-echo "All CI required gate regression tests passed."
+echo "All required-CI gate experiments passed."

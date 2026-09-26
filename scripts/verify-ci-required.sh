@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 7 ]; then
-  echo "Usage: $0 <changes-result> <app-required> <app-result> <terraform-required> <terraform-result> <workflow-required> <workflow-result>" >&2
+if [ "$#" -ne 5 ]; then
+  echo "Usage: $0 <changes-result> <app-required> <app-result> <workflow-required> <workflow-result>" >&2
   exit 2
 fi
 
 changes_result="$1"
 app_required="$2"
 app_result="$3"
-terraform_required="$4"
-terraform_result="$5"
-workflow_required="$6"
-workflow_result="$7"
+workflow_required="$4"
+workflow_result="$5"
 
 failed=false
 
@@ -49,7 +47,6 @@ check_validation() {
 }
 
 check_validation "Application validation" "$app_required" "$app_result"
-check_validation "Terraform validation" "$terraform_required" "$terraform_result"
 check_validation "Workflow validation" "$workflow_required" "$workflow_result"
 
 if [ "$failed" = "true" ]; then
