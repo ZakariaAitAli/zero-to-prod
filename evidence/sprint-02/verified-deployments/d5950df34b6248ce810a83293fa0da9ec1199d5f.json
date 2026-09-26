@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "verification_status": "verified",
+  "environment": "development",
+  "git_sha": "d5950df34b6248ce810a83293fa0da9ec1199d5f",
+  "image_uri": "333534066371.dkr.ecr.eu-west-3.amazonaws.com/zero-to-prod-demo-api:d5950df34b6248ce810a83293fa0da9ec1199d5f",
+  "image_digest": "sha256:23cbe8d768e5f0841f988579cf220fa2abd63774c99ae26713d44140a8332613",
+  "task_definition_arn": "arn:aws:ecs:eu-west-3:333534066371:task-definition/zero-to-prod-demo-api:23",
+  "workflow_run_id": "35466549066",
+  "verification_timestamp": "2026-09-19T20:17:08Z",
+  "health": {
+    "status": "healthy"
+  },
+  "version": {
+    "expected": "d5950df34b6248ce810a83293fa0da9ec1199d5f",
+    "observed": "d5950df34b6248ce810a83293fa0da9ec1199d5f",
+    "matches": true
+  }
+}
