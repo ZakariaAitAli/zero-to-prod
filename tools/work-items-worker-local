@@ -11,9 +11,9 @@ ROOT_DIR="$(
   pwd
 )"
 
-APP_DIR="${ROOT_DIR}/apps/demo-api"
+APP_DIR="${ROOT_DIR}/apps/work-items"
 
-BINARY="${WORKER_BINARY:-${TMPDIR:-/tmp}/zero-to-prod-worker}"
+BINARY="${WORKER_BINARY:-${TMPDIR:-/tmp}/zero-to-prod-work-items-worker}"
 DATABASE_URL="${DATABASE_URL:-postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:55432/zero_to_prod?sslmode=disable}"
 RABBITMQ_WORKER_URL="${RABBITMQ_WORKER_URL:-amqp://zero_to_prod_worker:zero-to-prod-local-rabbitmq-worker@127.0.0.1:5672/zero_to_prod}"
 RABBITMQ_QUEUE="${RABBITMQ_QUEUE:-work_item_processing}"
@@ -21,9 +21,9 @@ RABBITMQ_QUEUE="${RABBITMQ_QUEUE:-work_item_processing}"
 usage() {
   cat <<EOF_USAGE
 Usage:
-  ./tools/worker-local test
-  ./tools/worker-local build
-  ./tools/worker-local run
+  ./tools/work-items-worker-local test
+  ./tools/work-items-worker-local build
+  ./tools/work-items-worker-local run
 
 Environment overrides:
   WORKER_BINARY=<path>          native binary output path

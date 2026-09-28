@@ -1,6 +1,6 @@
-# Local demo API development
+# Local Work Items development
 
-The demo API can be developed and verified locally with the repository-owned PostgreSQL lab and without AWS credentials or cloud infrastructure.
+The Work Items API can be developed and verified locally with the repository-owned PostgreSQL and RabbitMQ labs and without AWS credentials or cloud infrastructure.
 
 ## Prerequisites
 
@@ -22,19 +22,19 @@ Run commands from the repository root.
 ### Test
 
 ```bash
-./tools/demo-api-local test
+./tools/work-items-api-local test
 ```
 
 ### Build
 
 ```bash
-./tools/demo-api-local build
+./tools/work-items-api-local build
 ```
 
 The default binary is written outside the repository:
 
 ```text
-/tmp/zero-to-prod-demo-api
+/tmp/zero-to-prod-work-items-api
 ```
 
 ### Run
@@ -46,7 +46,7 @@ Start PostgreSQL, apply migrations explicitly, and start RabbitMQ before startin
 ./tools/postgres-local build-migrate
 ./tools/postgres-local migrate-up
 ./tools/rabbitmq-local start
-./tools/demo-api-local run
+./tools/work-items-api-local run
 ```
 
 Defaults:
@@ -68,7 +68,7 @@ The run command builds the application before starting it. It does not run migra
 With the API running in another terminal:
 
 ```bash
-./tools/demo-api-local verify
+./tools/work-items-api-local verify
 ```
 
 Verification checks exact responses from:
@@ -187,7 +187,7 @@ This means broker availability is separated from durable request acceptance: an 
 The worker is a separate process and can be run with:
 
 ```bash
-./tools/worker-local run
+./tools/work-items-worker-local run
 ```
 
 ## Overrides
@@ -197,21 +197,21 @@ The local interface allows explicit overrides for experiments.
 Example:
 
 ```bash
-PORT=18080 VERSION=experiment-1 ./tools/demo-api-local run
+PORT=18080 VERSION=experiment-1 ./tools/work-items-api-local run
 ```
 
 A different PostgreSQL connection can be supplied explicitly:
 
 ```bash
 DATABASE_URL='postgres://user:password@127.0.0.1:5432/database?sslmode=disable' \
-  ./tools/demo-api-local run
+  ./tools/work-items-api-local run
 ```
 
 Then verify the same instance:
 
 ```bash
 PORT=18080 EXPECTED_VERSION=experiment-1 \
-  ./tools/demo-api-local verify
+  ./tools/work-items-api-local verify
 ```
 
 A different base URL can also be supplied directly:
@@ -219,7 +219,7 @@ A different base URL can also be supplied directly:
 ```bash
 BASE_URL=http://127.0.0.1:18080 \
 EXPECTED_VERSION=experiment-1 \
-  ./tools/demo-api-local verify
+  ./tools/work-items-api-local verify
 ```
 
 ## Cloud independence

@@ -69,7 +69,7 @@ The current evidence-backed levels and remaining unknowns are maintained in the 
 
 The current reference system is **Work Items**.
 
-Its implementation currently lives under `apps/demo-api`, a name inherited from the earlier project baseline. The directory name does not define the long-term application architecture.
+Its implementation lives under `apps/work-items`, with separate API and worker executables under `cmd/`.
 
 The current system contains two executable processes:
 
@@ -199,20 +199,20 @@ The local topology uses separate publisher and worker identities with different 
 Run the API:
 
 ```bash
-./tools/demo-api-local run
+./tools/work-items-api-local run
 ```
 
 In another terminal, verify its basic runtime contract:
 
 ```bash
-./tools/demo-api-local verify
+./tools/work-items-api-local verify
 ```
 
 The helper also provides:
 
 ```bash
-./tools/demo-api-local test
-./tools/demo-api-local build
+./tools/work-items-api-local test
+./tools/work-items-api-local build
 ```
 
 ### Worker
@@ -220,14 +220,14 @@ The helper also provides:
 Run the asynchronous worker:
 
 ```bash
-./tools/worker-local run
+./tools/work-items-worker-local run
 ```
 
 The helper also provides:
 
 ```bash
-./tools/worker-local test
-./tools/worker-local build
+./tools/work-items-worker-local test
+./tools/work-items-worker-local build
 ```
 
 ### Backup and recovery
@@ -349,7 +349,7 @@ The project aims for broad **L5 — Compare & Decide** capability across importa
 ```text
 zero-to-prod/
 ├── apps/
-│   └── demo-api/       current Work Items implementation
+│   └── work-items/     current Work Items implementation
 ├── infra/
 │   └── local/          local PostgreSQL and RabbitMQ infrastructure
 ├── docs/
@@ -374,7 +374,7 @@ Start with:
 
 - [Zero-to-Prod v2 rebaseline specification](docs/rebaseline/zero-to-prod-v2-specification.md) — mission, principles, learning model, environment strategy, and roadmap;
 - [Current capability baseline](docs/learning/current-capability-baseline.md) — evidence-backed learning levels and remaining gaps;
-- [Local demo API guide](docs/guides/local-demo-api.md) — current application workflow;
+- [Local Work Items guide](docs/guides/local-work-items.md) — current application workflow;
 - [Local PostgreSQL guide](docs/guides/local-postgresql.md) — datastore and migration lifecycle;
 - [Sprint 03 reliable asynchronous processing](docs/sprint-03/reliable-async-processing.md) — current asynchronous architecture and failure experiments.
 

@@ -1,4 +1,4 @@
-module github.com/ZakariaAitAli/zero-to-prod/apps/demo-api
+module github.com/ZakariaAitAli/zero-to-prod/apps/work-items
 
 go 1.27.0
 

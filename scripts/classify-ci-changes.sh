@@ -19,11 +19,11 @@ for changed_file in "$@"; do
     docs/*|README.md|LICENSE)
       ;;
 
-    apps/demo-api/*)
+    apps/work-items/*)
       app=true
       ;;
 
-    infra/local/*|tools/demo-api-local|tools/postgres-local|tools/postgres-backup-local|tools/worker-local|tools/rabbitmq-local)
+    infra/local/*|tools/work-items-api-local|tools/postgres-local|tools/postgres-backup-local|tools/work-items-worker-local|tools/rabbitmq-local)
       app=true
       workflow=true
       ;;
