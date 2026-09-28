@@ -132,7 +132,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   app-validation:
-    name: Validate demo API
+    name: Validate Work Items
     needs: changes
     if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
