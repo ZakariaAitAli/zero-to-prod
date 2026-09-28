@@ -491,9 +491,9 @@ RabbitMQ connection close is bounded to:
 The worker launcher is:
 
 ```text
-./tools/worker-local test
-./tools/worker-local build
-./tools/worker-local run
+./tools/work-items-worker-local test
+./tools/work-items-worker-local build
+./tools/work-items-worker-local run
 ```
 
 Its default local dependencies are:

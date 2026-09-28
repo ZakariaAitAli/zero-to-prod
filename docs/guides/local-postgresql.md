@@ -2,7 +2,7 @@
 
 Zero-to-Prod uses a local PostgreSQL environment to verify relational-database lifecycle behavior without AWS infrastructure.
 
-This guide covers the local PostgreSQL lifecycle, explicit schema migrations, runtime privileges, and the demo API persistence dependency.
+This guide covers the local PostgreSQL lifecycle, explicit schema migrations, runtime privileges, and the Work Items API persistence dependency.
 
 ## Components
 
@@ -19,7 +19,7 @@ The PostgreSQL image and migration-tool build inputs are pinned for reproducibil
 
     infra/local/compose.yaml
     infra/local/postgres/init/001-roles.sh
-    apps/demo-api/migrations/
+    apps/work-items/migrations/
     tools/migrate/Dockerfile
     tools/postgres-local
     tools/postgres-backup-local
@@ -116,7 +116,7 @@ Build the repository-owned migration image:
 
 The image contains golang-migrate/migrate v4.20.1 with PostgreSQL support.
 
-The migration CLI is operational tooling. It is not linked into the demo API and is not executed automatically when the API starts.
+The migration CLI is operational tooling. It is not linked into the Work Items API and is not executed automatically when the API starts.
 
 ## Apply migrations
 
@@ -176,13 +176,13 @@ The lifecycle is:
         ↓
     start application with zero_to_prod_app
 
-The demo API must not automatically mutate the database schema during normal startup.
+The Work Items API must not automatically mutate the database schema during normal startup.
 
 If the API starts before the required schema exists, the process can remain alive, but `/ready` returns `503` and persistence operations fail until migrations are applied explicitly.
 
 ## Application persistence behavior
 
-The demo API uses PostgreSQL for the current Work Items endpoints:
+The Work Items API uses PostgreSQL for the current Work Items endpoints:
 
     POST /items
     GET /items
@@ -355,7 +355,7 @@ Inspect the restored rows directly in PostgreSQL:
         -d zero_to_prod \
         -c 'SELECT id, title, status, created_at FROM public.work_items ORDER BY id;'
 
-Then start or verify the demo API using the normal application workflow and confirm:
+Then start or verify the Work Items API using the normal application workflow and confirm:
 
     GET /items
 

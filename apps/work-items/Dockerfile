@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
     go build \
     -trimpath \
     -ldflags="-s -w -X main.version=${VERSION}" \
-    -o /out/demo-api \
+    -o /out/work-items-api \
     ./cmd/api
 
 FROM alpine:3.22 AS runtime
@@ -25,7 +25,7 @@ RUN addgroup -S app \
 
 WORKDIR /app
 
-COPY --from=build --chown=app:app /out/demo-api /app/demo-api
+COPY --from=build --chown=app:app /out/work-items-api /app/work-items-api
 
 ENV PORT=8080
 
@@ -36,4 +36,4 @@ USER app
 HEALTHCHECK --interval=10s --timeout=3s --start-period=3s --retries=3 \
     CMD wget -q --spider "http://127.0.0.1:${PORT}/health" || exit 1
 
-ENTRYPOINT ["/app/demo-api"]
+ENTRYPOINT ["/app/work-items-api"]

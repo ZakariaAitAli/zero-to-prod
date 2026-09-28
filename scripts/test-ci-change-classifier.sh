@@ -35,22 +35,22 @@ assert_case \
 assert_case \
   "API Go source" \
   "$app_expected" \
-  apps/demo-api/cmd/api/main.go
+  apps/work-items/cmd/api/main.go
 
 assert_case \
   "worker Go source" \
   "$app_expected" \
-  apps/demo-api/cmd/worker/main.go
+  apps/work-items/cmd/worker/main.go
 
 assert_case \
   "database migration" \
   "$app_expected" \
-  apps/demo-api/migrations/000001_create_work_items.up.sql
+  apps/work-items/migrations/000001_create_work_items.up.sql
 
 assert_case \
   "Dockerfile" \
   "$app_expected" \
-  apps/demo-api/Dockerfile
+  apps/work-items/Dockerfile
 
 assert_case \
   "local Compose runtime" \
@@ -70,12 +70,12 @@ assert_case \
 assert_case \
   "API local lifecycle tooling" \
   "$full_expected" \
-  tools/demo-api-local
+  tools/work-items-api-local
 
 assert_case \
   "worker local lifecycle tooling" \
   "$full_expected" \
-  tools/worker-local
+  tools/work-items-worker-local
 
 assert_case \
   "PostgreSQL lifecycle tooling" \
@@ -95,7 +95,7 @@ assert_case \
 assert_case \
   "workflow YAML" \
   "$full_expected" \
-  .github/workflows/demo-api-ci.yml
+  .github/workflows/work-items-ci.yml
 
 assert_case \
   "classifier policy" \
@@ -126,12 +126,12 @@ assert_case \
   "mixed docs and application" \
   "$app_expected" \
   docs/sprint-03/reliable-async-processing.md \
-  apps/demo-api/cmd/api/main.go
+  apps/work-items/cmd/api/main.go
 
 assert_case \
   "mixed application and local infrastructure" \
   "$full_expected" \
-  apps/demo-api/cmd/api/main.go \
+  apps/work-items/cmd/api/main.go \
   infra/local/rabbitmq/rabbitmq.conf
 
 assert_case \

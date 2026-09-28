@@ -12,7 +12,7 @@ ROOT_DIR="$(
 )"
 
 COMPOSE_FILE="${ROOT_DIR}/infra/local/compose.yaml"
-MIGRATIONS_DIR="${ROOT_DIR}/apps/demo-api/migrations"
+MIGRATIONS_DIR="${ROOT_DIR}/apps/work-items/migrations"
 MIGRATE_BUILD_DIR="${ROOT_DIR}/tools/migrate"
 
 MIGRATE_VERSION="${MIGRATE_VERSION:-v4.20.1}"

@@ -128,11 +128,11 @@ Use the normal local API workflow after PostgreSQL recovery.
 
 Start the API if needed:
 
-    ./tools/demo-api-local run
+    ./tools/work-items-api-local run
 
 Verify the application:
 
-    ./tools/demo-api-local verify
+    ./tools/work-items-api-local verify
 
 Confirm:
 

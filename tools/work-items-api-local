@@ -11,13 +11,13 @@ ROOT_DIR="$(
   pwd
 )"
 
-APP_DIR="${ROOT_DIR}/apps/demo-api"
+APP_DIR="${ROOT_DIR}/apps/work-items"
 
 VERSION="${VERSION:-local}"
 EXPECTED_VERSION="${EXPECTED_VERSION:-${VERSION}}"
 PORT="${PORT:-8080}"
 BASE_URL="${BASE_URL:-http://127.0.0.1:${PORT}}"
-BINARY="${DEMO_API_BINARY:-${TMPDIR:-/tmp}/zero-to-prod-demo-api}"
+BINARY="${WORK_ITEMS_API_BINARY:-${TMPDIR:-/tmp}/zero-to-prod-work-items-api}"
 DATABASE_URL="${DATABASE_URL:-postgres://zero_to_prod_app:zero-to-prod-local-app@127.0.0.1:55432/zero_to_prod?sslmode=disable}"
 RABBITMQ_PUBLISHER_URL="${RABBITMQ_PUBLISHER_URL:-amqp://zero_to_prod_publisher:zero-to-prod-local-rabbitmq-publisher@127.0.0.1:5672/zero_to_prod}"
 RABBITMQ_QUEUE="${RABBITMQ_QUEUE:-work_item_processing}"
@@ -25,17 +25,17 @@ RABBITMQ_QUEUE="${RABBITMQ_QUEUE:-work_item_processing}"
 usage() {
   cat <<EOF_USAGE
 Usage:
-  ./tools/demo-api-local test
-  ./tools/demo-api-local build
-  ./tools/demo-api-local run
-  ./tools/demo-api-local verify
+  ./tools/work-items-api-local test
+  ./tools/work-items-api-local build
+  ./tools/work-items-api-local run
+  ./tools/work-items-api-local verify
 
 Environment overrides:
   VERSION=<version>              build/run version (default: local)
   EXPECTED_VERSION=<version>     version expected by verify
   PORT=<port>                    local API port (default: 8080)
   BASE_URL=<url>                 verification base URL
-  DEMO_API_BINARY=<path>         native binary output path
+  WORK_ITEMS_API_BINARY=<path>         native binary output path
   DATABASE_URL=<url>             PostgreSQL runtime connection URL
   RABBITMQ_PUBLISHER_URL=<url>   RabbitMQ publisher connection URL
   RABBITMQ_QUEUE=<name>          processing queue (default: work_item_processing)
@@ -54,7 +54,7 @@ require_command() {
 test_app() {
   require_command go
 
-  echo "Running demo-api tests..."
+  echo "Running Work Items API tests..."
 
   (
     cd "$APP_DIR"
@@ -67,7 +67,7 @@ build_app() {
 
   mkdir -p "$(dirname "$BINARY")"
 
-  echo "Building demo-api..."
+  echo "Building Work Items API..."
   echo "Version: ${VERSION}"
   echo "Output:  ${BINARY}"
 
@@ -86,7 +86,7 @@ run_app() {
   build_app
 
   echo
-  echo "Starting demo-api..."
+  echo "Starting Work Items API..."
   echo "URL:     http://127.0.0.1:${PORT}"
   echo "Version: ${VERSION}"
   echo
@@ -127,7 +127,7 @@ verify_response() {
 verify_app() {
   require_command curl
 
-  echo "Verifying demo-api at ${BASE_URL}..."
+  echo "Verifying Work Items API at ${BASE_URL}..."
 
   verify_response \
     "/health" \

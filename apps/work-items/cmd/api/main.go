@@ -97,7 +97,7 @@ func main() {
 	)
 	defer stop()
 
-	log.Printf("demo-api version=%s listening on %s", version, address)
+	log.Printf("work-items-api version=%s listening on %s", version, address)
 
 	publisherFactory := func() (
 		closeableBrokerMessagePublisher,
