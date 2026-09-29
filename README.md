@@ -353,6 +353,9 @@ zero-to-prod/
 ├── infra/
 │   └── local/          local PostgreSQL and RabbitMQ infrastructure
 ├── docs/
+│   ├── README.md       documentation entry point and learning map
+│   ├── concepts/       reusable engineering knowledge
+│   ├── architecture/   Zero-to-Prod system structure and boundaries
 │   ├── guides/         implementation and local-operation guides
 │   ├── learning/       evidence-backed capability baseline
 │   ├── rebaseline/     v2 mission and engineering model
@@ -370,12 +373,15 @@ The repository structure evolves only when a demonstrated architectural boundary
 
 ## Documentation
 
-Start with:
+Start with the [documentation map](docs/README.md).
 
-- [Zero-to-Prod v2 rebaseline specification](docs/rebaseline/zero-to-prod-v2-specification.md) — mission, principles, learning model, environment strategy, and roadmap;
-- [Current capability baseline](docs/learning/current-capability-baseline.md) — evidence-backed learning levels and remaining gaps;
+It provides the learning-oriented path through reusable concepts, current architecture, guides, runbooks, the v2 project rules, and the detailed Sprint experiments.
+
+Key project references:
+
+- [Zero-to-Prod v2 rebaseline specification](docs/rebaseline/zero-to-prod-v2-specification.md) — authoritative mission, principles, learning model, environment strategy, and roadmap;
+- [Current capability baseline](docs/learning/current-capability-baseline.md) — demonstrated learning levels and remaining gaps;
 - [Local Work Items guide](docs/guides/local-work-items.md) — current application workflow;
-- [Local PostgreSQL guide](docs/guides/local-postgresql.md) — datastore and migration lifecycle;
-- [Sprint 03 reliable asynchronous processing](docs/sprint-03/reliable-async-processing.md) — current asynchronous architecture and failure experiments.
+- [Local PostgreSQL guide](docs/guides/local-postgresql.md) — datastore and migration lifecycle.
 
-Historical Sprint 01 and Sprint 02 documents are intentionally preserved as factual records of what was implemented and learned at the time.
+Historical Sprint documents remain intact as the detailed record of implementation, failures, corrections, and experiments. Reusable documentation is the faster path for revisiting what those experiments taught.
