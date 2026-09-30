@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "skipped",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.json",
+    "sha256": "0403e707d181ddccce60cef951e56f75723c756166d27c2251d35e30cb6809f5",
+    "bytes": 12068
+  },
+  "artifact": {
+    "path": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+    "sha256": "38c87b45b16b86591b470d1a78fd9b5112fd87542e5c582af2231f2d8700aa3f",
+    "bytes": 773814
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "skipped"
+  },
+  "failedStage": "browser-check",
+  "diagnostics": [
+    {
+      "code": "viewer/chrome-unavailable",
+      "severity": "warning",
+      "message": "Chrome or Chromium is unavailable. Set ARCHIFY_CHROME to its executable path.",
+      "subject": {
+        "artifact": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html"
+      },
+      "evidence": {
+        "executable": null
+      },
+      "supportedFixes": [
+        "set ARCHIFY_CHROME to a Chrome or Chromium executable and rerun browser-check"
+      ]
+    }
+  ],
+  "diagnosticSummary": {
+    "total": 1,
+    "shown": 1,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.finalize.json",
+    "summaryReceipt": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.finalize-summary.json",
+    "browserCheckReceipt": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.browser-check.json"
+  },
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "disabled"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 561
+}

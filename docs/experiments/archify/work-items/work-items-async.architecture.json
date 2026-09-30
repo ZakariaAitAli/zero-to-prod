@@ -1,0 +1,464 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Work Items async processing — as implemented at 76b8b87",
+    "subtitle": "Archify experiment output · explanatory only · source of truth is the code",
+    "output": "docs/experiments/archify/work-items/work-items-async.architecture.html",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "repository": {
+      "url": "git@github.com:ZakariaAitAli/zero-to-prod.git",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "76b8b87bf483a737ac66285e45a67d9b210acf66"
+    }
+  },
+  "components": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "Client",
+      "sublabel": "HTTP caller",
+      "pos": [
+        40,
+        100
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "apps/work-items/cmd/api/processing.go",
+          "line": 16,
+          "end_line": 16,
+          "label": "route POST /items/{id}/process"
+        }
+      ]
+    },
+    {
+      "id": "api_http",
+      "type": "backend",
+      "label": "HTTP handler",
+      "sublabel": "accept in one PG tx",
+      "tag": "202 after COMMIT",
+      "pos": [
+        330,
+        100
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "apps/work-items/cmd/api/processing.go",
+          "line": 11,
+          "end_line": 66,
+          "label": "202 only on successful accept"
+        },
+        {
+          "path": "apps/work-items/cmd/api/store.go",
+          "line": 142,
+          "end_line": 232,
+          "label": "BEGIN, INSERT job, INSERT outbox, COMMIT"
+        },
+        {
+          "path": "apps/work-items/cmd/api/main.go",
+          "line": 227,
+          "end_line": 251,
+          "label": "/ready checks PostgreSQL only"
+        }
+      ]
+    },
+    {
+      "id": "publisher",
+      "type": "backend",
+      "label": "Outbox publisher",
+      "sublabel": "goroutine in API process",
+      "tag": "shares fate with HTTP",
+      "pos": [
+        660,
+        100
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "sources": [
+        {
+          "path": "apps/work-items/cmd/api/application.go",
+          "line": 16,
+          "end_line": 85,
+          "label": "HTTP + publisher supervised together"
+        },
+        {
+          "path": "apps/work-items/cmd/api/outbox_publisher.go",
+          "line": 34,
+          "end_line": 84,
+          "label": "claim, publish, mark published"
+        },
+        {
+          "path": "apps/work-items/cmd/api/rabbitmq_publisher.go",
+          "line": 65,
+          "end_line": 131,
+          "label": "persistent, mandatory, confirm"
+        }
+      ]
+    },
+    {
+      "id": "rabbitmq",
+      "type": "messagebus",
+      "label": "RabbitMQ",
+      "sublabel": "queue work_item_processing",
+      "tag": "durable queue",
+      "pos": [
+        1010,
+        100
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "sources": [
+        {
+          "path": "tools/rabbitmq-local",
+          "line": 204,
+          "end_line": 231,
+          "label": "durable, non-auto-delete queue"
+        },
+        {
+          "path": "infra/local/rabbitmq/compose.yaml",
+          "line": 18,
+          "end_line": 18,
+          "label": "broker data volume"
+        }
+      ]
+    },
+    {
+      "id": "work_items",
+      "type": "database",
+      "label": "work_items",
+      "sublabel": "business status pending | done",
+      "pos": [
+        40,
+        320
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "sources": [
+        {
+          "path": "apps/work-items/migrations/000001_create_work_items.up.sql",
+          "line": 1,
+          "end_line": 5,
+          "label": "table"
+        },
+        {
+          "path": "apps/work-items/migrations/000003_add_work_item_status.up.sql",
+          "line": 1,
+          "end_line": 6,
+          "label": "status pending | done"
+        }
+      ]
+    },
+    {
+      "id": "processing_jobs",
+      "type": "database",
+      "label": "processing_jobs",
+      "sublabel": "accepted -> succeeded | failed (max 3)",
+      "tag": "max 3 attempts",
+      "pos": [
+        330,
+        320
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "sources": [
+        {
+          "path": "apps/work-items/migrations/000004_add_async_processing.up.sql",
+          "line": 1,
+          "end_line": 33,
+          "label": "processing lifecycle table"
+        },
+        {
+          "path": "apps/work-items/cmd/worker/store.go",
+          "line": 135,
+          "end_line": 160,
+          "label": "guarded completion UPDATE"
+        },
+        {
+          "path": "apps/work-items/migrations/000004_add_async_processing.up.sql",
+          "line": 148,
+          "end_line": 155,
+          "label": "worker may UPDATE lifecycle only"
+        }
+      ]
+    },
+    {
+      "id": "outbox",
+      "type": "database",
+      "label": "outbox_messages",
+      "sublabel": "publication intent",
+      "tag": "published_at",
+      "pos": [
+        660,
+        320
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "sources": [
+        {
+          "path": "apps/work-items/migrations/000004_add_async_processing.up.sql",
+          "line": 39,
+          "end_line": 65,
+          "label": "one outbox row per job"
+        },
+        {
+          "path": "apps/work-items/cmd/api/store.go",
+          "line": 234,
+          "end_line": 281,
+          "label": "claim via SKIP LOCKED, no lease"
+        },
+        {
+          "path": "apps/work-items/migrations/000004_add_async_processing.up.sql",
+          "line": 114,
+          "end_line": 120,
+          "label": "app may UPDATE publish fields"
+        }
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Worker",
+      "sublabel": "prefetch 1 · autoAck off",
+      "tag": "separate process",
+      "pos": [
+        1010,
+        320
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "sources": [
+        {
+          "path": "apps/work-items/cmd/worker/rabbitmq_consumer.go",
+          "line": 32,
+          "end_line": 65,
+          "label": "QoS 1, autoAck=false"
+        },
+        {
+          "path": "apps/work-items/cmd/worker/process_delivery.go",
+          "line": 30,
+          "end_line": 59,
+          "label": "handle (DB write), then settle"
+        },
+        {
+          "path": "apps/work-items/cmd/worker/message.go",
+          "line": 140,
+          "end_line": 315,
+          "label": "ACK / NACK-requeue / Reject map"
+        }
+      ]
+    },
+    {
+      "id": "backup",
+      "type": "external",
+      "label": "postgres-backup-local",
+      "sublabel": "data-only · work_items only",
+      "tag": "work_items only",
+      "pos": [
+        40,
+        540
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "sources": [
+        {
+          "path": "tools/postgres-backup-local",
+          "line": 29,
+          "end_line": 37,
+          "label": "contract: data-only work_items"
+        },
+        {
+          "path": "tools/postgres-backup-local",
+          "line": 156,
+          "end_line": 165,
+          "label": "pg_dump --table=public.work_items"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Work Items API process · one lifecycle",
+      "wraps": [
+        "api_http",
+        "publisher"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "PostgreSQL · durable async acceptance state",
+      "wraps": [
+        "work_items",
+        "processing_jobs",
+        "outbox"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Backup contract scope",
+      "wraps": [
+        "work_items"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "RabbitMQ · transport, not source of truth",
+      "wraps": [
+        "rabbitmq"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Worker process",
+      "wraps": [
+        "worker"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "request",
+      "from": "client",
+      "to": "api_http",
+      "label": "(1) POST /process",
+      "variant": "emphasis"
+    },
+    {
+      "id": "insert-job",
+      "from": "api_http",
+      "to": "processing_jobs",
+      "label": "(2) INSERT job",
+      "variant": "emphasis"
+    },
+    {
+      "id": "insert-outbox",
+      "from": "api_http",
+      "to": "outbox",
+      "label": "(2) INSERT outbox, COMMIT",
+      "variant": "emphasis"
+    },
+    {
+      "id": "accepted",
+      "from": "api_http",
+      "to": "client",
+      "label": "(3) 202 after COMMIT",
+      "variant": "emphasis"
+    },
+    {
+      "id": "claim-outbox",
+      "from": "publisher",
+      "to": "outbox",
+      "label": "(a) claim / set published_at",
+      "variant": "dashed"
+    },
+    {
+      "id": "publish",
+      "from": "publisher",
+      "to": "rabbitmq",
+      "label": "(b) publish, await confirm",
+      "variant": "dashed"
+    },
+    {
+      "id": "deliver",
+      "from": "rabbitmq",
+      "to": "worker",
+      "label": "(c) deliver",
+      "variant": "dashed"
+    },
+    {
+      "id": "complete",
+      "from": "worker",
+      "to": "processing_jobs",
+      "label": "(d) guarded UPDATE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "settle",
+      "from": "worker",
+      "to": "rabbitmq",
+      "label": "(e) ACK after (d)"
+    },
+    {
+      "id": "backup-dump",
+      "from": "work_items",
+      "to": "backup",
+      "label": "data-only dump"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Durable acceptance",
+      "items": [
+        "202 is written only after COMMIT of processing_jobs + outbox_messages (store.go 142-232)",
+        "Survives API restart and RabbitMQ outage (Sprint 03 experiments 2, 3, 10)",
+        "work_items.status is the client's business field; the async path never writes it"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Transport, not source of truth",
+      "items": [
+        "Numbers (1)-(3) are the synchronous request; letters (a)-(e) are asynchronous, after COMMIT (dashed)",
+        "Publisher sets published_at only after a broker confirm; a crash between them causes a re-publish",
+        "Worker ACKs only after the guarded DB write; redelivery is absorbed by state = 'accepted' guard"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Current recovery gap (evidence-backed, not fixed)",
+      "items": [
+        "Backup contract is pg_dump --data-only --table=public.work_items (tools/postgres-backup-local 156-165)",
+        "processing_jobs and outbox_messages are outside the backup scope",
+        "Destructive PostgreSQL loss + restore does not preserve accepted-but-unfinished async work",
+        "A 202 is durable against process and broker failure, not against database loss"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Failure boundaries (Sprint 03 experiments)",
+      "items": [
+        "API restart after 202: rows are committed; a fresh publisher finds published_at NULL rows. No caller retry (exp 2, 10)",
+        "RabbitMQ down: acceptance and /ready need only PostgreSQL; outbox rows wait until the broker returns (exp 3)",
+        "Worker crash before (e): redelivery; guarded UPDATE sees a terminal state and ACKs without a second effect (exp 4, 5)",
+        "PostgreSQL down: API not ready; worker NACK-requeues without inventing an attempt (exp 11)",
+        "Destructive DB loss + restore: only work_items returns. Not an experiment result; follows from backup scope"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Not shown / not claimed",
+      "items": [
+        "Worker processing step is a no-op (processor.go 24)",
+        "Reject(false) with no dead-letter exchange discards malformed messages",
+        "Outbox claim lock is not held during publish; several API replicas could double-publish",
+        "Queued messages surviving a broker restart is configured, not experimentally shown",
+        "No exactly-once delivery or publication"
+      ]
+    }
+  ]
+}

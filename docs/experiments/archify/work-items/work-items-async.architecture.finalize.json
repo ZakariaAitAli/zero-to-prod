@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "finalize",
+  "status": "skipped",
+  "type": "architecture",
+  "quality": "showcase",
+  "startedAt": "2026-09-30T19:45:44.248Z",
+  "specification": {
+    "path": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.json",
+    "sha256": "0403e707d181ddccce60cef951e56f75723c756166d27c2251d35e30cb6809f5",
+    "bytes": 12068
+  },
+  "artifact": {
+    "path": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+    "sha256": "38c87b45b16b86591b470d1a78fd9b5112fd87542e5c582af2231f2d8700aa3f",
+    "bytes": 773814
+  },
+  "stages": {
+    "validate": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": null,
+      "execution": "embedded-in-deliver",
+      "command": [
+        "/home/zakaria_ait_ali/.local/share/fnm/node-versions/v22.23.2/installation/bin/node",
+        "/tmp/claude-1000/-home-zakaria-ait-ali-projects-zero-to-prod/e1add381-c8bc-48e8-8265-039f81713370/scratchpad/archify-src/archify/bin/archify.mjs",
+        "deliver",
+        "architecture",
+        "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.json",
+        "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "/home/zakaria_ait_ali/projects/zero-to-prod",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "ok": true,
+        "command": "validate",
+        "specification": {
+          "sha256": "0403e707d181ddccce60cef951e56f75723c756166d27c2251d35e30cb6809f5",
+          "bytes": 12068
+        },
+        "validation": {
+          "checksPassed": 9,
+          "checkCount": 9,
+          "compositionProfile": "showcase",
+          "compositionStatus": "pass",
+          "errors": 0,
+          "warnings": 0
+        }
+      }
+    },
+    "deliver": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": 312,
+      "command": [
+        "/home/zakaria_ait_ali/.local/share/fnm/node-versions/v22.23.2/installation/bin/node",
+        "/tmp/claude-1000/-home-zakaria-ait-ali-projects-zero-to-prod/e1add381-c8bc-48e8-8265-039f81713370/scratchpad/archify-src/archify/bin/archify.mjs",
+        "deliver",
+        "architecture",
+        "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.json",
+        "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "/home/zakaria_ait_ali/projects/zero-to-prod",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "receiptId": "e310d32a-5e1d-4df6-a9b4-bf8f5877f93b",
+        "ok": true,
+        "command": "deliver",
+        "type": "architecture",
+        "input": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.json",
+        "output": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+        "specification": {
+          "sha256": "0403e707d181ddccce60cef951e56f75723c756166d27c2251d35e30cb6809f5",
+          "bytes": 12068
+        },
+        "artifact": {
+          "sha256": "38c87b45b16b86591b470d1a78fd9b5112fd87542e5c582af2231f2d8700aa3f",
+          "bytes": 773814
+        },
+        "validation": {
+          "checksPassed": 9,
+          "checkCount": 9,
+          "compositionProfile": "showcase",
+          "compositionStatus": "pass",
+          "errors": 0,
+          "warnings": 0
+        },
+        "evidence": {
+          "verified": true,
+          "repository": "git@github.com:ZakariaAitAli/zero-to-prod",
+          "revision": "76b8b87bf483a737ac66285e45a67d9b210acf66",
+          "references": 22,
+          "linkMode": "local-only"
+        },
+        "update": {
+          "status": "unavailable",
+          "installedVersion": null,
+          "availableVersion": null,
+          "releaseNotes": null,
+          "checkedAt": null,
+          "source": null,
+          "noticeRequired": false,
+          "noticeText": null,
+          "reason": "disabled"
+        }
+      }
+    },
+    "check": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": 112,
+      "command": [
+        "/home/zakaria_ait_ali/.local/share/fnm/node-versions/v22.23.2/installation/bin/node",
+        "/tmp/claude-1000/-home-zakaria-ait-ali-projects-zero-to-prod/e1add381-c8bc-48e8-8265-039f81713370/scratchpad/archify-src/archify/bin/archify.mjs",
+        "check",
+        "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+        "--require-provenance"
+      ],
+      "receipt": {
+        "ok": true,
+        "file": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+        "artifact": {
+          "sha256": "38c87b45b16b86591b470d1a78fd9b5112fd87542e5c582af2231f2d8700aa3f",
+          "bytes": 773814
+        },
+        "checks": [
+          {
+            "name": "single_svg",
+            "ok": true,
+            "details": [
+              "found 1 <svg> block(s)"
+            ]
+          },
+          {
+            "name": "finite_svg",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "orthogonal_arrows",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "label_route_clearance",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "relationship_crossings",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "relationship_corridors",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "container_border_runs",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "route_rhythm",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "legend_clearance",
+            "ok": true,
+            "details": []
+          }
+        ],
+        "composition": {
+          "schemaVersion": 1,
+          "profile": "showcase",
+          "status": "pass",
+          "summary": {
+            "errors": 0,
+            "warnings": 0
+          },
+          "metrics": {
+            "properCrossings": 0,
+            "resolvedCrossovers": 0,
+            "ambiguousCorridors": 0,
+            "arrowheadCollisions": 0,
+            "containerBorderRuns": 0,
+            "labelRouteClearanceIssues": 0,
+            "labelCanvasOverflowIssues": 0,
+            "minLabelRouteClearance": 20,
+            "desktopReadabilityIssues": 0,
+            "viewportHeightIssues": 0,
+            "minProjectedNodeTextPx": 7.5,
+            "maxBends": 4,
+            "routesOverSuggestedBends": 1,
+            "maxStretch": 1.16,
+            "routesOverSuggestedStretch": 0,
+            "minSegmentPx": 24,
+            "minInteriorSegmentPx": 35,
+            "shortSegmentCount": 0,
+            "shortEndpointSegmentCount": 0,
+            "shortInteriorSegmentCount": 0,
+            "microSegmentCount": 0
+          },
+          "suggestedLimits": {
+            "bendsPerRelationship": 2,
+            "stretch": 1.35,
+            "segmentPx": 16,
+            "microSegmentPx": 8
+          },
+          "routeReview": {
+            "crossings": [],
+            "detours": [
+              {
+                "relationship": {
+                  "id": "complete",
+                  "from": "worker",
+                  "to": "processing_jobs",
+                  "label": "(d) guarded UPDATE",
+                  "collectionIndex": 7,
+                  "artifactIndex": 8
+                },
+                "bends": 4,
+                "stretch": 1.14,
+                "directCorridorBlockers": [
+                  {
+                    "id": "outbox",
+                    "label": "outbox_messages",
+                    "box": [
+                      660,
+                      320,
+                      180,
+                      64
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "leadingSpace": {
+            "measured": true,
+            "emptyTopPx": 56,
+            "emptyTopRatio": 0.083,
+            "occupiedTop": 56,
+            "viewBoxTop": 0,
+            "canvasHeight": 672,
+            "typicalNodeHeight": 64,
+            "reviewSuggested": false
+          },
+          "desktopReadability": {
+            "budgetBasis": "recognized-declared-wide",
+            "readerContract": "declared-wide-v1",
+            "availableDiagramWidth": 1260,
+            "actualBudgetPx": 1260,
+            "actualReaderWidth": 1290,
+            "desiredReaderWidth": 1290,
+            "viewportCap": 1376,
+            "limit": "source-size",
+            "requestedTargetPx": 7.5,
+            "requestedTargetMet": true,
+            "hardFloorPx": 6,
+            "hardFloorMet": true,
+            "minimumOwner": {
+              "kind": "node",
+              "id": "processing_jobs"
+            },
+            "minimumSourceTextPx": 7.5,
+            "minimumProjectedTextPx": 7.5,
+            "semanticTextCount": 33
+          },
+          "issues": []
+        },
+        "provenance": "current",
+        "deliveryReceiptId": "e310d32a-5e1d-4df6-a9b4-bf8f5877f93b"
+      }
+    },
+    "browser-check": {
+      "status": "skipped",
+      "exitCode": 2,
+      "durationMs": 15,
+      "command": [
+        "/home/zakaria_ait_ali/.local/share/fnm/node-versions/v22.23.2/installation/bin/node",
+        "/tmp/claude-1000/-home-zakaria-ait-ali-projects-zero-to-prod/e1add381-c8bc-48e8-8265-039f81713370/scratchpad/archify-src/archify/bin/archify.mjs",
+        "browser-check",
+        "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+        "--json",
+        "--require-provenance"
+      ],
+      "execution": "in-process",
+      "receipt": {
+        "schemaVersion": 1,
+        "ok": false,
+        "command": "browser-check",
+        "evidenceKind": "automated-browser",
+        "status": "skipped",
+        "visualReview": "not-requested",
+        "provenance": "current",
+        "deliveryReceiptId": "e310d32a-5e1d-4df6-a9b4-bf8f5877f93b",
+        "artifact": {
+          "path": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html",
+          "sha256": "38c87b45b16b86591b470d1a78fd9b5112fd87542e5c582af2231f2d8700aa3f",
+          "bytes": 773814
+        },
+        "state": {
+          "detail": "read",
+          "motion": "still"
+        },
+        "chrome": {
+          "status": "unavailable",
+          "executable": null
+        },
+        "diagnostics": [
+          {
+            "code": "viewer/chrome-unavailable",
+            "severity": "warning",
+            "message": "Chrome or Chromium is unavailable. Set ARCHIFY_CHROME to its executable path.",
+            "subject": {
+              "artifact": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html"
+            },
+            "evidence": {
+              "executable": null
+            },
+            "supportedFixes": [
+              "set ARCHIFY_CHROME to a Chrome or Chromium executable and rerun browser-check"
+            ]
+          }
+        ],
+        "containment": {
+          "status": "skipped",
+          "policy": "fit-or-reader-declared-readable-vertical-scroll",
+          "viewports": []
+        },
+        "themeStates": {
+          "status": "skipped",
+          "viewports": []
+        },
+        "readability": {
+          "status": "skipped",
+          "minimumProjectedNodeTextPx": 6,
+          "viewports": []
+        },
+        "viewerChrome": {
+          "status": "skipped",
+          "viewports": []
+        },
+        "captures": {
+          "status": "not-requested",
+          "screenshots": [],
+          "contactSheet": null
+        },
+        "sidecars": {
+          "receipt": "work-items-async.architecture.browser-check.json",
+          "files": []
+        },
+        "error": "Chrome or Chromium is unavailable. Set ARCHIFY_CHROME to its executable path."
+      }
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "viewer/chrome-unavailable",
+      "severity": "warning",
+      "message": "Chrome or Chromium is unavailable. Set ARCHIFY_CHROME to its executable path.",
+      "subject": {
+        "artifact": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.html"
+      },
+      "evidence": {
+        "executable": null
+      },
+      "supportedFixes": [
+        "set ARCHIFY_CHROME to a Chrome or Chromium executable and rerun browser-check"
+      ]
+    }
+  ],
+  "evidence": {
+    "receipt": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.finalize.json",
+    "summaryReceipt": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.finalize-summary.json",
+    "browserCheckReceipt": "/home/zakaria_ait_ali/projects/zero-to-prod/docs/experiments/archify/work-items/work-items-async.architecture.browser-check.json"
+  },
+  "visualReview": "not-requested",
+  "failedStage": "browser-check",
+  "finishedAt": "2026-09-30T19:45:44.809Z",
+  "durationMs": 561,
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "disabled"
+  }
+}
