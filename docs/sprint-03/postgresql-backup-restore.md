@@ -546,3 +546,31 @@ The selected recovery model is:
         -> prove recovered application state
 
 The destructive and failure experiments support moving the specific backup/restore capability from L0 to L4 once the implementation, operational guide/runbook, and repository validation are complete.
+
+## Async processing recovery boundary
+
+Issue #111 extended the recovery boundary after asynchronous processing was
+introduced.
+
+The current application recovery point includes:
+
+- `public.work_items`;
+- `public.processing_jobs`;
+- `public.outbox_messages`;
+- sequence state for these relations.
+
+This extension is required because `202 Accepted` represents durable
+acceptance of asynchronous processing, and the processing job plus
+transactional-outbox state are required to resume that responsibility after
+database recovery.
+
+The destructive recovery experiment is documented in:
+
+`docs/experiments/issue-111-recovery-model.md`
+
+The architectural decision is documented in:
+
+`docs/adr/0001-work-items-async-recovery-boundary.md`
+
+The recovery point remains the boundary of this logical backup approach.
+No production RPO/RTO or PITR guarantee is established by this experiment.
