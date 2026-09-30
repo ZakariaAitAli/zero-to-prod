@@ -115,24 +115,26 @@ validate_backup() {
       | awk '!/^;/ && NF { count++ } END { print count + 0 }'
   )"
 
-  if [[ "$entry_count" != "2" ]]; then
+  if [[ "$entry_count" != "6" ]]; then
     echo "error: unexpected backup archive contents (${entry_count} entries)" >&2
     return 1
   fi
 
-  if ! printf '%s\n' "$archive_list" \
-    | grep -Eq '^[0-9]+; [0-9]+ [0-9]+ TABLE DATA public work_items '
-  then
-    echo "error: backup archive is missing Work Item table data" >&2
-    return 1
-  fi
+  local required_entry
 
-  if ! printf '%s\n' "$archive_list" \
-    | grep -Eq '^[0-9]+; [0-9]+ [0-9]+ SEQUENCE SET public work_items_id_seq '
-  then
-    echo "error: backup archive is missing Work Item sequence state" >&2
-    return 1
-  fi
+  for required_entry in \
+    'TABLE DATA public work_items ' \
+    'TABLE DATA public processing_jobs ' \
+    'TABLE DATA public outbox_messages ' \
+    'SEQUENCE SET public work_items_id_seq ' \
+    'SEQUENCE SET public processing_jobs_id_seq ' \
+    'SEQUENCE SET public outbox_messages_id_seq '
+  do
+    if ! printf '%s\n' "$archive_list" | grep -Fq "$required_entry"; then
+      echo "error: backup archive is missing required entry: ${required_entry% }" >&2
+      return 1
+    fi
+  done
 
   echo "valid=${backup_path}"
 }
@@ -162,6 +164,8 @@ create_backup() {
       --no-owner \
       --no-privileges \
       --table=public.work_items \
+      --table=public.processing_jobs \
+      --table=public.outbox_messages \
       > "$temporary_path"
   then
     rm -f "$temporary_path"
@@ -175,10 +179,10 @@ create_backup() {
 }
 
 require_empty_restore_target() {
-  local relation
-  local row_count
+  local relations
+  local row_counts
 
-  relation="$(
+  relations="$(
     compose exec -T \
       -e "PGPASSWORD=${POSTGRES_MIGRATOR_PASSWORD}" \
       postgres \
@@ -186,17 +190,22 @@ require_empty_restore_target() {
         -h 127.0.0.1 \
         -U "$POSTGRES_MIGRATOR_USER" \
         -d "$POSTGRES_DB" \
-        -Atc "SELECT to_regclass('public.work_items');"
+        -Atc "
+          SELECT
+            to_regclass('public.work_items'),
+            to_regclass('public.processing_jobs'),
+            to_regclass('public.outbox_messages');
+        "
   )"
 
-  if [[ "$relation" != "work_items" ]]; then
+  if [[ "$relations" != "work_items|processing_jobs|outbox_messages" ]]; then
     echo \
       "error: restore target schema is not ready; apply migrations explicitly first" \
       >&2
     return 1
   fi
 
-  row_count="$(
+  row_counts="$(
     compose exec -T \
       -e "PGPASSWORD=${POSTGRES_MIGRATOR_PASSWORD}" \
       postgres \
@@ -204,12 +213,17 @@ require_empty_restore_target() {
         -h 127.0.0.1 \
         -U "$POSTGRES_MIGRATOR_USER" \
         -d "$POSTGRES_DB" \
-        -Atc 'SELECT COUNT(*) FROM public.work_items;'
+        -Atc "
+          SELECT
+            (SELECT COUNT(*) FROM public.work_items),
+            (SELECT COUNT(*) FROM public.processing_jobs),
+            (SELECT COUNT(*) FROM public.outbox_messages);
+        "
   )"
 
-  if [[ "$row_count" != "0" ]]; then
+  if [[ "$row_counts" != "0|0|0" ]]; then
     echo \
-      "error: restore target public.work_items is not empty (${row_count} rows)" \
+      "error: restore target application data is not empty (${row_counts})" \
       >&2
     return 1
   fi
