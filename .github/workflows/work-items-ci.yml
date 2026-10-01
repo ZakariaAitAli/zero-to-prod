@@ -132,7 +132,8 @@ jobs:
           {
             echo "## Change-aware CI"
             echo
-            echo "- Application validation: \`${app}\`"
+            echo "- Backend validation: \`${backend}\`"
+            echo "- Frontend validation: \`${frontend}\`"
             echo "- Workflow validation: \`${workflow}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
