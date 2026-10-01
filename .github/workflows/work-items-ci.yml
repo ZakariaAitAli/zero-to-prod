@@ -435,7 +435,9 @@ jobs:
         run: |
           ./scripts/verify-ci-required.sh \
             "$CHANGES_RESULT" \
-            "$APP_REQUIRED" \
-            "$APP_RESULT" \
+            "$BACKEND_REQUIRED" \
+            "$BACKEND_RESULT" \
+            "$FRONTEND_REQUIRED" \
+            "$FRONTEND_RESULT" \
             "$WORKFLOW_REQUIRED" \
             "$WORKFLOW_RESULT"
