@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
     -trimpath \
     -ldflags="-s -w -X main.version=${VERSION}" \
     -o /out/work-items-api \
-    ./cmd/api
+    ./api
 
 FROM alpine:3.22 AS runtime
 

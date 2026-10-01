@@ -195,7 +195,7 @@ jobs:
         run: |
           output="${RUNNER_TEMP}/work-items-api-integration.out"
 
-          go test ./cmd/api \
+          go test ./api \
             -v \
             -count=1 \
             2>&1 | tee "$output"
@@ -256,7 +256,7 @@ jobs:
         run: |
           output="${RUNNER_TEMP}/work-items-worker-integration.out"
 
-          go test ./cmd/worker \
+          go test ./worker \
             -v \
             -count=1 \
             2>&1 | tee "$output"
@@ -294,6 +294,7 @@ jobs:
           echo "Building image: ${image}"
 
           docker build \
+            --file api/Dockerfile \
             --build-arg VERSION="${GITHUB_SHA}" \
             --tag "${image}" \
             .

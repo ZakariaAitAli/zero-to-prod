@@ -35,12 +35,12 @@ assert_case \
 assert_case \
   "API Go source" \
   "$app_expected" \
-  apps/work-items/cmd/api/main.go
+  apps/work-items/api/main.go
 
 assert_case \
   "worker Go source" \
   "$app_expected" \
-  apps/work-items/cmd/worker/main.go
+  apps/work-items/worker/main.go
 
 assert_case \
   "database migration" \
@@ -126,12 +126,12 @@ assert_case \
   "mixed docs and application" \
   "$app_expected" \
   docs/sprint-03/reliable-async-processing.md \
-  apps/work-items/cmd/api/main.go
+  apps/work-items/api/main.go
 
 assert_case \
   "mixed application and local infrastructure" \
   "$full_expected" \
-  apps/work-items/cmd/api/main.go \
+  apps/work-items/api/main.go \
   infra/local/rabbitmq/rabbitmq.conf
 
 assert_case \
