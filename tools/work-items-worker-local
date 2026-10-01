@@ -49,7 +49,7 @@ test_worker() {
 
   (
     cd "$APP_DIR"
-    go test ./cmd/worker -count=1
+    go test ./worker -count=1
   )
 }
 
@@ -67,7 +67,7 @@ build_worker() {
     go build \
       -trimpath \
       -o "$BINARY" \
-      ./cmd/worker
+      ./worker
   )
 }
 

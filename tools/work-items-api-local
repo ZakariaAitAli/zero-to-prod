@@ -78,7 +78,7 @@ build_app() {
       -trimpath \
       -ldflags="-X main.version=${VERSION}" \
       -o "$BINARY" \
-      ./cmd/api
+      ./api
   )
 }
 
