@@ -23,9 +23,11 @@ assert_case() {
   echo "PASS: ${name}"
 }
 
-docs_expected=$'app=false\nworkflow=false'
-app_expected=$'app=true\nworkflow=false'
-full_expected=$'app=true\nworkflow=true'
+docs_expected=$'backend=false\nfrontend=false\nworkflow=false'
+backend_expected=$'backend=true\nfrontend=false\nworkflow=false'
+frontend_expected=$'backend=false\nfrontend=true\nworkflow=false'
+backend_workflow_expected=$'backend=true\nfrontend=false\nworkflow=true'
+full_expected=$'backend=true\nfrontend=true\nworkflow=true'
 
 assert_case \
   "docs-only" \
@@ -34,62 +36,77 @@ assert_case \
 
 assert_case \
   "API Go source" \
-  "$app_expected" \
+  "$backend_expected" \
   apps/work-items/api/main.go
 
 assert_case \
   "worker Go source" \
-  "$app_expected" \
+  "$backend_expected" \
   apps/work-items/worker/main.go
 
 assert_case \
   "database migration" \
-  "$app_expected" \
+  "$backend_expected" \
   apps/work-items/migrations/000001_create_work_items.up.sql
 
 assert_case \
-  "Dockerfile" \
-  "$app_expected" \
-  apps/work-items/Dockerfile
+  "API Dockerfile" \
+  "$backend_expected" \
+  apps/work-items/api/Dockerfile
+
+assert_case \
+  "frontend source" \
+  "$frontend_expected" \
+  apps/work-items/web/src/App.tsx
+
+assert_case \
+  "frontend package manifest" \
+  "$frontend_expected" \
+  apps/work-items/web/package.json
+
+assert_case \
+  "frontend lockfile" \
+  "$frontend_expected" \
+  apps/work-items/web/pnpm-lock.yaml
 
 assert_case \
   "local Compose runtime" \
-  "$full_expected" \
+  "$backend_workflow_expected" \
   infra/local/compose.yaml
 
 assert_case \
   "local RabbitMQ configuration" \
-  "$full_expected" \
+  "$backend_workflow_expected" \
   infra/local/rabbitmq/rabbitmq.conf
 
 assert_case \
   "local PostgreSQL bootstrap" \
-  "$full_expected" \
+  "$backend_workflow_expected" \
   infra/local/postgres/init/001-roles.sh
 
 assert_case \
   "API local lifecycle tooling" \
-  "$full_expected" \
+  "$backend_workflow_expected" \
   tools/work-items-api-local
 
 assert_case \
   "worker local lifecycle tooling" \
-  "$full_expected" \
+  "$backend_workflow_expected" \
   tools/work-items-worker-local
 
 assert_case \
   "PostgreSQL lifecycle tooling" \
-  "$full_expected" \
+  "$backend_workflow_expected" \
   tools/postgres-local
 
 assert_case \
   "PostgreSQL backup tooling" \
-  "$full_expected" \
+  "$backend_workflow_expected" \
   tools/postgres-backup-local
 
 assert_case \
   "RabbitMQ lifecycle tooling" \
-  "$full_expected" \
+  "$backend_workflow_expected" \
   tools/rabbitmq-local
 
 assert_case \
@@ -118,20 +135,31 @@ assert_case \
   scripts/test-ci-required-gate.sh
 
 assert_case \
-  "unknown path remains conservative" \
+  "unknown Work Items path remains conservative" \
+  "$full_expected" \
+  apps/work-items/some-future-shared-file.txt
+
+assert_case \
+  "unknown repository path remains conservative" \
   "$full_expected" \
   some/future/unclassified-file.txt
 
 assert_case \
-  "mixed docs and application" \
-  "$app_expected" \
+  "mixed docs and backend" \
+  "$backend_expected" \
   docs/sprint-03/reliable-async-processing.md \
   apps/work-items/api/main.go
 
 assert_case \
-  "mixed application and local infrastructure" \
-  "$full_expected" \
+  "mixed backend and frontend" \
+  $'backend=true\nfrontend=true\nworkflow=false' \
   apps/work-items/api/main.go \
+  apps/work-items/web/src/App.tsx
+
+assert_case \
+  "mixed frontend and local infrastructure" \
+  "$full_expected" \
+  apps/work-items/web/src/App.tsx \
   infra/local/rabbitmq/rabbitmq.conf
 
 assert_case \

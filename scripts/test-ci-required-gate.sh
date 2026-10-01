@@ -46,14 +46,23 @@ expect_exit_code() {
 }
 
 expect_success \
-  "docs-only skips both validations" \
+  "docs-only skips all validations" \
   success \
+  false skipped \
   false skipped \
   false skipped
 
 expect_success \
-  "application-only validation succeeds" \
+  "backend-only validation succeeds" \
   success \
+  true success \
+  false skipped \
+  false skipped
+
+expect_success \
+  "frontend-only validation succeeds" \
+  success \
+  false skipped \
   true success \
   false skipped
 
@@ -61,41 +70,69 @@ expect_success \
   "full validation succeeds" \
   success \
   true success \
+  true success \
   true success
 
 expect_failure \
   "change detection failure fails closed" \
   failure \
   true success \
+  true success \
   true success
 
 expect_failure \
-  "required application validation cannot fail" \
+  "required backend validation cannot fail" \
   success \
   true failure \
+  false skipped \
   false skipped
 
 expect_failure \
-  "required application validation cannot be skipped" \
+  "required frontend validation cannot fail" \
   success \
-  true skipped \
+  false skipped \
+  true failure \
   false skipped
 
 expect_failure \
   "required workflow validation cannot fail" \
   success \
-  true success \
+  false skipped \
+  false skipped \
   true failure
+
+expect_failure \
+  "required backend validation cannot be skipped" \
+  success \
+  true skipped \
+  false skipped \
+  false skipped
+
+expect_failure \
+  "required frontend validation cannot be skipped" \
+  success \
+  false skipped \
+  true skipped \
+  false skipped
 
 expect_failure \
   "required workflow validation cannot be skipped" \
   success \
-  true success \
+  false skipped \
+  false skipped \
   true skipped
 
 expect_failure \
-  "unexpected application execution is rejected" \
+  "unexpected backend execution is rejected" \
   success \
+  false success \
+  false skipped \
+  false skipped
+
+expect_failure \
+  "unexpected frontend execution is rejected" \
+  success \
+  false skipped \
   false success \
   false skipped
 
@@ -103,17 +140,27 @@ expect_failure \
   "unexpected workflow execution is rejected" \
   success \
   false skipped \
+  false skipped \
   false success
 
 expect_failure \
-  "invalid application required flag is rejected" \
+  "invalid backend required flag is rejected" \
   success \
+  maybe success \
+  false skipped \
+  false skipped
+
+expect_failure \
+  "invalid frontend required flag is rejected" \
+  success \
+  false skipped \
   maybe success \
   false skipped
 
 expect_failure \
   "invalid workflow required flag is rejected" \
   success \
+  false skipped \
   false skipped \
   maybe success
 

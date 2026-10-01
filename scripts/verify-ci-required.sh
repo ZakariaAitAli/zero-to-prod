@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
-  echo "Usage: $0 <changes-result> <app-required> <app-result> <workflow-required> <workflow-result>" >&2
+if [ "$#" -ne 7 ]; then
+  echo "Usage: $0 <changes-result> <backend-required> <backend-result> <frontend-required> <frontend-result> <workflow-required> <workflow-result>" >&2
   exit 2
 fi
 
 changes_result="$1"
-app_required="$2"
-app_result="$3"
-workflow_required="$4"
-workflow_result="$5"
+backend_required="$2"
+backend_result="$3"
+frontend_required="$4"
+frontend_result="$5"
+workflow_required="$6"
+workflow_result="$7"
 
 failed=false
 
@@ -46,7 +48,8 @@ check_validation() {
   esac
 }
 
-check_validation "Application validation" "$app_required" "$app_result"
+check_validation "Backend validation" "$backend_required" "$backend_result"
+check_validation "Frontend validation" "$frontend_required" "$frontend_result"
 check_validation "Workflow validation" "$workflow_required" "$workflow_result"
 
 if [ "$failed" = "true" ]; then

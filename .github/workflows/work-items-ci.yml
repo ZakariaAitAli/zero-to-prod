@@ -21,7 +21,8 @@ jobs:
     timeout-minutes: 5
 
     outputs:
-      app: ${{ steps.changes.outputs.app }}
+      backend: ${{ steps.changes.outputs.backend }}
+      frontend: ${{ steps.changes.outputs.frontend }}
       workflow: ${{ steps.changes.outputs.workflow }}
 
     steps:
@@ -93,7 +94,8 @@ jobs:
             )
           fi
 
-          app=false
+          backend=false
+          frontend=false
           workflow=false
 
           for result in "${classification[@]}"; do
@@ -101,7 +103,8 @@ jobs:
             value="${result#*=}"
 
             case "$key" in
-              app) app="$value" ;;
+              backend) backend="$value" ;;
+              frontend) frontend="$value" ;;
               workflow) workflow="$value" ;;
               *)
                 echo "::error::Unexpected classifier output: ${result}"
@@ -115,12 +118,14 @@ jobs:
           # their own policy. This guard is intentionally independent of
           # classifier output.
           if [ "${ci_control_changed:-false}" = "true" ]; then
-            app=true
+            backend=true
+            frontend=true
             workflow=true
           fi
 
           {
-            echo "app=${app}"
+            echo "backend=${backend}"
+            echo "frontend=${frontend}"
             echo "workflow=${workflow}"
           } >> "$GITHUB_OUTPUT"
 
@@ -131,10 +136,10 @@ jobs:
             echo "- Workflow validation: \`${workflow}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  app-validation:
-    name: Validate Work Items
+  backend-validation:
+    name: Validate Work Items backend
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -324,6 +329,45 @@ jobs:
             echo "- Runtime user: \`${configured_user}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  frontend-validation:
+    name: Validate Work Items frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: apps/work-items/web
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: apps/work-items/web/pnpm-lock.yaml
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Display tool versions
+        run: |
+          node --version
+          pnpm --version
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint frontend
+        run: pnpm lint
+
+      - name: Build frontend
+        run: pnpm build
+
   workflow-validation:
     name: Validate CI workflows
     needs: changes
@@ -366,7 +410,8 @@ jobs:
     name: CI required
     needs:
       - changes
-      - app-validation
+      - backend-validation
+      - frontend-validation
       - workflow-validation
     if: always()
     runs-on: ubuntu-latest
@@ -380,8 +425,11 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
 
-          APP_REQUIRED: ${{ needs.changes.outputs.app }}
-          APP_RESULT: ${{ needs.app-validation.result }}
+          BACKEND_REQUIRED: ${{ needs.changes.outputs.backend }}
+          BACKEND_RESULT: ${{ needs.backend-validation.result }}
+
+          FRONTEND_REQUIRED: ${{ needs.changes.outputs.frontend }}
+          FRONTEND_RESULT: ${{ needs.frontend-validation.result }}
 
           WORKFLOW_REQUIRED: ${{ needs.changes.outputs.workflow }}
           WORKFLOW_RESULT: ${{ needs.workflow-validation.result }}
