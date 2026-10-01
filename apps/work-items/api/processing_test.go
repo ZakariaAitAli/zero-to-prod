@@ -255,3 +255,119 @@ func TestAcceptWorkItemProcessingDoesNotExposeDatabaseError(t *testing.T) {
 		t.Fatalf("unexpected response body: %s", body)
 	}
 }
+
+func TestGetProcessingJob(t *testing.T) {
+	t.Run("returns processing job", func(t *testing.T) {
+		store := &stubApplicationStore{
+			getJob: processingJob{
+				ID:           7,
+				WorkItemID:   12,
+				State:        "succeeded",
+				AttemptCount: 1,
+			},
+		}
+
+		handler := newHandler("test", &readinessState{}, store)
+
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/processing-jobs/7",
+			nil,
+		)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+		}
+
+		if store.getJobID != 7 {
+			t.Fatalf("job ID = %d, want 7", store.getJobID)
+		}
+
+		var got processingJob
+		if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+
+		if got.ID != 7 {
+			t.Fatalf("ID = %d, want 7", got.ID)
+		}
+		if got.State != "succeeded" {
+			t.Fatalf("state = %q, want %q", got.State, "succeeded")
+		}
+	})
+
+	t.Run("rejects invalid ID", func(t *testing.T) {
+		store := &stubApplicationStore{}
+		handler := newHandler("test", &readinessState{}, store)
+
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/processing-jobs/not-a-number",
+			nil,
+		)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf(
+				"status = %d, want %d",
+				response.Code,
+				http.StatusBadRequest,
+			)
+		}
+	})
+
+	t.Run("returns not found", func(t *testing.T) {
+		store := &stubApplicationStore{
+			getErr: errProcessingJobNotFound,
+		}
+
+		handler := newHandler("test", &readinessState{}, store)
+
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/processing-jobs/999",
+			nil,
+		)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusNotFound {
+			t.Fatalf(
+				"status = %d, want %d",
+				response.Code,
+				http.StatusNotFound,
+			)
+		}
+	})
+
+	t.Run("returns persistence unavailable", func(t *testing.T) {
+		store := &stubApplicationStore{
+			getErr: errors.New("database unavailable"),
+		}
+
+		handler := newHandler("test", &readinessState{}, store)
+
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/processing-jobs/7",
+			nil,
+		)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf(
+				"status = %d, want %d",
+				response.Code,
+				http.StatusServiceUnavailable,
+			)
+		}
+	})
+}

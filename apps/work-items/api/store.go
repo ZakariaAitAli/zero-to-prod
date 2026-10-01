@@ -25,13 +25,17 @@ type processingJob struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-var errWorkItemNotFound = errors.New("work item not found")
+var (
+	errWorkItemNotFound      = errors.New("work item not found")
+	errProcessingJobNotFound = errors.New("processing job not found")
+)
 
 type applicationStore interface {
 	Ready(context.Context) error
 	CreateWorkItem(context.Context, string, string) (workItem, error)
 	ListWorkItems(context.Context) ([]workItem, error)
 	AcceptProcessingJob(context.Context, int64) (processingJob, error)
+	GetProcessingJob(context.Context, int64) (processingJob, error)
 }
 
 type postgresStore struct {
@@ -137,6 +141,48 @@ func (store *postgresStore) CreateWorkItem(
 	}
 
 	return item, nil
+}
+
+func (store *postgresStore) GetProcessingJob(
+	ctx context.Context,
+	jobID int64,
+) (processingJob, error) {
+	const query = `
+		SELECT
+			id,
+			work_item_id,
+			state,
+			attempt_count,
+			created_at
+		FROM public.processing_jobs
+		WHERE id = $1
+	`
+
+	var job processingJob
+
+	err := store.pool.QueryRow(
+		ctx,
+		query,
+		jobID,
+	).Scan(
+		&job.ID,
+		&job.WorkItemID,
+		&job.State,
+		&job.AttemptCount,
+		&job.CreatedAt,
+	)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return processingJob{}, errProcessingJobNotFound
+	}
+	if err != nil {
+		return processingJob{}, fmt.Errorf(
+			"query processing job: %w",
+			err,
+		)
+	}
+
+	return job, nil
 }
 
 func (store *postgresStore) AcceptProcessingJob(
