@@ -1,6 +1,22 @@
 # Local Work Items development
 
-The Work Items API can be developed and verified locally with the repository-owned PostgreSQL and RabbitMQ labs and without AWS credentials or cloud infrastructure.
+The Work Items system can be developed and verified locally with the repository-owned PostgreSQL and RabbitMQ labs and without AWS credentials or cloud infrastructure.
+
+The local system includes:
+
+~~~text
+Web UI
+  ↓
+Go API
+  ↓
+PostgreSQL
+  ↓
+transactional outbox
+  ↓
+RabbitMQ
+  ↓
+worker
+~~~
 
 ## Prerequisites
 
@@ -10,6 +26,9 @@ Required for the local workflow:
 - Bash
 - curl
 - Docker with Docker Compose
+- Node.js 22
+- Corepack
+- pnpm 12.8.1, pinned by the frontend `packageManager` field
 
 `test` and `build` remain native Go operations.
 
@@ -189,6 +208,103 @@ The worker is a separate process and can be run with:
 ```bash
 ./tools/work-items-worker-local run
 ```
+
+Processing-job state can be read through:
+
+~~~text
+GET /processing-jobs/{id}
+~~~
+
+This endpoint is read-only. Repeated requests observe processing state without mutating it.
+
+A typical asynchronous client flow is:
+
+~~~text
+POST /items/{id}/process
+        ↓
+HTTP 202 + processing job
+        ↓
+GET /processing-jobs/{job_id}
+        ↓
+accepted
+        ↓
+succeeded | failed
+~~~
+
+## Web UI
+
+The frontend lives under:
+
+~~~text
+apps/work-items/web/
+~~~
+
+With PostgreSQL, RabbitMQ, the API, and the worker running, start the frontend in another terminal:
+
+~~~bash
+cd apps/work-items/web
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev
+~~~
+
+Open:
+
+~~~text
+http://localhost:5173
+~~~
+
+The UI supports:
+
+- listing Work Items;
+- creating a Work Item;
+- starting asynchronous processing;
+- observing processing-job state;
+- polling until a job reaches `succeeded` or `failed`;
+- loading, empty, and API/network failure states.
+
+### Browser-to-API development boundary
+
+The frontend calls API paths under:
+
+~~~text
+/api/*
+~~~
+
+During local development, Vite proxies those requests to:
+
+~~~text
+http://127.0.0.1:8080
+~~~
+
+For example:
+
+~~~text
+browser
+  ↓
+http://localhost:5173/api/items
+  ↓
+Vite development proxy
+  ↓
+http://127.0.0.1:8080/items
+  ↓
+Work Items API
+~~~
+
+A broad API CORS policy is deliberately not enabled solely for local development.
+
+The Vite proxy keeps the browser-facing development flow behind the frontend origin while forwarding API traffic to the local Go process.
+
+This is a local-development decision only. It does not define future production:
+
+- ingress;
+- TLS termination;
+- DNS or hostname layout;
+- CDN behavior;
+- reverse-proxy topology;
+- CORS policy.
+
+The production browser/API boundary must be decided separately when a deployed environment requires it.
 
 ## Overrides
 

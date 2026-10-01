@@ -1,75 +1,72 @@
-# React + TypeScript + Vite
+# Work Items Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Browser client for the Zero-to-Prod Work Items reference system.
 
-Currently, two official plugins are available:
+## Purpose
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+This application provides the browser-facing Work Items interface while keeping the existing Go API, PostgreSQL, transactional outbox, RabbitMQ, and worker architecture intact.
 
-## React Compiler
+The current UI can:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- list Work Items;
+- create Work Items;
+- start asynchronous processing;
+- observe processing-job state;
+- poll accepted jobs until they reach `succeeded` or `failed`;
+- represent loading, empty, and request-failure states.
 
-## Expanding the ESLint configuration
+## Stack
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- shadcn/ui
+- pnpm
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Local development
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+The frontend expects the Work Items API to be available at:
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+http://127.0.0.1:8080
 
-```
+From this directory:
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Open:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+http://localhost:5173
 
-```
+The browser calls API paths under `/api/*`.
+
+Vite proxies those requests to the local Go API during development.
+
+This avoids enabling a broad API CORS policy solely for the local development workflow.
+
+The Vite proxy is development-only and does not define future production ingress, TLS, hostname, CDN, reverse-proxy, or CORS architecture.
+
+## Checks
+
+Run:
+
+pnpm lint
+pnpm build
+
+Frontend-only repository changes have their own CI validation path and do not require the PostgreSQL/RabbitMQ integration suite.
+
+## Current processing semantics
+
+A processing job reaching `succeeded` does not imply that the Work Item business status becomes `done`.
+
+The current worker still performs the existing minimal processing behavior.
+
+Work Item business status and processing-job state are separate models.
+
+## Related documentation
+
+- `docs/architecture/work-items.md`
+- `docs/guides/local-work-items.md`
+- `docs/adr/0002-work-items-web-ui-boundary.md`

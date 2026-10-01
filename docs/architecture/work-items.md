@@ -6,7 +6,15 @@ It is intentionally local-first. PostgreSQL and RabbitMQ run in repository-owned
 
 ## System view
 
-```text
+~~~text
+                         ┌─────────────────────┐
+                         │   Work Items Web UI │
+                         │ React / Vite / TS   │
+                         └─────────┬───────────┘
+                                   │
+                              HTTP / JSON
+                                   │
+                                   ▼
                          ┌─────────────────────┐
                          │    Work Items API   │
                          └─────────┬───────────┘
@@ -34,11 +42,11 @@ It is intentionally local-first. PostgreSQL and RabbitMQ run in repository-owned
                          │  Work Items worker  │
                          └─────────┬───────────┘
                                    │
-                            durable outcome
+                             durable outcome
                                    │
                                    ▼
                               PostgreSQL
-```
+~~~
 
 ## API responsibilities
 
@@ -53,7 +61,34 @@ GET  /version
 POST /items
 GET  /items
 POST /items/{id}/process
+GET  /processing-jobs/{id}
 ```
+
+## Web UI boundary
+
+The Web UI is a distinct application artifact under:
+
+~~~text
+apps/work-items/web/
+~~~
+
+It is responsible for browser-facing interaction and presentation.
+
+The Go API remains the boundary for persistence and asynchronous-processing commands.
+
+The browser can:
+
+- list Work Items;
+- create Work Items;
+- submit a processing command;
+- retain the returned processing-job identifier;
+- read processing-job state until it reaches a terminal outcome.
+
+For local development, the frontend calls `/api/*` and Vite proxies those requests to the Go API.
+
+The API therefore does not enable a broad CORS policy merely to support the local frontend.
+
+This proxy is a development convenience only. It does not define production ingress, TLS, CDN, hostname, reverse-proxy, or production CORS architecture.
 
 ## PostgreSQL boundary
 
@@ -161,12 +196,13 @@ tools/work-items-worker-local
 
 This architecture does not claim production parity.
 
-The current experiments do not establish managed-database high availability, point-in-time recovery, production RabbitMQ operation, Kubernetes, multi-region recovery, or a production observability stack.
+The current experiments do not establish managed-database high availability, point-in-time recovery, production RabbitMQ operation, production frontend delivery or origin policy, Kubernetes, multi-region recovery, or a production observability stack.
 
 Those capabilities should be introduced when an engineering problem requires them, following the v2 specification.
 
 ## Related documentation
 
+- [Work Items Web UI boundary ADR](../adr/0002-work-items-web-ui-boundary.md)
 - [Local Work Items guide](../guides/local-work-items.md)
 - [Local PostgreSQL guide](../guides/local-postgresql.md)
 - [Database lifecycle and recovery](../concepts/database-lifecycle-and-recovery.md)
