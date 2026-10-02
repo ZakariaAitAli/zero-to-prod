@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -36,6 +38,14 @@ func registerWorkItemHandlers(
 		decoder.DisallowUnknownFields()
 
 		if err := decoder.Decode(&request); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse{
+				Error: "invalid_request",
+			})
+			return
+		}
+
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 			writeJSON(w, http.StatusBadRequest, errorResponse{
 				Error: "invalid_request",
 			})
