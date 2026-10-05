@@ -101,7 +101,50 @@ verify database state
 verify through application behavior
 ```
 
-Schema and privileges remain defined by repository migrations. The backup contains the scoped Work Item data and sequence state.
+Schema and privileges remain defined by repository migrations. The backup contains the scoped application data and sequence state.
+
+## The recovery boundary follows durable state
+
+A backup scope is correct only relative to what the application treats as durable.
+
+The first Work Items backup (Issue #99) covered only `work_items`. That matched the system at the time.
+
+Asynchronous processing then changed the acceptance contract. The API returns `202 Accepted` only after it has committed a `processing_jobs` row and an `outbox_messages` row in the same PostgreSQL transaction. From that point, those rows *are* the accepted responsibility.
+
+As recorded in ADR 0001, restoring the older Work-Item-only backup recovered the business object but lost the accepted asynchronous work. The [Issue #111 experiment](../experiments/issue-111-recovery-model.md) then showed that restoring all three tables let the outbox publish the recovered message and the worker complete the job, without the client resubmitting.
+
+[ADR 0001](../adr/0001-work-items-async-recovery-boundary.md) therefore set the current logical recovery boundary to:
+
+```text
+work_items
+processing_jobs
+outbox_messages
++ their identity sequences
+```
+
+The portable lesson:
+
+> The recovery boundary must follow the application's durable state. When a feature adds new state that the system has promised to honour, the backup scope must be revisited, or recovery silently drops that promise.
+
+A backup that still restores cleanly can be the wrong backup.
+
+## Datastore recovery is not distributed recovery
+
+Restoring PostgreSQL recovers what PostgreSQL held. It does not recover state held by other components.
+
+In Work Items, RabbitMQ holds messages after the outbox records them as published. Consider a backup taken in this state:
+
+```text
+processing_jobs.state      = accepted
+outbox_messages.published_at IS NOT NULL
+message in RabbitMQ         = later lost
+```
+
+After restore, the job looks accepted and already published. The outbox publisher will not republish it, and the worker will never receive it.
+
+The PostgreSQL backup is correct. The missing piece is a recovery or reconciliation design that spans the database and the broker. Zero-to-Prod has not yet built one.
+
+The general point: in a system with more than one durable component, each component's recovery must be designed, and so must the consistency between them after recovery.
 
 ## Recovery point
 
@@ -119,13 +162,23 @@ The restore path deliberately rejects several unsafe or invalid situations, incl
 
 - missing backup;
 - corrupt or truncated archive;
-- archive with the wrong scope;
-- restore before required schema exists;
-- restore into a non-empty target.
+- archive with the wrong scope (including an older archive that predates the current boundary);
+- restore before every required table exists;
+- restore into a target where any required table already has rows.
 
 The tested restore also uses PostgreSQL transactional restore behavior for the scoped archive.
 
 Recovery tooling should prefer a clear failure over silently producing ambiguous state.
+
+Validation is layered and each layer proves less than recovery:
+
+```text
+TOC/scope check            — the archive lists exactly the expected entries
+payload readability        — every entry's data can be decoded
+restore + verification     — the state actually comes back and the application works
+```
+
+Only the last establishes recovery.
 
 ## Recovery verification
 
@@ -151,7 +204,7 @@ This is analogous to deployment verification: control-plane or tooling success a
 
 The local experiment does not establish production PostgreSQL recovery.
 
-It does not implement or prove WAL archiving, point-in-time recovery, replication, high availability, managed-database failover, scheduled retention, off-site backup, production-scale restore time, or arbitrary cross-version restore.
+It does not implement or prove WAL archiving, point-in-time recovery, replication, high availability, managed-database failover, scheduled retention, off-site backup, production-scale restore time, arbitrary cross-version restore, or broker/outbox reconciliation after recovery.
 
 Those remain different capabilities.
 
@@ -164,13 +217,17 @@ Those remain different capabilities.
 - Application rollback and schema rollback are different decisions.
 - Dirty migration metadata must be reconciled with the real physical schema.
 - Creating a backup does not prove recovery.
-- A snapshot has a recovery boundary.
+- A snapshot has a recovery point.
+- The backup scope must follow the application's durable state and be revisited when that state changes.
+- Recovering one datastore is not recovering the whole distributed system.
 - Restore should fail safely when its prerequisites are not satisfied.
 - Recovery should be verified through both datastore state and application behavior.
 
 ## Zero-to-Prod deep dives
 
 - [Local PostgreSQL and schema migrations](../guides/local-postgresql.md)
-- [PostgreSQL backup and destructive recovery](../sprint-03/postgresql-backup-restore.md)
+- [ADR 0001 — Work Items async recovery boundary](../adr/0001-work-items-async-recovery-boundary.md)
+- [Issue #111 — accepted async work recovery experiment](../experiments/issue-111-recovery-model.md)
+- [PostgreSQL backup and destructive recovery (Issue #99, Work-Item-only)](../sprint-03/postgresql-backup-restore.md)
 - [PostgreSQL schema evolution compatibility](../sprint-03/postgresql-schema-evolution.md)
 - [PostgreSQL recovery runbook](../sprint-03/runbook.md)
