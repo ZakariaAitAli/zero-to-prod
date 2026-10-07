@@ -144,7 +144,7 @@ Important current limitations include:
 - no distributed tracing;
 - no representative messaging-architecture comparison;
 - no sustained-operation L6 claim;
-- PostgreSQL backup currently protects Work Item data only, not the complete asynchronous processing state.
+- snapshot backup recovery remains limited to the captured recovery point.
 
 These limitations are experiment boundaries rather than hidden production-readiness assumptions.
 
@@ -243,7 +243,7 @@ Work Item data can be backed up using repository-owned tooling:
 
 Recovery is migration-first: the target schema and privileges must already exist, and the Work Item restore target must be empty.
 
-The current backup contract covers Work Item data and sequence state. It does **not** yet provide complete recovery of processing jobs or transactional outbox state.
+The current backup contract covers Work Items, processing jobs, outbox messages, title-analysis results, and identity sequence state. Migration 5 requires an empty application database; pre-result backups require their historical schema/application. See the [current recovery runbook](docs/runbooks/work-items-recovery.md).
 
 See the [Sprint 03 PostgreSQL backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md) and [Sprint 03 recovery runbook](docs/sprint-03/runbook.md).
 

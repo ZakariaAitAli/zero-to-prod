@@ -6,15 +6,26 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/workitems"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type titleAnalysis struct {
+	ProcessingJobID int64  `json:"processing_job_id"`
+	InputTitle      string `json:"input_title"`
+	AnalysisVersion int    `json:"analysis_version"`
+	CharacterCount  int    `json:"character_count"`
+	WordCount       int    `json:"word_count"`
+}
+
 type workItem struct {
-	ID        int64     `json:"id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64          `json:"id"`
+	Title     string         `json:"title"`
+	Status    string         `json:"status"`
+	CreatedAt time.Time      `json:"created_at"`
+	Result    *titleAnalysis `json:"result,omitempty"`
 }
 
 type processingJob struct {
@@ -26,8 +37,11 @@ type processingJob struct {
 }
 
 var (
-	errWorkItemNotFound      = errors.New("work item not found")
-	errProcessingJobNotFound = errors.New("processing job not found")
+	errInvalidWorkItemStatus   = errors.New("invalid_status")
+	errWorkItemDone            = errors.New("work_item_already_done")
+	errProcessingAlreadyActive = errors.New("processing_already_active")
+	errWorkItemNotFound        = errors.New("work item not found")
+	errProcessingJobNotFound   = errors.New("processing job not found")
 )
 
 type applicationStore interface {
@@ -68,6 +82,7 @@ func newPostgresStore(
 
 func (store *postgresStore) Ready(ctx context.Context) error {
 	queries := []string{
+		"SELECT work_item_id, processing_job_id, input_title, analysis_version, character_count, word_count FROM public.work_item_results LIMIT 0",
 		`
 			SELECT id, title, status, created_at
 			FROM public.work_items
@@ -117,9 +132,12 @@ func (store *postgresStore) CreateWorkItem(
 	title string,
 	status string,
 ) (workItem, error) {
+	if status != workItemStatusPending {
+		return workItem{}, errInvalidWorkItemStatus
+	}
 	const query = `
-		INSERT INTO public.work_items (title, status)
-		VALUES ($1, $2)
+		INSERT INTO public.work_items (title)
+		VALUES ($1)
 		RETURNING id, title, status, created_at
 	`
 
@@ -129,7 +147,6 @@ func (store *postgresStore) CreateWorkItem(
 		ctx,
 		query,
 		title,
-		status,
 	).Scan(
 		&item.ID,
 		&item.Title,
@@ -200,6 +217,30 @@ func (store *postgresStore) AcceptProcessingJob(
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
+
+	// Acceptance and completion use the same transaction-scoped per-item lock.
+	if _, err := tx.Exec(ctx, workitems.ItemLockSQL, workItemID); err != nil {
+		return processingJob{}, err
+	}
+	var status string
+	err = tx.QueryRow(ctx, "SELECT status FROM public.work_items WHERE id=$1", workItemID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return processingJob{}, errWorkItemNotFound
+	}
+	if err != nil {
+		return processingJob{}, err
+	}
+	if status == workItemStatusDone {
+		return processingJob{}, errWorkItemDone
+	}
+	var activeID int64
+	err = tx.QueryRow(ctx, "SELECT id FROM public.processing_jobs WHERE work_item_id=$1 AND state='accepted'", workItemID).Scan(&activeID)
+	if err == nil {
+		return processingJob{ID: activeID}, errProcessingAlreadyActive
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return processingJob{}, err
+	}
 
 	const insertJobQuery = `
 		INSERT INTO public.processing_jobs (work_item_id)
@@ -400,9 +441,15 @@ func (store *postgresStore) ListWorkItems(
 	ctx context.Context,
 ) ([]workItem, error) {
 	const query = `
-		SELECT id, title, status, created_at
-		FROM public.work_items
-		ORDER BY id
+		SELECT i.id, i.title, i.status, i.created_at,
+            (SELECT json_build_object(
+                'processing_job_id', r.processing_job_id,
+                'input_title', r.input_title,
+                'analysis_version', r.analysis_version,
+                'character_count', r.character_count,
+                'word_count', r.word_count)
+             FROM public.work_item_results r WHERE r.work_item_id = i.id)
+        FROM public.work_items i ORDER BY i.id
 	`
 
 	rows, err := store.pool.Query(ctx, query)
@@ -421,6 +468,7 @@ func (store *postgresStore) ListWorkItems(
 			&item.Title,
 			&item.Status,
 			&item.CreatedAt,
+			&item.Result,
 		); err != nil {
 			return nil, fmt.Errorf("scan work item: %w", err)
 		}

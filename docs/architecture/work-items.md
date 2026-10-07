@@ -152,6 +152,34 @@ The consumer model assumes that messages may be delivered more than once.
 
 Durable completion and idempotent handling make redelivery survivable, including the case where the durable effect succeeds but the worker fails before acknowledging the broker delivery.
 
+## Business completion
+
+ADR 0003 defines title analysis as the durable result. The worker counts Unicode
+code points and whitespace-separated words, recording the stored input title,
+analysis version, and producing job. Results are returned with `GET /items` and
+shown in the web UI.
+
+Completion takes a transaction-scoped advisory lock keyed by Work Item ID,
+using a shared namespace and a hash of the bigint ID (collisions only serialize
+unrelated items), checks job identity and terminal state, inserts the result, then guards both
+state updates. Any failed guard rolls back all writes. Acceptance takes the
+same lock. A partial unique index allows at most one accepted-or-succeeded job
+per item; deferred foreign keys require the result, done item, and producing
+succeeded job to exist together at commit. Failed jobs remain separate history.
+
+The API runtime can insert titles but cannot insert system-owned status or
+write results. The worker can update status and insert results; it cannot
+change titles or create jobs. Existing worker retry hooks run before completion;
+the actual title analysis occurs inside the completion transaction.
+
+Migration 5 requires empty application tables. Existing data and historical
+backups retain their original schema/application contract. See the
+[current recovery runbook](../runbooks/work-items-recovery.md).
+
+Issue #117 integration checks cover the new success path, duplicate completion,
+concurrent acceptance, partial-success rejection, guard rollback, and logical
+result restore. The broader crash/restart experiment matrix belongs to #118.
+
 ## Failure model
 
 Sprint 03 deliberately exercised failures around:

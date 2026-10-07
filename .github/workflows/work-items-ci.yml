@@ -273,6 +273,10 @@ jobs:
             exit 1
           fi
 
+      - name: Verify result migration and backup compatibility
+        working-directory: .
+        run: ./scripts/test-async-result-recovery.sh
+
       - name: Clean up local integration dependencies
         if: always()
         working-directory: .
@@ -392,6 +396,7 @@ jobs:
           bash -n scripts/test-ci-required-gate.sh
           bash -n tools/work-items-api-local
           bash -n tools/postgres-local
+          bash -n scripts/test-async-result-recovery.sh
           bash -n tools/postgres-backup-local
           bash -n tools/work-items-worker-local
           bash -n tools/rabbitmq-local

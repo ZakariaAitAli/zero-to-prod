@@ -10,6 +10,7 @@ import (
 )
 
 type workerPostgresIntegrationFixture struct {
+	Pool       *pgxpool.Pool
 	Store      *workerStore
 	JobID      int64
 	WorkItemID int64
@@ -103,27 +104,14 @@ func requireWorkerPostgresIntegrationFixture(
 		if _, err := fixturePool.Exec(
 			cleanupContext,
 			`
-				DELETE FROM public.processing_jobs
-				WHERE id = $1
+				WITH removed_results AS (DELETE FROM public.work_item_results WHERE processing_job_id=$1),
+                removed_jobs AS (DELETE FROM public.processing_jobs WHERE id=$1)
+                DELETE FROM public.work_items WHERE id=$2
 			`,
-			jobID,
+			jobID, workItemID,
 		); err != nil {
 			t.Errorf(
 				"clean worker integration processing-job fixture: %v",
-				err,
-			)
-		}
-
-		if _, err := fixturePool.Exec(
-			cleanupContext,
-			`
-				DELETE FROM public.work_items
-				WHERE id = $1
-			`,
-			workItemID,
-		); err != nil {
-			t.Errorf(
-				"clean worker integration Work Item fixture: %v",
 				err,
 			)
 		}
@@ -147,6 +135,7 @@ func requireWorkerPostgresIntegrationFixture(
 	})
 
 	return workerPostgresIntegrationFixture{
+		Pool: fixturePool,
 		Store: &workerStore{
 			db: workerPool,
 		},

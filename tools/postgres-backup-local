@@ -26,19 +26,21 @@ Usage:
   ./tools/postgres-backup-local restore <backup-path>
 
 Commands:
-  create    Create a custom-format, data-only backup of public.work_items.
+  create    Create a data-only backup of all four application tables and sequences.
   inspect   List the PostgreSQL archive contents without restoring it.
   validate  Verify that the archive contains only the expected Work Item data.
   restore   Restore Work Item data into an already-migrated empty target.
 
 Restore contract:
   - migrations must already be applied explicitly
-  - public.work_items must exist
-  - public.work_items must be empty
+  - all four application tables must exist and be empty
+  - pre-#117 backups require their historical schema/application
   - restore runs in a single transaction
   - schema creation and migration execution are not performed here
 
 Environment overrides:
+  ZTP_COMPOSE_PROJECT_NAME
+  ZTP_POSTGRES_PORT
   ZTP_POSTGRES_DB
   ZTP_POSTGRES_MIGRATOR_USER
   ZTP_POSTGRES_MIGRATOR_PASSWORD
@@ -56,6 +58,7 @@ require_docker() {
 
 compose() {
   docker compose \
+    --project-name "${ZTP_COMPOSE_PROJECT_NAME:-zero-to-prod-local}" \
     -f "$COMPOSE_FILE" \
     "$@"
 }
@@ -115,7 +118,12 @@ validate_backup() {
       | awk '!/^;/ && NF { count++ } END { print count + 0 }'
   )"
 
-  if [[ "$entry_count" != "6" ]]; then
+  if ! printf '%s\n' "$archive_list" | grep -Fq 'TABLE DATA public work_item_results '; then
+    echo "error: incompatible pre-#117 backup: title-analysis results are missing; restore with the historical schema/application" >&2
+    return 1
+  fi
+
+  if [[ "$entry_count" != "7" ]]; then
     echo "error: unexpected backup archive contents (${entry_count} entries)" >&2
     return 1
   fi
@@ -123,6 +131,7 @@ validate_backup() {
   local required_entry
 
   for required_entry in \
+    'TABLE DATA public work_item_results ' \
     'TABLE DATA public work_items ' \
     'TABLE DATA public processing_jobs ' \
     'TABLE DATA public outbox_messages ' \
@@ -166,6 +175,7 @@ create_backup() {
       --table=public.work_items \
       --table=public.processing_jobs \
       --table=public.outbox_messages \
+      --table=public.work_item_results \
       > "$temporary_path"
   then
     rm -f "$temporary_path"
@@ -194,11 +204,12 @@ require_empty_restore_target() {
           SELECT
             to_regclass('public.work_items'),
             to_regclass('public.processing_jobs'),
-            to_regclass('public.outbox_messages');
+            to_regclass('public.outbox_messages'),
+            to_regclass('public.work_item_results');
         "
   )"
 
-  if [[ "$relations" != "work_items|processing_jobs|outbox_messages" ]]; then
+  if [[ "$relations" != "work_items|processing_jobs|outbox_messages|work_item_results" ]]; then
     echo \
       "error: restore target schema is not ready; apply migrations explicitly first" \
       >&2
@@ -217,11 +228,12 @@ require_empty_restore_target() {
           SELECT
             (SELECT COUNT(*) FROM public.work_items),
             (SELECT COUNT(*) FROM public.processing_jobs),
-            (SELECT COUNT(*) FROM public.outbox_messages);
+            (SELECT COUNT(*) FROM public.outbox_messages),
+            (SELECT COUNT(*) FROM public.work_item_results);
         "
   )"
 
-  if [[ "$row_counts" != "0|0|0" ]]; then
+  if [[ "$row_counts" != "0|0|0|0" ]]; then
     echo \
       "error: restore target application data is not empty (${row_counts})" \
       >&2

@@ -167,6 +167,16 @@ export default function App() {
 
       await refreshItems()
     } catch (processError) {
+      if (processError instanceof Error &&
+          processError.message === 'work_item_already_done') {
+        try {
+          await refreshItems()
+          return
+        } catch (refreshError) {
+          setError(refreshError instanceof Error ? refreshError.message : 'unknown_error')
+          return
+        }
+      }
       setError(
         processError instanceof Error
           ? processError.message
@@ -271,6 +281,7 @@ export default function App() {
                     <TableHead>Title</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Job</TableHead>
+                    <TableHead>Result</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">
                       Actions
@@ -316,6 +327,11 @@ export default function App() {
                           )}
                         </TableCell>
 
+                        <TableCell>
+                          {item.result
+                            ? `${item.result.character_count} characters, ${item.result.word_count} words`
+                            : '—'}
+                        </TableCell>
                         <TableCell className="text-muted-foreground">
                           {new Date(
                             item.created_at,
@@ -326,7 +342,7 @@ export default function App() {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={processingItemID !== null}
+                            disabled={processingItemID !== null || item.status === 'done'}
                             onClick={() => {
                               void handleProcess(item.id)
                             }}
