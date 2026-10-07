@@ -28,8 +28,11 @@ Usage:
 Commands:
   create    Create a custom-format, data-only backup of public.work_items.
   inspect   List the PostgreSQL archive contents without restoring it.
-  validate  Verify that the archive contains only the expected Work Item data.
+  validate  Check archive scope and complete payload readability (not recovery).
   restore   Restore Work Item data into an already-migrated empty target.
+
+Validation checks TOC/scope and complete archive payload readability.
+It does not execute archive SQL or prove successful recovery.
 
 Restore contract:
   - migrations must already be applied explicitly
@@ -135,6 +138,16 @@ validate_backup() {
       return 1
     fi
   done
+
+  # A readable TOC does not establish that the archive payload is complete.
+  # Decode every payload without connecting to a database or executing SQL.
+  # This proves readability only; successful recovery needs a restore test.
+  if ! compose exec -T postgres \
+    pg_restore --file=/dev/null \
+    < "$backup_path"; then
+    echo "error: backup archive payload is not readable: ${backup_path}" >&2
+    return 1
+  fi
 
   echo "valid=${backup_path}"
 }

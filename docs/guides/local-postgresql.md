@@ -26,7 +26,7 @@ The PostgreSQL image and migration-tool build inputs are pinned for reproducibil
 
 ## Responsibility boundaries
 
-Three PostgreSQL roles exist in the local lab.
+Four PostgreSQL roles exist in the local lab.
 
 ### Bootstrap administrator
 
@@ -66,11 +66,28 @@ This role:
 - can INSERT the `title` and `status` columns into `work_items`
 - has USAGE on the `work_items` identity sequence
 - cannot UPDATE or DELETE `work_items`
+- can SELECT and INSERT the columns it needs in `processing_jobs` and `outbox_messages`
+- can UPDATE only the outbox publication columns (`publish_attempts`, `last_error_code`, `published_at`)
 - cannot create, alter, or drop application schema objects
 
-The application uses this identity for normal runtime access.
+The API uses this identity for normal runtime access, including the API-embedded outbox publisher.
 
-The application must not use the administrator or migration identity for normal runtime access.
+### Worker identity
+
+`zero_to_prod_worker`
+
+This role:
+
+- can SELECT `work_items` and `processing_jobs`
+- can UPDATE only the processing-outcome columns of `processing_jobs` (`state`, `attempt_count`, `last_error_code`, `finished_at`)
+- has no access to `outbox_messages`
+- cannot create, alter, or drop application schema objects
+
+The worker uses this identity for normal runtime access.
+
+The exact column grants are defined in `apps/work-items/migrations/000004_add_async_processing.up.sql`.
+
+The API and worker must not use the administrator or migration identity for normal runtime access.
 
 ## Local credentials
 
@@ -144,6 +161,27 @@ The `status` constraint accepts:
     pending
     done
 
+Migration 000004 adds the durable asynchronous-processing state:
+
+    processing_jobs
+    ├── id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY
+    ├── work_item_id     BIGINT NOT NULL -> work_items.id
+    ├── state            TEXT NOT NULL DEFAULT 'accepted'  (accepted | succeeded | failed)
+    ├── attempt_count    INTEGER NOT NULL DEFAULT 0
+    ├── last_error_code  TEXT
+    ├── created_at       TIMESTAMPTZ NOT NULL
+    └── finished_at      TIMESTAMPTZ
+
+    outbox_messages
+    ├── id                 BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY
+    ├── processing_job_id  BIGINT NOT NULL UNIQUE -> processing_jobs.id
+    ├── event_type         TEXT NOT NULL  (work_item.process)
+    ├── payload            JSONB NOT NULL
+    ├── publish_attempts   INTEGER NOT NULL DEFAULT 0
+    ├── last_error_code    TEXT
+    ├── created_at         TIMESTAMPTZ NOT NULL
+    └── published_at       TIMESTAMPTZ
+
 Migration state is maintained by golang-migrate in the schema_migrations table.
 
 Inspect the current migration version:
@@ -155,8 +193,9 @@ The current migration set is:
 - `000001_create_work_items` — creates Schema A
 - `000002_grant_work_items_runtime_privileges` — grants the minimum original runtime privileges required by `zero_to_prod_app`
 - `000003_add_work_item_status` — expands Schema A to Schema AB and grants only the additional `status` access required by the evolved application
+- `000004_add_async_processing` — creates `processing_jobs` and `outbox_messages` and grants the API and worker identities only the columns they need
 
-After all current migrations are applied, the expected version is 3.
+After all current migrations are applied, the current migration version is 4.
 
 Re-running migrate-up when the database is current is expected to make no schema changes.
 
@@ -182,14 +221,22 @@ If the API starts before the required schema exists, the process can remain aliv
 
 ## Application persistence behavior
 
-The Work Items API uses PostgreSQL for the current Work Items endpoints:
+The Work Items API uses PostgreSQL for the current endpoints:
 
     POST /items
     GET /items
+    POST /items/{id}/process
+    GET /processing-jobs/{id}
 
 The API reads and writes through `zero_to_prod_app`.
 
-Readiness uses a bounded, read-only query against the exact columns required by the application. It does not inspect migration-version metadata and does not perform migrations.
+Readiness runs bounded, read-only `LIMIT 0` queries against the exact columns the API requires in all three relations:
+
+    work_items
+    processing_jobs
+    outbox_messages
+
+If any relation or required column is missing or inaccessible, `/ready` returns `503`. Readiness does not inspect migration-version metadata and does not perform migrations.
 
 The observed behavior is:
 
@@ -223,7 +270,7 @@ Only after that review, reconcile migration metadata explicitly:
 
     ./tools/postgres-local migrate-force <version>
 
-For the tested Issue #101 failure, PostgreSQL rolled back the failed DDL completely, the physical schema remained at version 3, and the migration metadata was therefore safely reconciled with:
+For the tested Issue #101 failure (when the current schema version was 3), PostgreSQL rolled back the failed DDL completely, the physical schema remained at version 3, and the migration metadata was therefore safely reconciled with:
 
     ./tools/postgres-local migrate-force 3
 
@@ -256,9 +303,9 @@ A fresh environment can then be recreated entirely from repository-defined confi
 
 This proves that schema state is reproducible from migrations rather than depending on an existing workstation database.
 
-## Create a Work Item backup
+## Create a backup
 
-Issue #99 adds a repository-owned logical backup tool for the current Work Item data:
+`tools/postgres-backup-local` creates a repository-owned logical backup of the persisted accepted-work state:
 
     ./tools/postgres-backup-local create .local/postgres-backups/work-items.dump
 
@@ -267,7 +314,13 @@ The backup uses PostgreSQL custom format and is intentionally data-only.
 Its scope is exactly:
 
     public.work_items table data
+    public.processing_jobs table data
+    public.outbox_messages table data
     public.work_items_id_seq sequence state
+    public.processing_jobs_id_seq sequence state
+    public.outbox_messages_id_seq sequence state
+
+`processing_jobs` and `outbox_messages` are included because, once the API has returned `202 Accepted`, they hold the asynchronous responsibility the system has accepted. See [ADR 0001](../adr/0001-work-items-async-recovery-boundary.md).
 
 Schema definitions, migration metadata, ownership, and privileges are not part of this backup contract.
 
@@ -287,20 +340,34 @@ Inspect the PostgreSQL archive:
 
     ./tools/postgres-backup-local inspect .local/postgres-backups/work-items.dump
 
-Validate that it contains only the expected recovery scope:
+Validate the archive:
 
     ./tools/postgres-backup-local validate .local/postgres-backups/work-items.dump
 
-Validation requires exactly:
+Validation performs two checks:
 
-    TABLE DATA public work_items
-    SEQUENCE SET public work_items_id_seq
+1. **TOC/scope:** the archive table of contents must contain exactly these six entries:
 
-A missing, empty, corrupt, unreadable, or wrong-scope archive fails non-zero.
+        TABLE DATA public work_items
+        TABLE DATA public processing_jobs
+        TABLE DATA public outbox_messages
+        SEQUENCE SET public work_items_id_seq
+        SEQUENCE SET public processing_jobs_id_seq
+        SEQUENCE SET public outbox_messages_id_seq
 
-A full logical database dump is therefore not accepted by this restore workflow.
+2. **Payload readability:** every archive payload is decoded with `pg_restore --file=/dev/null`, without connecting to a database or executing archive SQL.
 
-## Destructive Work Item recovery
+A missing, empty, unreadable, truncated, or wrong-scope archive fails non-zero.
+
+A full logical database dump is not accepted by this restore workflow. Neither is an older Issue #99 Work-Item-only archive (two entries).
+
+Validation is not recovery. A readable, correctly scoped archive can still fail to restore, and successful restore still needs verification:
+
+    TOC/scope validation
+      ≠ complete archive payload readability
+      ≠ successful recovery
+
+## Destructive recovery
 
 Recovery is deliberately migration-first.
 
@@ -318,26 +385,36 @@ Apply migrations explicitly:
     ./tools/postgres-local migrate-up
     ./tools/postgres-local migrate-version
 
+The expected version is 4.
+
 Only after the required schema exists, restore the retained application-data backup:
 
     ./tools/postgres-backup-local restore .local/postgres-backups/work-items.dump
 
+Restore first re-runs archive validation. It then checks the target before touching it.
+
 The restore command does not run migrations and does not create schema.
 
-If migrations have not been applied, it fails with:
+All three tables must exist:
+
+    public.work_items
+    public.processing_jobs
+    public.outbox_messages
+
+If any is missing, restore fails with:
 
     error: restore target schema is not ready; apply migrations explicitly first
 
-The restore target must also be empty.
+All three tables must also be empty.
 
-If `public.work_items` already contains rows, restore is refused rather than silently duplicating or overwriting application data.
+If any of them contains rows, restore is refused rather than silently duplicating or overwriting application data:
+
+    error: restore target application data is not empty (<work_items>|<processing_jobs>|<outbox_messages>)
 
 Restore uses PostgreSQL:
 
     --exit-on-error
     --single-transaction
-
-for the tested data-only archive.
 
 ## Verify recovered state
 
@@ -353,13 +430,18 @@ Inspect the restored rows directly in PostgreSQL:
       psql \
         -U zero_to_prod_admin \
         -d zero_to_prod \
-        -c 'SELECT id, title, status, created_at FROM public.work_items ORDER BY id;'
+        -c 'SELECT id, title, status, created_at FROM public.work_items ORDER BY id;' \
+        -c 'SELECT id, work_item_id, state, attempt_count FROM public.processing_jobs ORDER BY id;' \
+        -c 'SELECT id, processing_job_id, publish_attempts, published_at FROM public.outbox_messages ORDER BY id;'
 
 Then start or verify the Work Items API using the normal application workflow and confirm:
 
     GET /items
+    GET /processing-jobs/{id}
 
-returns the same recovered Work Items.
+return the same recovered state.
+
+If unpublished outbox rows were restored, start RabbitMQ, the API, and the worker, then confirm that the outbox publisher records `published_at` and the processing job reaches a terminal state.
 
 Recovery verification should use both datastore evidence and application behavior.
 
@@ -371,7 +453,7 @@ Rows committed before backup creation are candidates for recovery.
 
 Rows created after that backup boundary are not contained in the existing artifact and are lost if the active database is later destroyed.
 
-The Issue #99 experiment demonstrated this explicitly:
+The historical Issue #99 experiment (Work-Item-only archive) demonstrated this explicitly:
 
     before backup:
       id=1 before-backup-alpha
@@ -386,6 +468,21 @@ This demonstrates the effective recovery point of the tested snapshot.
 
 It is not point-in-time recovery and is not a production RPO guarantee.
 
+The [Issue #111 experiment](../experiments/issue-111-recovery-model.md) then showed that a three-table archive taken while a processing job was `accepted` and its outbox message unpublished could be restored after destructive loss, and that the job was published and completed without client resubmission.
+
+## PostgreSQL recovery is not broker recovery
+
+The backup protects persisted accepted-work state. It does not capture RabbitMQ state.
+
+If an outbox message was already marked `published_at` before the backup and the broker later loses that message, restore brings back:
+
+    processing_jobs.state = accepted
+    outbox_messages.published_at IS NOT NULL
+
+The outbox publisher will not republish it, and nothing currently reconciles that state.
+
+Recovering broker-held delivery responsibility needs a separate recovery or reconciliation design. This backup does not provide one.
+
 ## Recovery responsibility boundary
 
 The local recovery model separates responsibilities:
@@ -397,22 +494,28 @@ The local recovery model separates responsibilities:
         -> schema + runtime privileges
 
     tools/postgres-backup-local
-        -> Work Item data + sequence backup/restore
+        -> accepted-work data + sequence backup/restore
+           (work_items, processing_jobs, outbox_messages)
 
-    zero_to_prod_app
-        -> normal application runtime access
+    zero_to_prod_app / zero_to_prod_worker
+        -> normal runtime access
 
 The backup and restore workflow uses:
 
     zero_to_prod_migrator
 
-It does not broaden `zero_to_prod_app` into a migration or administrative role.
+It does not broaden the runtime identities into migration or administrative roles.
 
-The destructive recovery experiment confirmed the runtime role still could not create schema, update rows, or delete rows after restore.
+The historical Issue #99 destructive recovery experiment confirmed that the runtime role still could not create schema, update rows, or delete rows after restore.
 
-For the full Issue #99 decision, experiment evidence, failure cases, and measurements, see:
+For the original Issue #99 decision, experiment evidence, failure cases, and measurements, see:
 
     docs/sprint-03/postgresql-backup-restore.md
+
+For the current three-table boundary, see:
+
+    docs/adr/0001-work-items-async-recovery-boundary.md
+    docs/experiments/issue-111-recovery-model.md
 
 ## Clean up local backup artifacts
 
@@ -437,16 +540,17 @@ Expected cloud infrastructure cost: $0.
 The current local-first implementation now includes:
 
 - persistent Work Items
-- `POST /items`
-- `GET /items`
-- least-privilege runtime database access
-- dependency-aware API readiness
+- durable asynchronous-processing state (`processing_jobs`, `outbox_messages`)
+- separate least-privilege API and worker runtime database access
+- dependency-aware API readiness across all three relations
 - explicit migration lifecycle
 - PostgreSQL restart persistence and recovery experiments
-- repository-owned Work Item logical backup
+- repository-owned logical backup of the accepted-work state
 - migration-first destructive recovery
-- backup validation and restore-target safety checks
+- backup scope and payload-readability validation and restore-target safety checks
 - direct database and API-level restored-data verification
+
+RabbitMQ messaging and the asynchronous worker are implemented; see the [local Work Items guide](local-work-items.md).
 
 It does not yet implement:
 
@@ -458,6 +562,6 @@ It does not yet implement:
 - scheduled or production retention policy
 - managed PostgreSQL
 - replication or high availability
+- RabbitMQ state backup or broker/outbox reconciliation after recovery
 - Redis
-- messaging or asynchronous workers
 - Kubernetes

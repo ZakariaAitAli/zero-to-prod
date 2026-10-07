@@ -51,9 +51,34 @@ Guides are procedural: they answer **how do I perform this workflow?**
 Operational recovery procedures currently live in the Sprint runbooks:
 
 - [Sprint 01 operations runbook](sprint-01/runbook.md)
-- [Sprint 03 PostgreSQL backup and recovery runbook](sprint-03/runbook.md)
+- [Sprint 03 PostgreSQL backup and recovery runbook](sprint-03/runbook.md) — current recovery procedure for the `work_items`, `processing_jobs`, and `outbox_messages` boundary
 
 These can be consolidated later when the operational boundary, rather than the Sprint boundary, makes that more useful.
+
+## Architectural decisions (ADRs)
+
+ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
+
+- [ADR 0001 — Work Items async recovery boundary](adr/0001-work-items-async-recovery-boundary.md) — why the PostgreSQL backup covers `work_items`, `processing_jobs`, and `outbox_messages`.
+- [ADR 0002 — Work Items Web UI boundary](adr/0002-work-items-web-ui-boundary.md) — why the browser UI is a separate artifact and how it reaches the API locally.
+
+## Experiments
+
+Experiment records answer **what did we test and what happened?** Focused experiments since the documentation reorganization live in [`experiments/`](experiments/). Earlier experiments are in the Sprint records below.
+
+- [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
+
+Experiment records describe what was true when the experiment ran. They are not rewritten when the system changes later.
+
+## Evidence
+
+Evidence answers **what proves the claim?** It currently lives in three places:
+
+- [`../evidence/`](../evidence/) — durable, sanitized artifacts (for example Sprint 02 verified-deployment records and AWS retirement evidence);
+- the **Evidence** sections of ADRs and the observations recorded in experiment and Sprint documents;
+- repository tests and CI checks, such as the Go integration tests and `scripts/test-postgres-backup-validation.sh`.
+
+The [current capability baseline](learning/current-capability-baseline.md) links each claimed level to its evidence.
 
 ## Learning and project rules
 
