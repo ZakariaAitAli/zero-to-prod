@@ -63,7 +63,7 @@ This role:
 - has USAGE on the public schema
 - cannot create schema objects
 - can SELECT the `id`, `title`, `status`, and `created_at` columns from `work_items`
-- can INSERT the `title` and `status` columns into `work_items`
+- can INSERT `title` into `work_items`; migration 5 revokes client-owned status insertion
 - has USAGE on the `work_items` identity sequence
 - cannot UPDATE or DELETE `work_items`
 - can SELECT and INSERT the columns it needs in `processing_jobs` and `outbox_messages`
@@ -79,6 +79,7 @@ The API uses this identity for normal runtime access, including the API-embedded
 This role:
 
 - can SELECT `work_items` and `processing_jobs`
+- can INSERT title-analysis results and UPDATE Work Item `status`
 - can UPDATE only the processing-outcome columns of `processing_jobs` (`state`, `attempt_count`, `last_error_code`, `finished_at`)
 - has no access to `outbox_messages`
 - cannot create, alter, or drop application schema objects
@@ -195,7 +196,9 @@ The current migration set is:
 - `000003_add_work_item_status` — expands Schema A to Schema AB and grants only the additional `status` access required by the evolved application
 - `000004_add_async_processing` — creates `processing_jobs` and `outbox_messages` and grants the API and worker identities only the columns they need
 
-After all current migrations are applied, the current migration version is 4.
+Migration 000005 adds `work_item_results`, completion constraints, and system-owned status privileges. It requires empty application tables; preserve legacy data in its original database. See the [result recovery runbook](../runbooks/work-items-recovery.md), including expected dirty-version recovery.
+
+After all current migrations are applied, the current migration version is 5.
 
 Re-running migrate-up when the database is current is expected to make no schema changes.
 
@@ -230,11 +233,12 @@ The Work Items API uses PostgreSQL for the current endpoints:
 
 The API reads and writes through `zero_to_prod_app`.
 
-Readiness runs bounded, read-only `LIMIT 0` queries against the exact columns the API requires in all three relations:
+Readiness runs bounded, read-only `LIMIT 0` queries against the exact columns the API requires in all four relations:
 
     work_items
     processing_jobs
     outbox_messages
+    work_item_results
 
 If any relation or required column is missing or inaccessible, `/ready` returns `503`. Readiness does not inspect migration-version metadata and does not perform migrations.
 
@@ -316,6 +320,7 @@ Its scope is exactly:
     public.work_items table data
     public.processing_jobs table data
     public.outbox_messages table data
+    public.work_item_results table data
     public.work_items_id_seq sequence state
     public.processing_jobs_id_seq sequence state
     public.outbox_messages_id_seq sequence state
@@ -346,11 +351,12 @@ Validate the archive:
 
 Validation performs two checks:
 
-1. **TOC/scope:** the archive table of contents must contain exactly these six entries:
+1. **TOC/scope:** the archive table of contents must contain exactly these seven entries:
 
         TABLE DATA public work_items
         TABLE DATA public processing_jobs
         TABLE DATA public outbox_messages
+        TABLE DATA public work_item_results
         SEQUENCE SET public work_items_id_seq
         SEQUENCE SET public processing_jobs_id_seq
         SEQUENCE SET public outbox_messages_id_seq
@@ -385,7 +391,7 @@ Apply migrations explicitly:
     ./tools/postgres-local migrate-up
     ./tools/postgres-local migrate-version
 
-The expected version is 4.
+The expected version is 5.
 
 Only after the required schema exists, restore the retained application-data backup:
 
@@ -395,21 +401,22 @@ Restore first re-runs archive validation. It then checks the target before touch
 
 The restore command does not run migrations and does not create schema.
 
-All three tables must exist:
+All four tables must exist:
 
     public.work_items
     public.processing_jobs
     public.outbox_messages
+    public.work_item_results
 
 If any is missing, restore fails with:
 
     error: restore target schema is not ready; apply migrations explicitly first
 
-All three tables must also be empty.
+All four tables must also be empty.
 
 If any of them contains rows, restore is refused rather than silently duplicating or overwriting application data:
 
-    error: restore target application data is not empty (<work_items>|<processing_jobs>|<outbox_messages>)
+    error: restore target application data is not empty (<work_items>|<processing_jobs>|<outbox_messages>|<work_item_results>)
 
 Restore uses PostgreSQL:
 
@@ -512,7 +519,7 @@ For the original Issue #99 decision, experiment evidence, failure cases, and mea
 
     docs/sprint-03/postgresql-backup-restore.md
 
-For the current three-table boundary, see:
+For the historical three-table boundary, see:
 
     docs/adr/0001-work-items-async-recovery-boundary.md
     docs/experiments/issue-111-recovery-model.md
@@ -542,7 +549,7 @@ The current local-first implementation now includes:
 - persistent Work Items
 - durable asynchronous-processing state (`processing_jobs`, `outbox_messages`)
 - separate least-privilege API and worker runtime database access
-- dependency-aware API readiness across all three relations
+- dependency-aware API readiness across all four relations
 - explicit migration lifecycle
 - PostgreSQL restart persistence and recovery experiments
 - repository-owned logical backup of the accepted-work state

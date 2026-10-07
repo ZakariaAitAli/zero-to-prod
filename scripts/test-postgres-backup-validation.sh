@@ -40,6 +40,7 @@ cat > "$test_dir/toc" <<'TOC'
 4; 0 0 SEQUENCE SET public work_items_id_seq owner
 5; 0 0 SEQUENCE SET public processing_jobs_id_seq owner
 6; 0 0 SEQUENCE SET public outbox_messages_id_seq owner
+7; 0 0 TABLE DATA public work_item_results owner
 TOC
 cat > "$test_dir/bin/docker" <<'SH'
 #!/usr/bin/env bash
@@ -75,13 +76,13 @@ PAYLOAD_RC=0 TOC_RC=1
 expect_failure 'unreadable TOC' "$tool" validate "$test_dir/archive.dump"
 TOC_RC=0
 cp "$test_dir/toc" "$test_dir/extra-toc"
-printf '7; 0 0 TABLE DATA public unrelated owner\n' >> "$test_dir/extra-toc"
+printf '8; 0 0 TABLE DATA public unrelated owner\n' >> "$test_dir/extra-toc"
 TOC_FILE="$test_dir/extra-toc"
 expect_failure 'unexpected extra TOC entry' "$tool" validate "$test_dir/archive.dump"
 sed 's/TABLE DATA public outbox_messages /TABLE DATA public unrelated /' "$test_dir/toc" > "$test_dir/wrong-toc"
 TOC_FILE="$test_dir/wrong-toc"
 : > "$CALL_LOG"
-expect_failure 'six entries with wrong scope' "$tool" validate "$test_dir/archive.dump"
+expect_failure 'seven entries with wrong scope' "$tool" validate "$test_dir/archive.dump"
 if grep -q -- '--file=/dev/null' "$CALL_LOG"; then
   echo 'FAIL: wrong scope reached payload validation' >&2
   exit 1

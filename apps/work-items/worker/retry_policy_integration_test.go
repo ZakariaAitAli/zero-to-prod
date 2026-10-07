@@ -472,9 +472,9 @@ func TestHandleWorkerMessageTransientFailureEventuallySucceedsPostgresIntegratio
 		)
 	}
 
-	if workItemStatus != "pending" {
+	if workItemStatus != "done" {
 		t.Fatalf(
-			"worker retry changed Work Item business status to %q",
+			"successful worker retry did not complete Work Item: %q",
 			workItemStatus,
 		)
 	}

@@ -86,6 +86,14 @@ func registerProcessingHandlers(
 				ctx,
 				workItemID,
 			)
+			if errors.Is(err, errProcessingAlreadyActive) {
+				writeJSON(w, http.StatusConflict, errorResponse{Error: "processing_already_active", ProcessingJobID: job.ID})
+				return
+			}
+			if errors.Is(err, errWorkItemDone) {
+				writeJSON(w, http.StatusConflict, errorResponse{Error: "work_item_already_done"})
+				return
+			}
 			if errors.Is(err, errWorkItemNotFound) {
 				writeJSON(w, http.StatusNotFound, errorResponse{
 					Error: "work_item_not_found",

@@ -152,7 +152,8 @@ Important current limitations include:
 - no distributed tracing;
 - no representative messaging-architecture comparison;
 - no sustained-operation L6 claim;
-- PostgreSQL backup protects persisted accepted-work state only; it does not by itself recover RabbitMQ delivery responsibility (for example, a message already marked published in the outbox but lost from the broker);
+- snapshot recovery remains limited to the captured recovery point;
+- PostgreSQL backup does not recover RabbitMQ messages already published but lost from the broker;
 - no automated frontend behavioral tests.
 
 These limitations are experiment boundaries rather than hidden production-readiness assumptions.
@@ -252,18 +253,20 @@ The persisted accepted-work state can be backed up using repository-owned toolin
 
 The current backup is a data-only logical archive of:
 
-- `work_items`, `processing_jobs`, and `outbox_messages` table data;
-- the `work_items_id_seq`, `processing_jobs_id_seq`, and `outbox_messages_id_seq` sequence state.
+- `work_items`, `processing_jobs`, `outbox_messages`, and `work_item_results` table data;
+- sequence state for the three identity-bearing tables.
 
-Recovery is migration-first: migrations must already be applied, and all three tables must exist and be empty before restore.
+Migration 5 requires an empty application database; pre-result backups require their historical schema/application.
+
+Recovery is migration-first: migrations must already be applied, and all four tables must exist and be empty before restore.
 
 `validate` checks archive scope and that the full archive payload is readable. It does not prove successful recovery.
 
-This boundary was defined by [ADR 0001](docs/adr/0001-work-items-async-recovery-boundary.md) after the [Issue #111 recovery experiment](docs/experiments/issue-111-recovery-model.md) showed that restoring `work_items` alone lost accepted asynchronous work.
+The original accepted-work boundary was defined by [ADR 0001](docs/adr/0001-work-items-async-recovery-boundary.md) after the [Issue #111 recovery experiment](docs/experiments/issue-111-recovery-model.md) showed that restoring `work_items` alone lost accepted asynchronous work.
 
 PostgreSQL restore recovers persisted accepted-work state. It does **not** by itself provide complete RabbitMQ recovery: messages that the outbox has already recorded as published but that the broker has lost need a separate recovery or reconciliation design, which does not exist yet.
 
-See the [PostgreSQL backup and recovery runbook](docs/sprint-03/runbook.md). The original Work-Item-only design is preserved in the [Issue #99 backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md).
+ADR 0003 adds the result to that boundary. See the [current recovery runbook](docs/runbooks/work-items-recovery.md). The original Work-Item-only design is preserved in the [Issue #99 backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md).
 
 ## CI
 
@@ -278,7 +281,7 @@ Application validation includes:
 - API integration tests;
 - RabbitMQ integration setup;
 - worker integration tests;
-- PostgreSQL backup validation checks (archive scope and payload readability; no restore);
+- PostgreSQL archive scope/payload validation and result backup/restore regression;
 - API container image build validation;
 - frontend lint and production build.
 

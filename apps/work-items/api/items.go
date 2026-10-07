@@ -9,13 +9,15 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/workitems"
 )
 
 const databaseOperationTimeout = 3 * time.Second
 
 const (
-	workItemStatusPending = "pending"
-	workItemStatusDone    = "done"
+	workItemStatusPending = workitems.Pending
+	workItemStatusDone    = workitems.Done
 )
 
 type createWorkItemRequest struct {
@@ -24,7 +26,8 @@ type createWorkItemRequest struct {
 }
 
 type errorResponse struct {
-	Error string `json:"error"`
+	Error           string `json:"error"`
+	ProcessingJobID int64  `json:"processing_job_id,omitempty"`
 }
 
 func registerWorkItemHandlers(
@@ -65,8 +68,7 @@ func registerWorkItemHandlers(
 			request.Status = workItemStatusPending
 		}
 
-		if request.Status != workItemStatusPending &&
-			request.Status != workItemStatusDone {
+		if request.Status != workItemStatusPending {
 			writeJSON(w, http.StatusBadRequest, errorResponse{
 				Error: "invalid_status",
 			})
@@ -84,6 +86,10 @@ func registerWorkItemHandlers(
 			request.Title,
 			request.Status,
 		)
+		if errors.Is(err, errInvalidWorkItemStatus) {
+			writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid_status"})
+			return
+		}
 		if err != nil {
 			log.Printf("create work item failed: %v", err)
 

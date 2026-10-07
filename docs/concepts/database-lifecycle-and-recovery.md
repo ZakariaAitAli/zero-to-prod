@@ -122,6 +122,9 @@ outbox_messages
 + their identity sequences
 ```
 
+ADR 0003 subsequently adds durable title-analysis results to the recovery scope;
+the current contract is in the [result recovery runbook](../runbooks/work-items-recovery.md).
+
 The portable lesson:
 
 > The recovery boundary must follow the application's durable state. When a feature adds new state that the system has promised to honour, the backup scope must be revisited, or recovery silently drops that promise.

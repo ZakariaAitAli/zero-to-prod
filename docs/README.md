@@ -48,7 +48,9 @@ Guides are procedural: they answer **how do I perform this workflow?**
 
 ## Runbooks
 
-Operational recovery procedures currently live in the Sprint runbooks:
+Current recovery: [Work Items result recovery](runbooks/work-items-recovery.md).
+
+Historical recovery procedures and experiments remain in the Sprint runbooks:
 
 - [Sprint 01 operations runbook](sprint-01/runbook.md)
 - [Sprint 03 PostgreSQL backup and recovery runbook](sprint-03/runbook.md) — current recovery procedure for the `work_items`, `processing_jobs`, and `outbox_messages` boundary

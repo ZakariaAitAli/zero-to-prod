@@ -1,6 +1,13 @@
 export type WorkItemStatus = 'pending' | 'done'
 
 export type WorkItem = {
+  result?: {
+    processing_job_id: number
+    input_title: string
+    analysis_version: number
+    character_count: number
+    word_count: number
+  }
   id: number
   title: string
   status: WorkItemStatus
@@ -21,5 +28,6 @@ export type ProcessingJob = {
 }
 
 export type ApiErrorResponse = {
+  processing_job_id?: number
   error: string
 }

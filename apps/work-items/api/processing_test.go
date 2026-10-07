@@ -371,3 +371,28 @@ func TestGetProcessingJob(t *testing.T) {
 		}
 	})
 }
+
+func TestProcessingConflictResponses(t *testing.T) {
+	for _, test := range []struct {
+		err   error
+		jobID int64
+		code  string
+	}{
+		{errProcessingAlreadyActive, 7, "processing_already_active"},
+		{errWorkItemDone, 0, "work_item_already_done"},
+	} {
+		store := &stubApplicationStore{acceptErr: test.err, acceptJob: processingJob{ID: test.jobID}}
+		response := httptest.NewRecorder()
+		newHandler("test-version", &readinessState{}, store).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/items/42/process", nil))
+		if response.Code != http.StatusConflict {
+			t.Fatalf("expected 409, got %d", response.Code)
+		}
+		var body errorResponse
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error != test.code || body.ProcessingJobID != test.jobID {
+			t.Fatalf("unexpected conflict: %+v", body)
+		}
+	}
+}

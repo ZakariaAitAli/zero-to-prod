@@ -120,13 +120,13 @@ processing_jobs   the accepted processing responsibility and its outcome
 outbox_messages   the pending or completed publication to RabbitMQ
 ```
 
-These three tables, plus their identity sequences, are the current logical recovery boundary ([ADR 0001](../adr/0001-work-items-async-recovery-boundary.md)).
+ADR 0001 established this three-table boundary. [ADR 0003](../adr/0003-work-items-async-success-semantics.md) adds `work_item_results`; the current boundary contains all four tables plus the three identity sequences.
 
 ### Backup model
 
 `tools/postgres-backup-local` produces a migration-first, data-only logical archive of exactly that boundary.
 
-Recovery reconstructs the database foundation and schema from repository configuration and migrations, then restores the archive into a target where all three tables exist and are empty.
+Recovery reconstructs the database foundation and schema from repository configuration and migrations, then restores the archive into a target where all four tables exist and are empty.
 
 The backup is a manual logical snapshot, not point-in-time recovery.
 
@@ -138,7 +138,7 @@ RabbitMQ state is outside the backup.
 
 An outbox row already marked `published_at` is not republished after restore. If the broker lost that message, the restored job stays `accepted` and nothing currently reconciles it. That case needs a separate recovery or reconciliation design.
 
-See the [PostgreSQL backup and recovery runbook](../sprint-03/runbook.md).
+See the [current result recovery runbook](../runbooks/work-items-recovery.md).
 
 ## Asynchronous acceptance
 
@@ -175,6 +175,34 @@ The worker consumes RabbitMQ deliveries and records durable processing outcomes 
 The consumer model assumes that messages may be delivered more than once.
 
 Durable completion and idempotent handling make redelivery survivable, including the case where the durable effect succeeds but the worker fails before acknowledging the broker delivery.
+
+## Business completion
+
+ADR 0003 defines title analysis as the durable result. The worker counts Unicode
+code points and whitespace-separated words, recording the stored input title,
+analysis version, and producing job. Results are returned with `GET /items` and
+shown in the web UI.
+
+Completion takes a transaction-scoped advisory lock keyed by Work Item ID,
+using a shared namespace and a hash of the bigint ID (collisions only serialize
+unrelated items), checks job identity and terminal state, inserts the result, then guards both
+state updates. Any failed guard rolls back all writes. Acceptance takes the
+same lock. A partial unique index allows at most one accepted-or-succeeded job
+per item; deferred foreign keys require the result, done item, and producing
+succeeded job to exist together at commit. Failed jobs remain separate history.
+
+The API runtime can insert titles but cannot insert system-owned status or
+write results. The worker can update status and insert results; it cannot
+change titles or create jobs. Existing worker retry hooks run before completion;
+the actual title analysis occurs inside the completion transaction.
+
+Migration 5 requires empty application tables. Existing data and historical
+backups retain their original schema/application contract. See the
+[current recovery runbook](../runbooks/work-items-recovery.md).
+
+Issue #117 integration checks cover the new success path, duplicate completion,
+concurrent acceptance, partial-success rejection, guard rollback, and logical
+result restore. The broader crash/restart experiment matrix belongs to #118.
 
 ## Failure model
 

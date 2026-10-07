@@ -340,47 +340,17 @@ func TestCreateWorkItemDefaultsStatusToPending(t *testing.T) {
 	}
 }
 
-func TestCreateWorkItemAcceptsDoneStatus(t *testing.T) {
-	store := &stubApplicationStore{
-		createItem: workItem{
-			ID:     101,
-			Title:  "completed item",
-			Status: workItemStatusDone,
-		},
-	}
-
+func TestCreateWorkItemRejectsDone(t *testing.T) {
+	store := &stubApplicationStore{}
 	readiness := &readinessState{}
-	readiness.set(true)
-
-	handler := newHandler(
-		"test-version",
-		readiness,
-		store,
-	)
-
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/items",
-		strings.NewReader(`{"title":"completed item","status":"done"}`),
-	)
+	handler := newHandler("test-version", readiness, store)
 	response := httptest.NewRecorder()
-
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusCreated {
-		t.Fatalf(
-			"expected status code %d, got %d",
-			http.StatusCreated,
-			response.Code,
-		)
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/items", strings.NewReader(`{"title":"completed item","status":"done"}`)))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", response.Code)
 	}
-
-	if store.createStatus != workItemStatusDone {
-		t.Fatalf(
-			"expected status %q, got %q",
-			workItemStatusDone,
-			store.createStatus,
-		)
+	if store.createStatus != "" {
+		t.Fatal("rejected creation reached store")
 	}
 }
 

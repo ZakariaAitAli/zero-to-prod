@@ -279,6 +279,8 @@ func handleWorkerMessageWithProcessor(
 	)
 	if err != nil {
 		switch {
+		case errors.Is(err, errWorkItemNotPending):
+			return settlementReject, fmt.Errorf("reject inconsistent Work Item state: %w", err)
 		case errors.Is(err, errProcessingJobNotFound):
 			return settlementReject, fmt.Errorf(
 				"reject unknown processing job: %w",

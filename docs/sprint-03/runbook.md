@@ -1,5 +1,8 @@
 # Sprint 03 — PostgreSQL Backup and Recovery Runbook
 
+> This is the retained Issue #99 recovery record. For migration 5 and title-analysis
+> results, use the [current recovery runbook](../runbooks/work-items-recovery.md).
+
 ## Purpose
 
 This runbook covers the current local recovery path for the persisted Work Items accepted-work state after destructive PostgreSQL data-volume loss.

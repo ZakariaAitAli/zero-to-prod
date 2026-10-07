@@ -56,6 +56,23 @@ The default binary is written outside the repository:
 /tmp/zero-to-prod-work-items-api
 ```
 
+### Move to the result-processing schema
+
+Migration 5 refuses to upgrade populated application tables. Preserve the
+legacy database/volume and use a separate local project and port:
+
+```bash
+export ZTP_COMPOSE_PROJECT_NAME=zero-to-prod-results
+export ZTP_POSTGRES_PORT=55433
+./tools/postgres-local start
+./tools/postgres-local migrate-up
+```
+
+Use port 55433 in the API and worker `DATABASE_URL` values. Keep these overrides
+for backup/restore commands too. The default project and its data are retained;
+no reset or truncation is part of migration. See the
+[current recovery runbook](../runbooks/work-items-recovery.md).
+
 ### Run
 
 Start PostgreSQL, apply migrations explicitly, and start RabbitMQ before starting the API:
@@ -230,6 +247,20 @@ accepted
         ↓
 succeeded | failed
 ~~~
+
+### Processing outcomes
+
+Items begin pending. Explicit `done` creation returns `400 invalid_status`.
+Successful processing persists title analysis and changes the item to done in
+one transaction with the succeeded job. `GET /items` includes a `result` with
+input title, analysis version, character/word counts, and producing job ID.
+
+A second active request returns `409 processing_already_active` with
+`processing_job_id`; completed items return `409 work_item_already_done`.
+Neither creates another job/outbox row. The UI follows the active job on a
+conflict and disables processing for done items. Failed jobs leave the item
+pending and eligible for a new request. Accepted jobs have no automatic timeout;
+restore delivery dependencies rather than create a replacement job.
 
 ## Web UI
 

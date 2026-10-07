@@ -25,7 +25,7 @@ POSTGRES_MIGRATOR_PASSWORD="${ZTP_POSTGRES_MIGRATOR_PASSWORD:-zero-to-prod-local
 
 MIGRATOR_DATABASE_URL="${ZTP_MIGRATOR_DATABASE_URL:-postgres://${POSTGRES_MIGRATOR_USER}:${POSTGRES_MIGRATOR_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable}"
 
-COMPOSE_PROJECT_NAME="zero-to-prod-local"
+COMPOSE_PROJECT_NAME="${ZTP_COMPOSE_PROJECT_NAME:-zero-to-prod-local}"
 NETWORK="${COMPOSE_PROJECT_NAME}_default"
 
 usage() {
@@ -57,6 +57,8 @@ Commands:
   schema            Show public tables and the work_items schema.
 
 Environment overrides:
+  ZTP_COMPOSE_PROJECT_NAME
+  ZTP_POSTGRES_PORT
   MIGRATE_VERSION
   MIGRATE_IMAGE
   ZTP_POSTGRES_DB
@@ -78,6 +80,7 @@ require_docker() {
 
 compose() {
   docker compose \
+    --project-name "$COMPOSE_PROJECT_NAME" \
     -f "$COMPOSE_FILE" \
     "$@"
 }
