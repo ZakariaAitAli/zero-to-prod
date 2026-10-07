@@ -83,6 +83,46 @@ func TestCreateWorkItem(t *testing.T) {
 	}
 }
 
+func TestCreateWorkItemRequiresSingleJSONValue(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{"single object", `{"title":"valid"}`, http.StatusCreated},
+		{"trailing whitespace", "{\"title\":\"valid\"} \n\t", http.StatusCreated},
+		{"second object", `{"title":"valid"} {"title":"second"}`, http.StatusBadRequest},
+		{"trailing array", `{"title":"valid"} []`, http.StatusBadRequest},
+		{"trailing scalar", `{"title":"valid"} true`, http.StatusBadRequest},
+		{"trailing null", `{"title":"valid"} null`, http.StatusBadRequest},
+		{"trailing garbage", `{"title":"valid"} garbage`, http.StatusBadRequest},
+		{"truncated second object", `{"title":"valid"} {`, http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &stubApplicationStore{}
+			handler := newHandler("test", &readinessState{}, store)
+			request := httptest.NewRequest(http.MethodPost, "/items", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("expected status %d, got %d: %s", test.wantStatus, response.Code, response.Body.String())
+			}
+			if test.wantStatus == http.StatusBadRequest {
+				var body errorResponse
+				if err := json.NewDecoder(response.Body).Decode(&body); err != nil || body.Error != "invalid_request" {
+					t.Fatalf("expected invalid_request, got %s (decode error: %v)", response.Body.String(), err)
+				}
+				if store.createTitle != "" || store.createStatus != "" {
+					t.Fatal("invalid body reached persistence")
+				}
+			} else if store.createTitle != "valid" {
+				t.Fatal("valid body did not reach persistence")
+			}
+		})
+	}
+}
+
 func TestCreateWorkItemRejectsBlankTitle(t *testing.T) {
 	readiness := &readinessState{}
 	readiness.set(true)

@@ -11,3 +11,6 @@ tmp/
 
 .env
 .env.*
+
+# Frontend sources are not inputs to the API image.
+web/

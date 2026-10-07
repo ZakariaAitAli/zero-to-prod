@@ -69,12 +69,19 @@ The current evidence-backed levels and remaining unknowns are maintained in the 
 
 The current reference system is **Work Items**.
 
-Its implementation lives under `apps/work-items`, with separate API and worker executables under `cmd/`.
+Its implementation lives under `apps/work-items`:
 
-The current system contains two executable processes:
+- `api/` — the HTTP API executable;
+- `worker/` — the asynchronous worker executable;
+- `web/` — the browser Web UI (React / Vite / TypeScript);
+- `migrations/` — version-controlled PostgreSQL migrations.
+
+The current system contains two backend executable processes:
 
 - an HTTP API;
 - an asynchronous worker.
+
+A separate browser Web UI calls the API. See [ADR 0002](docs/adr/0002-work-items-web-ui-boundary.md).
 
 It currently uses PostgreSQL for durable state and RabbitMQ for message delivery.
 
@@ -124,7 +131,7 @@ Evidence-backed capabilities currently include:
 - least-privilege runtime database access;
 - dependency-aware readiness;
 - additive schema evolution and application/schema compatibility experiments;
-- logical Work Item backup and destructive recovery;
+- logical backup and destructive recovery of the persisted accepted-work state (`work_items`, `processing_jobs`, `outbox_messages`);
 - transactional creation of processing jobs and outbox messages;
 - confirmed RabbitMQ publication;
 - separate RabbitMQ publisher and worker identities;
@@ -134,7 +141,8 @@ Evidence-backed capabilities currently include:
 - idempotent processing effects;
 - recovery across API, broker, worker, and datastore failures;
 - restart and redelivery experiments;
-- graceful in-flight worker shutdown behavior.
+- graceful in-flight worker shutdown behavior;
+- a browser Web UI for listing and creating Work Items, submitting processing, and polling job state (implementation level, exercised manually; lint and build in CI).
 
 Important current limitations include:
 
@@ -144,7 +152,9 @@ Important current limitations include:
 - no distributed tracing;
 - no representative messaging-architecture comparison;
 - no sustained-operation L6 claim;
-- snapshot backup recovery remains limited to the captured recovery point.
+- snapshot recovery remains limited to the captured recovery point;
+- PostgreSQL backup does not recover RabbitMQ messages already published but lost from the broker;
+- no automated frontend behavioral tests.
 
 These limitations are experiment boundaries rather than hidden production-readiness assumptions.
 
@@ -232,7 +242,7 @@ The helper also provides:
 
 ### Backup and recovery
 
-Work Item data can be backed up using repository-owned tooling:
+The persisted accepted-work state can be backed up using repository-owned tooling:
 
 ```bash
 ./tools/postgres-backup-local create <backup-path>
@@ -241,11 +251,22 @@ Work Item data can be backed up using repository-owned tooling:
 ./tools/postgres-backup-local restore <backup-path>
 ```
 
-Recovery is migration-first: the target schema and privileges must already exist, and the Work Item restore target must be empty.
+The current backup is a data-only logical archive of:
 
-The current backup contract covers Work Items, processing jobs, outbox messages, title-analysis results, and identity sequence state. Migration 5 requires an empty application database; pre-result backups require their historical schema/application. See the [current recovery runbook](docs/runbooks/work-items-recovery.md).
+- `work_items`, `processing_jobs`, `outbox_messages`, and `work_item_results` table data;
+- sequence state for the three identity-bearing tables.
 
-See the [Sprint 03 PostgreSQL backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md) and [Sprint 03 recovery runbook](docs/sprint-03/runbook.md).
+Migration 5 requires an empty application database; pre-result backups require their historical schema/application.
+
+Recovery is migration-first: migrations must already be applied, and all four tables must exist and be empty before restore.
+
+`validate` checks archive scope and that the full archive payload is readable. It does not prove successful recovery.
+
+The original accepted-work boundary was defined by [ADR 0001](docs/adr/0001-work-items-async-recovery-boundary.md) after the [Issue #111 recovery experiment](docs/experiments/issue-111-recovery-model.md) showed that restoring `work_items` alone lost accepted asynchronous work.
+
+PostgreSQL restore recovers persisted accepted-work state. It does **not** by itself provide complete RabbitMQ recovery: messages that the outbox has already recorded as published but that the broker has lost need a separate recovery or reconciliation design, which does not exist yet.
+
+ADR 0003 adds the result to that boundary. See the [current recovery runbook](docs/runbooks/work-items-recovery.md). The original Work-Item-only design is preserved in the [Issue #99 backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md).
 
 ## CI
 
@@ -260,7 +281,9 @@ Application validation includes:
 - API integration tests;
 - RabbitMQ integration setup;
 - worker integration tests;
-- container build validation.
+- PostgreSQL archive scope/payload validation and result backup/restore regression;
+- API container image build validation;
+- frontend lint and production build.
 
 The current CI path requires no AWS credentials and performs no cloud deployment.
 
@@ -356,6 +379,8 @@ zero-to-prod/
 │   ├── README.md       documentation entry point and learning map
 │   ├── concepts/       reusable engineering knowledge
 │   ├── architecture/   Zero-to-Prod system structure and boundaries
+│   ├── adr/            architectural decision records
+│   ├── experiments/    focused experiment records
 │   ├── guides/         implementation and local-operation guides
 │   ├── learning/       evidence-backed capability baseline
 │   ├── rebaseline/     v2 mission and engineering model

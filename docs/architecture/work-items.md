@@ -96,9 +96,9 @@ PostgreSQL is the system of record for the current Work Items state exercised by
 
 Schema changes are applied explicitly through repository-owned migrations. Application startup does not automatically migrate the database.
 
-The local lab separates bootstrap administration, migration, and runtime application identities.
+The local lab separates bootstrap administration, migration, API runtime, and worker runtime identities.
 
-The API's readiness contract depends on the PostgreSQL schema it needs to serve the current application contract.
+The API's readiness contract checks the columns it requires in `work_items`, `processing_jobs`, and `outbox_messages`.
 
 ## Schema evolution
 
@@ -110,11 +110,35 @@ The current approach keeps application rollback and schema rollback as separate 
 
 ## Backup and recovery
 
-The tested backup model is migration-first and data-only for the scoped Work Item backup contract.
+### Durable accepted-work boundary
 
-Recovery reconstructs the database foundation and schema from repository configuration and migrations, then restores the retained application data.
+Once the API returns `202 Accepted`, the system has accepted responsibility for the processing request. That responsibility is held in PostgreSQL:
+
+```text
+work_items        the business object
+processing_jobs   the accepted processing responsibility and its outcome
+outbox_messages   the pending or completed publication to RabbitMQ
+```
+
+ADR 0001 established this three-table boundary. [ADR 0003](../adr/0003-work-items-async-success-semantics.md) adds `work_item_results`; the current boundary contains all four tables plus the three identity sequences.
+
+### Backup model
+
+`tools/postgres-backup-local` produces a migration-first, data-only logical archive of exactly that boundary.
+
+Recovery reconstructs the database foundation and schema from repository configuration and migrations, then restores the archive into a target where all four tables exist and are empty.
 
 The backup is a manual logical snapshot, not point-in-time recovery.
+
+The [Issue #111 experiment](../experiments/issue-111-recovery-model.md) showed that an accepted, unpublished job captured in the archive survives destructive PostgreSQL loss and completes after restore without client resubmission.
+
+### What PostgreSQL recovery does not cover
+
+RabbitMQ state is outside the backup.
+
+An outbox row already marked `published_at` is not republished after restore. If the broker lost that message, the restored job stays `accepted` and nothing currently reconciles it. That case needs a separate recovery or reconciliation design.
+
+See the [current result recovery runbook](../runbooks/work-items-recovery.md).
 
 ## Asynchronous acceptance
 
@@ -230,7 +254,10 @@ Those capabilities should be introduced when an engineering problem requires the
 
 ## Related documentation
 
+- [Work Items async recovery boundary ADR](../adr/0001-work-items-async-recovery-boundary.md)
 - [Work Items Web UI boundary ADR](../adr/0002-work-items-web-ui-boundary.md)
+- [Issue #111 recovery experiment](../experiments/issue-111-recovery-model.md)
+- [PostgreSQL backup and recovery runbook](../sprint-03/runbook.md)
 - [Local Work Items guide](../guides/local-work-items.md)
 - [Local PostgreSQL guide](../guides/local-postgresql.md)
 - [Database lifecycle and recovery](../concepts/database-lifecycle-and-recovery.md)

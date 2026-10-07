@@ -34,7 +34,7 @@ expect_exit_code() {
 
   set +e
   "$gate" "$@" >/dev/null 2>&1
-  actual_rc=$?
+  local actual_rc=$?
   set -e
 
   if [ "$actual_rc" -ne "$expected_rc" ]; then

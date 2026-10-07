@@ -140,6 +140,16 @@ assert_case \
   apps/work-items/some-future-shared-file.txt
 
 assert_case \
+  "workflow failure regression tests" \
+  "$full_expected" \
+  scripts/test-ci-workflow.sh
+
+assert_case \
+  "backup validation regression tests" \
+  "$full_expected" \
+  scripts/test-postgres-backup-validation.sh
+
+assert_case \
   "unknown repository path remains conservative" \
   "$full_expected" \
   some/future/unclassified-file.txt

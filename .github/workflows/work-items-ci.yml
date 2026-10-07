@@ -44,9 +44,9 @@ jobs:
 
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "Manual execution: using conservative full static validation."
-            mapfile -t classification < <(
+            classification_output="$(
               ./scripts/classify-ci-changes.sh --conservative
-            )
+            )"
           else
             case "$EVENT_NAME" in
               pull_request)
@@ -72,9 +72,13 @@ jobs:
 
             echo "Change range: ${diff_range}"
 
-            mapfile -t changed_files < <(
+            changed_paths="$(
               git diff --name-only "$diff_range"
-            )
+            )"
+            changed_files=()
+            if [ -n "$changed_paths" ]; then
+              mapfile -t changed_files <<< "$changed_paths"
+            fi
 
             echo "Changed files:"
             printf '  %s\n' "${changed_files[@]}"
@@ -83,29 +87,35 @@ jobs:
 
             for changed_file in "${changed_files[@]}"; do
               case "$changed_file" in
-                .github/workflows/*|scripts/classify-ci-changes.sh|scripts/test-ci-change-classifier.sh|scripts/verify-ci-required.sh|scripts/test-ci-required-gate.sh)
+                .github/workflows/*|scripts/classify-ci-changes.sh|scripts/test-ci-change-classifier.sh|scripts/verify-ci-required.sh|scripts/test-ci-required-gate.sh|scripts/test-ci-workflow.sh|scripts/test-postgres-backup-validation.sh)
                   ci_control_changed=true
                   ;;
               esac
             done
 
-            mapfile -t classification < <(
+            classification_output="$(
               ./scripts/classify-ci-changes.sh "${changed_files[@]}"
-            )
+            )"
           fi
 
-          backend=false
-          frontend=false
-          workflow=false
+          mapfile -t classification <<< "$classification_output"
+          backend=
+          frontend=
+          workflow=
 
           for result in "${classification[@]}"; do
             key="${result%%=*}"
             value="${result#*=}"
 
             case "$key" in
-              backend) backend="$value" ;;
-              frontend) frontend="$value" ;;
-              workflow) workflow="$value" ;;
+              backend|frontend|workflow)
+                if [ -n "${!key}" ] ||
+                   { [ "$value" != "true" ] && [ "$value" != "false" ]; }; then
+                  echo "::error::Duplicate or invalid classifier output: ${result}"
+                  exit 1
+                fi
+                printf -v "$key" '%s' "$value"
+                ;;
               *)
                 echo "::error::Unexpected classifier output: ${result}"
                 exit 1
@@ -113,6 +123,11 @@ jobs:
             esac
 
           done
+
+          if [ -z "$backend" ] || [ -z "$frontend" ] || [ -z "$workflow" ]; then
+            echo "::error::Classifier output is missing required flags."
+            exit 1
+          fi
 
           # CI control-plane files must not be able to skip validation of
           # their own policy. This guard is intentionally independent of
@@ -192,7 +207,12 @@ jobs:
           ./tools/postgres-local migrate-up
           ./tools/rabbitmq-local start
 
+      - name: Validate PostgreSQL backup payloads
+        working-directory: .
+        run: bash scripts/test-postgres-backup-validation.sh --integration
+
       - name: Run API integration tests
+        shell: bash
         env:
           OUTBOX_INTEGRATION_DATABASE_URL: postgres://zero_to_prod_app:zero-to-prod-local-app@127.0.0.1:55432/zero_to_prod?sslmode=disable
           ACCEPTANCE_FAILURE_MIGRATOR_DATABASE_URL: postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@127.0.0.1:55432/zero_to_prod?sslmode=disable
@@ -253,6 +273,7 @@ jobs:
           fi
 
       - name: Run worker integration tests
+        shell: bash
         env:
           WORKER_DATABASE_URL: postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:55432/zero_to_prod?sslmode=disable
           WORKER_FIXTURE_DATABASE_URL: postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@127.0.0.1:55432/zero_to_prod?sslmode=disable
@@ -394,6 +415,8 @@ jobs:
           bash -n scripts/test-ci-change-classifier.sh
           bash -n scripts/verify-ci-required.sh
           bash -n scripts/test-ci-required-gate.sh
+          bash -n scripts/test-ci-workflow.sh
+          bash -n scripts/test-postgres-backup-validation.sh
           bash -n tools/work-items-api-local
           bash -n tools/postgres-local
           bash -n scripts/test-async-result-recovery.sh
@@ -403,9 +426,12 @@ jobs:
           bash -n infra/local/postgres/init/001-roles.sh
 
           docker compose -f infra/local/compose.yaml config --quiet
+          docker compose -f infra/local/rabbitmq/compose.yaml config --quiet
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
+          bash scripts/test-ci-workflow.sh
+          bash scripts/test-postgres-backup-validation.sh
 
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
