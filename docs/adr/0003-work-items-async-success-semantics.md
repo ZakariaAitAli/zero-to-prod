@@ -104,7 +104,8 @@ Retaining client-created `done` would allow completion without a result;
 treating it as an import would require a separate validated result-import
 contract. Neither fits this reference system. Issue #117 must reject explicit
 `done` with `400 invalid_status`, retain pending/default creation, update the
-existing API creation test, and remove `done` creation from the web client.
+existing API creation test, and remove `status` from the web create request
+type; the UI already creates pending items.
 
 ## Failure and cardinality
 
@@ -114,7 +115,7 @@ terminal failure creates a new job.
 
 A Work Item may have multiple jobs over its lifetime, subject to:
 
-- at most one `accepted` job at a time;
+- at most one job in `accepted` or `succeeded` state at a time;
 - at most one durable result and one successful producing job;
 - no new processing job after the Work Item becomes `done`.
 
@@ -199,6 +200,10 @@ above. Existing recovery experiments remain evidence for their original scope.
 Issue #117 implements the result representation, constraints, processing
 eligibility, and transactional success transition. It must include the result
 in the application recovery boundary established by [ADR 0001](0001-work-items-async-recovery-boundary.md).
+It must update the backup/restore tool's table selection and archive validation,
+and the recovery runbook, for result data; restoration into the new schema must
+explicitly reject pre-#117 backups with a clear compatibility error before
+restoring application data.
 
 Issue #118 establishes evidence for crash consistency, duplicate delivery,
 idempotency, concurrency, and recovery. This decision alone does not prove
