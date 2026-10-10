@@ -247,6 +247,13 @@ The helper also provides:
 ./tools/work-items-worker-local build
 ```
 
+### Security lab (opt-in)
+
+Issue #121 adds a separate security lab: Work Items behind one HTTPS ingress on
+host loopback, with private backend services, a private lab CA, and its own
+runtime secrets. It is intermediate and has no authentication yet. See the
+[security lab guide](docs/guides/local-security-lab.md).
+
 ### Backup and recovery
 
 The persisted accepted-work state can be backed up using repository-owned tooling:
@@ -383,7 +390,8 @@ zero-to-prod/
 ├── apps/
 │   └── work-items/     current Work Items implementation
 ├── infra/
-│   └── local/          local PostgreSQL and RabbitMQ infrastructure
+│   ├── local/          local PostgreSQL and RabbitMQ infrastructure
+│   └── security-lab/   opt-in HTTPS ingress security lab (Issue #121)
 ├── docs/
 │   ├── README.md       documentation entry point and learning map
 │   ├── concepts/       reusable engineering knowledge
