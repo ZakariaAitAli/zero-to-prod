@@ -1,0 +1,251 @@
+{
+  "id": "e6-concurrent-duplicate-delivery",
+  "classification": "ACTUAL concurrent worker processes; duplicate publication simulated by the harness",
+  "question": "When two worker processes hold copies of the same message concurrently, does exactly one business completion commit?",
+  "environment": {
+    "amqp_port": "5673",
+    "classification": "LOCAL-FIRST",
+    "postgres_compose_project": "zero-to-prod-118",
+    "postgres_port": "55434",
+    "rabbitmq_compose_project": "zero-to-prod-118-rabbitmq",
+    "server_client_connection_check_interval": "0"
+  },
+  "synchronization": [
+    {
+      "step": "hold advisory lock",
+      "condition": "harness pid 433 holds advisory lock (1464423501, item 47)",
+      "elapsed_ms": 637
+    },
+    {
+      "step": "start e6-a",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 1906,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 1,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "worker A waits on item lock",
+      "condition": "blocked by harness",
+      "elapsed_ms": 1910,
+      "observation": {
+        "pid": 434,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "advisory",
+        "query": "SELECT pg_advisory_xact_lock(1464423501, hashint8($1::bigint))",
+        "backend_xid": "",
+        "blocked_by": [
+          433
+        ]
+      }
+    },
+    {
+      "step": "start e6-b",
+      "condition": "queue consumers \u003e 1",
+      "elapsed_ms": 3135,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 2,
+        "consumers": 2
+      }
+    },
+    {
+      "step": "worker B waits on item lock",
+      "condition": "blocked by harness",
+      "elapsed_ms": 3136,
+      "observation": {
+        "pid": 442,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "advisory",
+        "query": "SELECT pg_advisory_xact_lock(1464423501, hashint8($1::bigint))",
+        "backend_xid": "",
+        "blocked_by": [
+          433,
+          434
+        ]
+      }
+    },
+    {
+      "step": "each worker holds one copy",
+      "condition": "queue ready=0 unacknowledged=2 consumers=2",
+      "elapsed_ms": 3774,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 2,
+        "consumers": 2
+      }
+    },
+    {
+      "step": "release advisory lock",
+      "condition": "harness pid 433 released (1464423501, item 47)",
+      "elapsed_ms": 3775
+    },
+    {
+      "step": "one completion commits",
+      "condition": "item done once",
+      "elapsed_ms": 3791,
+      "observation": {
+        "work_item_id": 47,
+        "title": "issue118 E6 concurrent delivery",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 53,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 53,
+            "input_title": "issue118 E6 concurrent delivery",
+            "analysis_version": 1,
+            "character_count": 31,
+            "word_count": 4
+          }
+        ]
+      }
+    },
+    {
+      "step": "both copies acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=2",
+      "elapsed_ms": 4408,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 2
+      }
+    },
+    {
+      "step": "consumers removed",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 5024,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "precondition: isolated queue is quiet",
+      "expected": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "observed": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "both workers waiting at the same instant",
+      "expected": 2,
+      "observed": 2,
+      "passed": true
+    },
+    {
+      "name": "no handling error or requeue in either worker",
+      "expected": 0,
+      "observed": 0,
+      "passed": true
+    },
+    {
+      "name": "e6-a graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "e6-b graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "committed state: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "committed state",
+      "expected": "done; one result; attempt_count=1",
+      "observed": {
+        "work_item_id": 47,
+        "title": "issue118 E6 concurrent delivery",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 53,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 53,
+            "input_title": "issue118 E6 concurrent delivery",
+            "analysis_version": 1,
+            "character_count": 31,
+            "word_count": 4
+          }
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "observations": {
+    "e6-a_graceful_exit": {
+      "elapsed_ms": 1,
+      "status": "exit_code=0"
+    },
+    "e6-b_graceful_exit": {
+      "elapsed_ms": 1,
+      "status": "exit_code=0"
+    },
+    "job_id": 53,
+    "work_item_id": 47
+  },
+  "processes": [
+    {
+      "name": "e6-b",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+2ms 2026/10/10 13:14:19 worker starting queue=work_item_processing",
+        "+1913ms 2026/10/10 13:14:21 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "e6-a",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:14:18 worker starting queue=work_item_processing",
+        "+3119ms 2026/10/10 13:14:21 worker shutdown complete"
+      ]
+    }
+  ],
+  "passed": true,
+  "duration_ms": 5026,
+  "recorded_at": "2026-10-10T13:14:22Z"
+}

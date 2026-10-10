@@ -7,15 +7,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type workerRabbitMQIntegrationFixture struct {
+	Pool       *pgxpool.Pool
 	Store      *workerStore
 	JobID      int64
 	WorkItemID int64
 	WorkerURL  string
+	FixtureURL string
 	QueueName  string
+	Payload    []byte
 }
 
 func requireWorkerRabbitMQIntegrationFixture(
@@ -240,10 +244,13 @@ func requireWorkerRabbitMQIntegrationFixture(
 	})
 
 	return workerRabbitMQIntegrationFixture{
+		Pool:       postgresFixture.Pool,
 		Store:      postgresFixture.Store,
 		JobID:      postgresFixture.JobID,
 		WorkItemID: postgresFixture.WorkItemID,
 		WorkerURL:  workerURL,
+		FixtureURL: fixtureURL,
 		QueueName:  queueName,
+		Payload:    payload,
 	}
 }

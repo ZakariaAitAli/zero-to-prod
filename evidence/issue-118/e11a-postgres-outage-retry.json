@@ -1,0 +1,238 @@
+{
+  "id": "e11a-postgres-outage-retry",
+  "classification": "EXTERNAL PostgreSQL outage (docker stop of the isolated container)",
+  "question": "How does the worker behave while PostgreSQL is unavailable, and does a delivery complete once it returns?",
+  "environment": {
+    "amqp_port": "5673",
+    "classification": "LOCAL-FIRST",
+    "postgres_compose_project": "zero-to-prod-118",
+    "postgres_port": "55434",
+    "rabbitmq_compose_project": "zero-to-prod-118-rabbitmq",
+    "server_client_connection_check_interval": "0"
+  },
+  "synchronization": [
+    {
+      "step": "start e11a",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 1992,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "postgres stop",
+      "condition": "docker stop on validated container of project zero-to-prod-118",
+      "elapsed_ms": 2443
+    },
+    {
+      "step": "postgres start",
+      "condition": "docker start on validated container of project zero-to-prod-118",
+      "elapsed_ms": 13231
+    },
+    {
+      "step": "completion after PostgreSQL returns",
+      "condition": "harness connection reads item done once",
+      "elapsed_ms": 13544,
+      "observation": {
+        "work_item_id": 177,
+        "title": "issue118 E11 outage",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 189,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 189,
+            "input_title": "issue118 E11 outage",
+            "analysis_version": 1,
+            "character_count": 19,
+            "word_count": 3
+          }
+        ]
+      }
+    },
+    {
+      "step": "postgres healthy",
+      "condition": "container healthy and same cluster accepts queries",
+      "elapsed_ms": 18290,
+      "observation": "healthy"
+    },
+    {
+      "step": "delivery acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 19001,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "consumer removed without requeue",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 19657,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "precondition: isolated queue is quiet",
+      "expected": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "observed": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "worker process survived the outage",
+      "expected": true,
+      "observed": true,
+      "passed": true
+    },
+    {
+      "name": "delivery was retried during the outage",
+      "expected": "\u003e= 1 session restart",
+      "observed": 11,
+      "passed": true
+    },
+    {
+      "name": "e11a graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "final state: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "final state",
+      "expected": "done; attempt_count=1 (outage recorded no processing failure)",
+      "observed": {
+        "work_item_id": 177,
+        "title": "issue118 E11 outage",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 189,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 189,
+            "input_title": "issue118 E11 outage",
+            "analysis_version": 1,
+            "character_count": 19,
+            "word_count": 3
+          }
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "observations": {
+    "e11a_graceful_exit": {
+      "elapsed_ms": 2,
+      "status": "exit_code=0"
+    },
+    "job_id": 189,
+    "outage_measurement": {
+      "inspection_unavailable_logs": 11,
+      "interval_max_ms": 1010,
+      "interval_median_ms": 1005,
+      "interval_min_ms": 1005,
+      "intervals_ms": [
+        1005,
+        1005,
+        1005,
+        1005,
+        1007,
+        1005,
+        1005,
+        1010,
+        1005,
+        1006
+      ],
+      "queue_first_sample": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "queue_last_sample": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "queue_samples": 16,
+      "requeue_session_restarts": 11,
+      "window_ms": 10000,
+      "worker_running": true
+    },
+    "session_restarts_until_completion": 11,
+    "success_observation_latency_from_docker_start_ms": 640,
+    "work_item_id": 177
+  },
+  "processes": [
+    {
+      "name": "e11a",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 24,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:32:45 worker starting queue=work_item_processing",
+        "+1114ms 2026/10/10 13:32:46 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+1114ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+2120ms 2026/10/10 13:32:47 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+2120ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+3125ms 2026/10/10 13:32:48 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+3125ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+4131ms 2026/10/10 13:32:49 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+4131ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+5137ms 2026/10/10 13:32:50 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+5137ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+6144ms 2026/10/10 13:32:51 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+6144ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+7149ms 2026/10/10 13:32:52 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+7149ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+8155ms 2026/10/10 13:32:53 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+8155ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+9165ms 2026/10/10 13:32:54 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+9165ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+10170ms 2026/10/10 13:32:55 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+10170ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+11177ms 2026/10/10 13:32:56 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+11177ms processing job inspection unavailable: inspect processing job: failed to connect to `user=zero_to_prod_worker database=zero_to_prod`: 127.0.0.1:55434 (127.0.0.1): dial error: dial tcp 127.0.0.1:55434: connect: connection refused",
+        "+17664ms 2026/10/10 13:33:02 worker shutdown complete"
+      ]
+    }
+  ],
+  "passed": true,
+  "duration_ms": 19658,
+  "recorded_at": "2026-10-10T13:33:03Z"
+}

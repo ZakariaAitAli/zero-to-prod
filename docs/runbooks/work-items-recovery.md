@@ -63,9 +63,76 @@ the result/item/job relationship. `pg_dump` may warn about circular foreign
 keys: the repository's single-transaction restore was verified with these
 initially deferred constraints. Do not disable constraints or triggers.
 
-Verify `GET /items` returns recovered results and matching done state, inspect
-job state, then resume API publication and worker consumption. Pending jobs and
-outbox responsibilities must resume from the restored recovery point.
+### Assess before resuming
+
+A successful restore establishes PostgreSQL state only. RabbitMQ is not
+restored with it, so it can hold messages that disagree with the restored
+database. Keep the API, worker, and client requests stopped until both sides
+have been assessed. The API embeds the outbox publisher: starting it resumes
+publication, so assess PostgreSQL with SQL rather than through the API.
+
+1. **PostgreSQL.** With the same project overrides, record restored sequence
+   values and accepted jobs with their publication state:
+
+   ```bash
+   docker compose --project-name "$ZTP_COMPOSE_PROJECT_NAME" -f infra/local/compose.yaml exec -T postgres \
+     psql -U zero_to_prod_admin -d zero_to_prod -c \
+     "SELECT 'work_items' AS sequence, last_value FROM public.work_items_id_seq
+      UNION ALL SELECT 'processing_jobs', last_value FROM public.processing_jobs_id_seq
+      UNION ALL SELECT 'outbox_messages', last_value FROM public.outbox_messages_id_seq;" -c \
+     "SELECT j.id AS job_id, j.work_item_id, o.published_at IS NOT NULL AS published
+      FROM public.processing_jobs j JOIN public.outbox_messages o ON o.processing_job_id = j.id
+      WHERE j.state = 'accepted' ORDER BY j.id;"
+   ```
+
+   Unpublished accepted jobs will be published when the API starts. Published
+   accepted jobs depend on a message that may no longer exist.
+2. **RabbitMQ.** Record queued and unacknowledged message counts:
+
+   ```bash
+   docker compose --project-name "$ZTP_RABBITMQ_COMPOSE_PROJECT_NAME" -f infra/local/rabbitmq/compose.yaml exec -T rabbitmq \
+     rabbitmqctl -p zero_to_prod list_queues name messages_ready messages_unacknowledged consumers
+   ```
+
+3. **Stop condition.** Queue counts show how many messages exist, not which
+   jobs they belong to, so they do not establish that resuming is safe.
+   Assessment mitigates neither stale messages nor lost deliveries. If a
+   stale-message identity or missing-delivery discrepancy
+   remains unresolved, keep the affected processing and new client requests
+   stopped.
+4. **Decide, then resume in order:** API publication, worker consumption, and
+   finally client requests. Once the API is running, verify that `GET /items`
+   returns recovered results with matching done state. Pending jobs and
+   unpublished outbox rows resume from the restored recovery point.
+
+### Observed limitations
+
+The [crash-consistency experiment](../experiments/issue-118-crash-consistency.md)
+reproduced two consequences of restoring PostgreSQL without RabbitMQ:
+
+- **Lost delivery.** A job whose outbox row was published before the backup,
+  and whose message was consumed after it, restores as `accepted` with no
+  message. It stays blocked, and new requests return
+  `409 processing_already_active`. No redrive exists
+  ([#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)).
+- **Stale message targeting a reused ID.** Restore rewinds the identity
+  sequences. A message for work accepted after the backup remained queued; new
+  work received the same job and Work Item IDs, and the worker completed that
+  new job from the stale message before the job's own outbox message was
+  published ([#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131)).
+
+### Untested guidance
+
+No mitigation is implemented, and the following has not been exercised:
+
+- Treat a queued message whose `job_id` exceeds the restored
+  `processing_jobs_id_seq` value as lost work, not a request for future work.
+  Inspect message identities before resuming publication or consumption, for
+  example through the RabbitMQ management interface.
+- Do not accept new requests while such messages remain queued: new jobs will
+  receive the reused IDs.
+- Treat published accepted jobs with no matching queued message as blocked
+  until a redrive mechanism exists.
 
 ## Scope and evidence
 
@@ -74,6 +141,10 @@ migration refusal without mutation, old-archive rejection, and restoration of
 all four tables with a completed result. CI runs it after integration tests.
 Historical recovery evidence remains in Sprint 03 and ADR 0001.
 
+The crash-consistency experiment exercises destructive restore with live API and
+worker processes in an isolated lab; its evidence is in
+[`evidence/issue-118/`](../../evidence/issue-118/).
+
 This is snapshot recovery. Writes after the backup point may be lost. No PITR,
 production RPO/RTO, broker disaster recovery, or sustained-operation claim is
-made. Broader result-processing crash experiments are scoped to #118.
+made.

@@ -1,0 +1,287 @@
+{
+  "id": "e5a-outbox-crash-statement-completes",
+  "classification": "ACTUAL API process crash (SIGKILL) after broker confirm; in-flight mark-published statement left to the server",
+  "question": "What happens when the outbox publisher dies after the broker confirmed a message but before published_at is durable?",
+  "environment": {
+    "amqp_port": "5673",
+    "classification": "LOCAL-FIRST",
+    "postgres_compose_project": "zero-to-prod-118",
+    "postgres_port": "55434",
+    "rabbitmq_compose_project": "zero-to-prod-118-rabbitmq",
+    "server_client_connection_check_interval": "0"
+  },
+  "synchronization": [
+    {
+      "step": "start e5a-outbox-crash-statement-completes-api-a",
+      "condition": "GET /ready returns 200",
+      "elapsed_ms": 675,
+      "observation": 200
+    },
+    {
+      "step": "hold advisory lock",
+      "condition": "harness pid 57 holds advisory lock (118119, item 178)",
+      "elapsed_ms": 698
+    },
+    {
+      "step": "publisher blocked marking published",
+      "condition": "API backend runs the published_at UPDATE and waits on the outbox gate",
+      "elapsed_ms": 1187,
+      "observation": {
+        "pid": 56,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "advisory",
+        "query": " UPDATE public.outbox_messages SET published_at = CURRENT_TIMESTAMP, last_error_code = NULL WHERE id = $1 AND published_at IS NULL ",
+        "backend_xid": "846",
+        "blocked_by": [
+          57
+        ]
+      }
+    },
+    {
+      "step": "broker already holds the confirmed message",
+      "condition": "queue ready=1 unacknowledged=0 consumers=0",
+      "elapsed_ms": 1851,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "release advisory lock",
+      "condition": "harness pid 57 released (118119, item 178)",
+      "elapsed_ms": 1853
+    },
+    {
+      "step": "API backends gone",
+      "condition": "no PostgreSQL backend for issue118-e5a-outbox-crash-statement-completes-api-a",
+      "elapsed_ms": 1875,
+      "observation": []
+    },
+    {
+      "step": "start e5a-outbox-crash-statement-completes-api-b",
+      "condition": "GET /ready returns 200",
+      "elapsed_ms": 1895,
+      "observation": 200
+    },
+    {
+      "step": "start e5a-outbox-crash-statement-completes-worker",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 6483,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "worker completes",
+      "condition": "item done once",
+      "elapsed_ms": 6489,
+      "observation": {
+        "work_item_id": 178,
+        "title": "issue118 e5a-outbox-crash-statement-completes",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 190,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 190,
+            "input_title": "issue118 e5a-outbox-crash-statement-completes",
+            "analysis_version": 1,
+            "character_count": 45,
+            "word_count": 2
+          }
+        ]
+      }
+    },
+    {
+      "step": "every copy acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 7159,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "consumer removed without requeue",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 7790,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "precondition: isolated queue is quiet",
+      "expected": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "observed": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "precondition: no other unpublished outbox rows",
+      "expected": 0,
+      "observed": 0,
+      "passed": true
+    },
+    {
+      "name": "e5a-outbox-crash-statement-completes-api-a exit status after SIGKILL",
+      "expected": "signal=killed",
+      "observed": "signal=killed",
+      "passed": true
+    },
+    {
+      "name": "publish attempt was recorded before the crash",
+      "expected": "\u003e= 1",
+      "observed": 1,
+      "passed": true
+    },
+    {
+      "name": "durable mark prevents republication",
+      "expected": false,
+      "observed": false,
+      "passed": true
+    },
+    {
+      "name": "e5a-outbox-crash-statement-completes-api-b graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "e5a-outbox-crash-statement-completes-worker graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "final state: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "final state",
+      "expected": "done; one result; attempt_count=1",
+      "observed": {
+        "work_item_id": 178,
+        "title": "issue118 e5a-outbox-crash-statement-completes",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 190,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 190,
+            "input_title": "issue118 e5a-outbox-crash-statement-completes",
+            "analysis_version": 1,
+            "character_count": 45,
+            "word_count": 2
+          }
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "observations": {
+    "e5a-outbox-crash-statement-completes-api-b_graceful_exit": {
+      "elapsed_ms": 1,
+      "status": "exit_code=0"
+    },
+    "e5a-outbox-crash-statement-completes-worker_graceful_exit": {
+      "elapsed_ms": 2,
+      "status": "exit_code=0"
+    },
+    "instrumentation": "test-only BEFORE UPDATE trigger blocks only the published_at transition on a harness-held advisory lock",
+    "job_id": 190,
+    "outbox_after_crash": {
+      "published": true,
+      "publish_attempts": 1
+    },
+    "outbox_final": {
+      "published": true,
+      "publish_attempts": 1
+    },
+    "republish_after_restart": {
+      "last_queue": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "republished": false,
+      "window_ms": 3298
+    },
+    "work_item_id": 178
+  },
+  "processes": [
+    {
+      "name": "e5a-outbox-crash-statement-completes-worker",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+2ms 2026/10/10 13:33:09 worker starting queue=work_item_processing",
+        "+1327ms 2026/10/10 13:33:10 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "e5a-outbox-crash-statement-completes-api-b",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 5,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:33:05 work-items-api version=dev listening on :37375",
+        "+3ms 2026/10/10 13:33:05 readiness changed: ready",
+        "+3317ms 2026/10/10 13:33:08 readiness changed: not ready",
+        "+3317ms 2026/10/10 13:33:08 shutdown requested",
+        "+3317ms 2026/10/10 13:33:08 graceful shutdown complete"
+      ]
+    },
+    {
+      "name": "e5a-outbox-crash-statement-completes-api-a",
+      "signals": [
+        "killed"
+      ],
+      "exit_status": "signal=killed",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:33:04 work-items-api version=dev listening on :34375",
+        "+3ms 2026/10/10 13:33:04 readiness changed: ready"
+      ]
+    }
+  ],
+  "passed": true,
+  "duration_ms": 7794,
+  "recorded_at": "2026-10-10T13:33:11Z"
+}
