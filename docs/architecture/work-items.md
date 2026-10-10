@@ -259,8 +259,8 @@ These do **not** count as attempts:
   acknowledged unchanged.
 
 A database outage therefore cannot exhaust retries. The production title
-analysis has no failure path; processing failures have been exercised only
-through test-only injected processors.
+analysis has no failure path; processing failures have been deliberately
+exercised only with test-injected processors.
 
 ### Success invariant and message settlement
 
@@ -295,11 +295,15 @@ Sprint 03 deliberately exercised failures around:
 - worker failure before durable completion;
 - worker failure after durable effect but before ACK;
 - duplicate delivery;
-- transient processing failure;
-- retry exhaustion;
+- transient processing failure, deliberately exercised with a test-injected processor;
+- retry exhaustion, deliberately exercised with a test-injected processor;
 - API and worker restart;
 - graceful shutdown;
 - malformed or unsupported messages.
+
+The production title analysis has no failure path, so no naturally occurring
+processing failure has been observed. The injected cases exercise the
+worker's retry and terminal-failure handling.
 
 The [crash-consistency experiment](../experiments/issue-118-crash-consistency.md) added real process crashes at observed points:
 
