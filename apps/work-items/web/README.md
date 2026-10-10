@@ -59,11 +59,19 @@ Frontend-only repository changes have their own CI validation path and do not re
 
 ## Current processing semantics
 
-A processing job reaching `succeeded` does not imply that the Work Item business status becomes `done`.
+Work Item business status (`pending`, `done`) and processing-job state
+(`accepted`, `succeeded`, `failed`) are separate models.
 
-The current worker still performs the existing minimal processing behavior.
+A job reaching `succeeded` means the worker committed a title-analysis result,
+the Work Item became `done`, and the job became `succeeded` in one transaction.
+`GET /items` returns that result, and the UI shows it on the item. A `failed`
+job leaves the item `pending`, so it can be processed again.
 
-Work Item business status and processing-job state are separate models.
+Processing requests can return `409 processing_already_active` with the active
+job ID, or `409 work_item_already_done`. The UI follows the active job or
+refreshes the completed item.
+
+See [ADR 0003](../../../docs/adr/0003-work-items-async-success-semantics.md).
 
 ## Related documentation
 
