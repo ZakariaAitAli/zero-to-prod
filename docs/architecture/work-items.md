@@ -259,8 +259,8 @@ These do **not** count as attempts:
   acknowledged unchanged.
 
 A database outage therefore cannot exhaust retries. The production title
-analysis has no failure path; processing failures have been exercised only
-through test-only injected processors.
+analysis has no failure path; processing failures have been deliberately
+exercised only with test-injected processors.
 
 ### Success invariant and message settlement
 
@@ -295,11 +295,15 @@ Sprint 03 deliberately exercised failures around:
 - worker failure before durable completion;
 - worker failure after durable effect but before ACK;
 - duplicate delivery;
-- transient processing failure;
-- retry exhaustion;
+- transient processing failure, deliberately exercised with a test-injected processor;
+- retry exhaustion, deliberately exercised with a test-injected processor;
 - API and worker restart;
 - graceful shutdown;
 - malformed or unsupported messages.
+
+The production title analysis has no failure path, so no naturally occurring
+processing failure has been observed. The injected cases exercise the
+worker's retry and terminal-failure handling.
 
 The [crash-consistency experiment](../experiments/issue-118-crash-consistency.md) added real process crashes at observed points:
 
@@ -344,7 +348,7 @@ Those capabilities should be introduced when an engineering problem requires the
 
 Decision recorded by Issue #119: Work Items is a stable reference workload, not a product under continued feature development. It changes only when a future architecture experiment needs a real capability or exposes a concrete correctness gap. New product features are out of scope.
 
-This decision takes effect when the Issue #119 documentation is merged with passing CI. The known recovery limitations [#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130) and [#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131) remain open and unmitigated; they are correctness gaps that would justify a future change. See the [Sprint 03 summary](../sprint-03/README.md).
+The decision took effect when the Issue #119 documentation merged with passing CI on 2026-10-10 ([PR #132](https://github.com/ZakariaAitAli/zero-to-prod/pull/132)). The known recovery limitations [#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130) and [#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131) remain open and unmitigated; they are correctness gaps that would justify a future change. See the [Sprint 03 summary](../sprint-03/README.md).
 
 ## Related documentation
 

@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/runtimeconfig"
 )
 
 // version is replaced at build time using:
@@ -62,14 +64,14 @@ func main() {
 		port = "8080"
 	}
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+	databaseURL, err := runtimeconfig.Value(os.Getenv, "DATABASE_URL")
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	rabbitMQPublisherURL := os.Getenv("RABBITMQ_PUBLISHER_URL")
-	if rabbitMQPublisherURL == "" {
-		log.Fatal("RABBITMQ_PUBLISHER_URL is required")
+	rabbitMQPublisherURL, err := runtimeconfig.Value(os.Getenv, "RABBITMQ_PUBLISHER_URL")
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	rabbitMQQueue := os.Getenv("RABBITMQ_QUEUE")

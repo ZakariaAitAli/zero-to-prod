@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/runtimeconfig"
 )
 
 const (
@@ -48,20 +50,20 @@ type workerRuntimeSessionFactory func(
 func loadWorkerConfig(
 	lookup environmentLookup,
 ) (workerConfig, error) {
-	databaseURL := lookup("DATABASE_URL")
-	if databaseURL == "" {
-		return workerConfig{}, fmt.Errorf(
-			"DATABASE_URL is required",
-		)
+	databaseURL, err := runtimeconfig.Value(
+		lookup,
+		"DATABASE_URL",
+	)
+	if err != nil {
+		return workerConfig{}, err
 	}
 
-	rabbitMQWorkerURL := lookup(
+	rabbitMQWorkerURL, err := runtimeconfig.Value(
+		lookup,
 		"RABBITMQ_WORKER_URL",
 	)
-	if rabbitMQWorkerURL == "" {
-		return workerConfig{}, fmt.Errorf(
-			"RABBITMQ_WORKER_URL is required",
-		)
+	if err != nil {
+		return workerConfig{}, err
 	}
 
 	queueName := lookup("RABBITMQ_QUEUE")

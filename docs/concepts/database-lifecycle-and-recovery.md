@@ -113,7 +113,7 @@ Asynchronous processing then changed the acceptance contract. The API returns `2
 
 As recorded in ADR 0001, restoring the older Work-Item-only backup recovered the business object but lost the accepted asynchronous work. The [Issue #111 experiment](../experiments/issue-111-recovery-model.md) then showed that restoring all three tables let the outbox publish the recovered message and the worker complete the job, without the client resubmitting.
 
-[ADR 0001](../adr/0001-work-items-async-recovery-boundary.md) therefore set the current logical recovery boundary to:
+[ADR 0001](../adr/0001-work-items-async-recovery-boundary.md) therefore set the logical recovery boundary at that time to:
 
 ```text
 work_items
@@ -122,8 +122,9 @@ outbox_messages
 + their identity sequences
 ```
 
-ADR 0003 subsequently adds durable title-analysis results to the recovery scope;
-the current contract is in the [result recovery runbook](../runbooks/work-items-recovery.md).
+ADR 0003 subsequently added durable title-analysis results (`work_item_results`)
+to the recovery scope; the current four-table contract is in the
+[result recovery runbook](../runbooks/work-items-recovery.md).
 
 The portable lesson:
 
@@ -233,4 +234,5 @@ Those remain different capabilities.
 - [Issue #111 — accepted async work recovery experiment](../experiments/issue-111-recovery-model.md)
 - [PostgreSQL backup and destructive recovery (Issue #99, Work-Item-only)](../sprint-03/postgresql-backup-restore.md)
 - [PostgreSQL schema evolution compatibility](../sprint-03/postgresql-schema-evolution.md)
-- [PostgreSQL recovery runbook](../sprint-03/runbook.md)
+- [Current Work Items recovery runbook](../runbooks/work-items-recovery.md)
+- [Historical PostgreSQL recovery runbook (Issue #99/#111, migration 4)](../sprint-03/runbook.md)

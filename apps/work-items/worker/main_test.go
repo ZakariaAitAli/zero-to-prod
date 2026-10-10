@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -133,6 +135,54 @@ func TestLoadWorkerConfigPreservesExplicitQueue(
 		t.Fatalf(
 			"expected explicit queue, got %q",
 			config.QueueName,
+		)
+	}
+}
+
+func TestLoadWorkerConfigReadsConnectionURLFiles(
+	t *testing.T,
+) {
+	directory := t.TempDir()
+	databaseURLPath := filepath.Join(directory, "database-url")
+	rabbitMQURLPath := filepath.Join(directory, "rabbitmq-url")
+
+	if err := os.WriteFile(
+		databaseURLPath,
+		[]byte("postgres://worker.example/database\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write database URL file: %v", err)
+	}
+
+	if err := os.WriteFile(
+		rabbitMQURLPath,
+		[]byte("amqp://worker.example/vhost\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write RabbitMQ URL file: %v", err)
+	}
+
+	config, err := loadWorkerConfig(
+		environmentFrom(
+			map[string]string{
+				"DATABASE_URL_FILE":        databaseURLPath,
+				"RABBITMQ_WORKER_URL_FILE": rabbitMQURLPath,
+			},
+		),
+	)
+	if err != nil {
+		t.Fatalf(
+			"load worker configuration: %v",
+			err,
+		)
+	}
+
+	if config.DatabaseURL != "postgres://worker.example/database" ||
+		config.RabbitMQWorkerURL != "amqp://worker.example/vhost" {
+		t.Fatalf(
+			"unexpected connection URLs %q and %q",
+			config.DatabaseURL,
+			config.RabbitMQWorkerURL,
 		)
 	}
 }

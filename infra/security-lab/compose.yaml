@@ -1,0 +1,192 @@
+# Zero-to-Prod security lab (opt-in, local-first).
+#
+# Use through tools/security-lab-local, which checks the runtime secret
+# files before starting. With the verified Compose 5.3.1 / Docker Desktop
+# setup, a missing secret file did not fail: an empty directory was mounted
+# in its place.
+#
+# Only the ingress publishes a port, on host loopback. The API, worker,
+# PostgreSQL, and RabbitMQ are reachable only on internal networks.
+
+name: zero-to-prod-security-lab
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  postgres:
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    environment:
+      POSTGRES_DB: zero_to_prod
+      POSTGRES_USER: zero_to_prod_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-admin-password
+      ZTP_POSTGRES_MIGRATOR_USER: zero_to_prod_migrator
+      ZTP_POSTGRES_APP_USER: zero_to_prod_app
+      ZTP_POSTGRES_WORKER_USER: zero_to_prod_worker
+    secrets:
+      - postgres-admin-password
+      - postgres-migrator-password
+      - postgres-app-password
+      - postgres-worker-password
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ../local/postgres/init/001-roles.sh:/opt/zero-to-prod/001-roles.sh:ro
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  rabbitmq:
+    image: rabbitmq:4.3.6-management@sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95
+    hostname: zero-to-prod-security-lab-rabbitmq
+    secrets:
+      - rabbitmq-definitions
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  migrate:
+    profiles:
+      - tools
+    build:
+      context: ../../tools/migrate
+    image: zero-to-prod-migrate:v4.20.1
+    entrypoint:
+      - /bin/sh
+      - -c
+      - exec migrate -path=/migrations -database "$$(cat /run/secrets/postgres-migrator-url)" "$$@"
+      - migrate
+    command: ["up"]
+    secrets:
+      - postgres-migrator-url
+    volumes:
+      - ../../apps/work-items/migrations:/migrations:ro
+    networks:
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *hardened
+    build:
+      context: ../../apps/work-items
+      dockerfile: api/Dockerfile
+      args:
+        VERSION: ${ZTP_SECURITY_LAB_VERSION:-security-lab}
+    image: zero-to-prod-security-lab-api:local
+    environment:
+      DATABASE_URL_FILE: /run/secrets/api-database-url
+      RABBITMQ_PUBLISHER_URL_FILE: /run/secrets/api-rabbitmq-url
+    secrets:
+      - api-database-url
+      - api-rabbitmq-url
+    networks:
+      - app
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    <<: *hardened
+    build:
+      context: ../../apps/work-items
+      dockerfile: worker/Dockerfile
+    image: zero-to-prod-security-lab-worker:local
+    environment:
+      DATABASE_URL_FILE: /run/secrets/worker-database-url
+      RABBITMQ_WORKER_URL_FILE: /run/secrets/worker-rabbitmq-url
+    secrets:
+      - worker-database-url
+      - worker-rabbitmq-url
+    networks:
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  ingress:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: infra/security-lab/ingress/Dockerfile
+    image: zero-to-prod-security-lab-ingress:local
+    user: "101:101"
+    ports:
+      - "127.0.0.1:${ZTP_SECURITY_LAB_HTTPS_PORT:-9443}:8443"
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    volumes:
+      # A directory mount, so a renewed certificate (replaced by rename) is
+      # visible to nginx on reload; a single-file mount keeps the old inode.
+      - ${ZTP_SECURITY_LAB_INGRESS_TLS_DIR:?set by tools/security-lab-local}:/run/ingress-tls:ro
+    networks:
+      - edge
+      - app
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      api:
+        condition: service_healthy
+
+networks:
+  # The only network with external connectivity; required to publish the
+  # ingress port.
+  edge: {}
+  app:
+    internal: true
+  data:
+    internal: true
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+secrets:
+  postgres-admin-password:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/postgres-admin-password
+  postgres-migrator-password:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/postgres-migrator-password
+  postgres-app-password:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/postgres-app-password
+  postgres-worker-password:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/postgres-worker-password
+  postgres-migrator-url:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/postgres-migrator-url
+  api-database-url:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/api-database-url
+  api-rabbitmq-url:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/api-rabbitmq-url
+  worker-database-url:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/worker-database-url
+  worker-rabbitmq-url:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/worker-rabbitmq-url
+  rabbitmq-definitions:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/rabbitmq-definitions

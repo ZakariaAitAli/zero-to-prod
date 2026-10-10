@@ -38,11 +38,13 @@ Architecture documents describe the current or retained Zero-to-Prod system boun
 
 - [Delivery architecture](architecture/delivery.md) — the delivery and recovery model established by Sprint 01 and Sprint 02.
 - [Work Items architecture](architecture/work-items.md) — the current local-first Work Items system using PostgreSQL and RabbitMQ.
+- [Security lab architecture](architecture/security-lab.md) — the opt-in Issue #121 environment: HTTPS ingress, private networks, lab CA, and runtime secrets (first slice; no authentication yet).
 
 ## Guides
 
 - [Local Work Items development](guides/local-work-items.md)
 - [Local PostgreSQL and schema migrations](guides/local-postgresql.md)
+- [Local security lab](guides/local-security-lab.md) — opt-in HTTPS ingress with private backends for Issue #121 (intermediate; no authentication yet)
 
 Guides are procedural: they answer **how do I perform this workflow?**
 
@@ -72,6 +74,7 @@ Experiment records answer **what did we test and what happened?** Focused experi
 - [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
 - [Issue #117 — result implementation validation](experiments/issue-117-result-validation.md) — title-analysis results, atomic business completion, migration refusal, and result backup compatibility.
 - [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
+- [Issue #121 — local HTTPS ingress and private backends](experiments/issue-121-local-https-ingress.md) — first #121 slice: measured host and container reachability, verified HTTPS with a private lab CA, and missing-secret failures.
 
 Experiment records describe what was true when the experiment ran. They are not rewritten when the system changes later.
 

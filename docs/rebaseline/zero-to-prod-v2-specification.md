@@ -2,7 +2,7 @@
 
 **Version:** `v1.0-draft`
 **Date:** 2026-09-20
-**Status:** Active project specification — rebaseline implemented and Sprint 03 in progress.
+**Status:** Active project specification — rebaseline implemented; Sprint 03 complete (2026-10-10).
 
 This document defines what Zero-to-Prod is becoming after Sprint 01 and Sprint 02. It does **not** invalidate those sprints. Their strongest result was the engineering method they established: evidence-first reasoning, explicit failure models, fail-closed behavior, IAM discipline, honest limitations, and cost awareness.
 
@@ -1271,7 +1271,9 @@ DESIGN SPRINT 03
   ↓
 IMPLEMENT AND EXPERIMENT
   ↓
+COMPLETE SPRINT 03
+  ↓
 ────────────── WE ARE HERE ──────────────
   ↓
-CONTINUE EVIDENCE-DRIVEN SPRINT 03
+CONTINUE EVIDENCE-DRIVEN WORK
 ```

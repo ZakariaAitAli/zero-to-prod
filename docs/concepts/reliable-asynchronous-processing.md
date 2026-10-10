@@ -120,7 +120,7 @@ The second case is recoverable when processing is idempotent.
 
 Not every failure should retry forever.
 
-The Sprint 03 experiments distinguish transient processing failure from retry exhaustion and malformed or unsupported messages.
+The Sprint 03 experiments distinguish transient processing failure from retry exhaustion and malformed or unsupported messages. The processing failures were deliberately exercised with test-injected processors; the production title analysis has no failure path, so no naturally occurring processing failure has been observed.
 
 A reliable worker needs a defined policy for:
 
@@ -141,8 +141,8 @@ The architecture deliberately tests failures at different points:
 - worker failure before durable completion;
 - worker failure after durable effect but before ACK;
 - duplicate delivery;
-- transient processing failure;
-- retry exhaustion;
+- transient processing failure (test-injected processor);
+- retry exhaustion (test-injected processor);
 - API restart;
 - worker restart;
 - PostgreSQL unavailable;

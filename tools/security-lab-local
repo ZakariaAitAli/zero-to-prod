@@ -1,0 +1,1350 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+  pwd
+)"
+
+ROOT_DIR="$(
+  cd -- "${SCRIPT_DIR}/.."
+  pwd
+)"
+
+COMPOSE_FILE="${ROOT_DIR}/infra/security-lab/compose.yaml"
+PROJECT="${ZTP_SECURITY_LAB_PROJECT:-zero-to-prod-security-lab}"
+STATE_DIR="${ZTP_SECURITY_LAB_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/zero-to-prod/${PROJECT}}"
+SECRETS_DIR="${STATE_DIR}/secrets"
+PKI_DIR="${STATE_DIR}/pki"
+# Mounted as a directory, not as single files: a file bind mount keeps the
+# replaced inode, so a renewed certificate would never reach the container.
+INGRESS_TLS_DIR="${STATE_DIR}/ingress-tls"
+INGRESS_TLS_FILE="${INGRESS_TLS_DIR}/tls.pem"
+HTTPS_PORT="${ZTP_SECURITY_LAB_HTTPS_PORT:-9443}"
+LAB_HOSTNAME="work-items.localhost"
+CA_DAYS="${ZTP_SECURITY_LAB_CA_DAYS:-90}"
+CERT_DAYS="${ZTP_SECURITY_LAB_CERT_DAYS:-14}"
+PROBE_IMAGE="curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777"
+PROBE_NETWORK="${PROJECT}-unrelated-probe"
+
+POSTGRES_DB="zero_to_prod"
+RABBITMQ_VHOST="zero_to_prod"
+RABBITMQ_QUEUE="work_item_processing"
+
+# Files mounted into containers. Each service receives only its own files.
+MOUNTED_SECRETS=(
+  postgres-admin-password
+  postgres-migrator-password
+  postgres-app-password
+  postgres-worker-password
+  postgres-migrator-url
+  api-database-url
+  api-rabbitmq-url
+  worker-database-url
+  worker-rabbitmq-url
+  rabbitmq-definitions
+)
+
+# Generated once and never mounted; mounted files are derived from them.
+SOURCE_SECRETS=(
+  postgres-admin-password
+  postgres-migrator-password
+  postgres-app-password
+  postgres-worker-password
+  rabbitmq-publisher-password
+  rabbitmq-worker-password
+)
+
+usage() {
+  cat <<EOF_USAGE
+Usage:
+  ./tools/security-lab-local init
+  ./tools/security-lab-local check-secrets
+  ./tools/security-lab-local start
+  ./tools/security-lab-local verify [--evidence <file>]
+  ./tools/security-lab-local verify-failures [--evidence <file>]
+  ./tools/security-lab-local status
+  ./tools/security-lab-local logs [service]
+  ./tools/security-lab-local issue-certificate
+  ./tools/security-lab-local verify-renewal [--evidence <file>]
+  ./tools/security-lab-local ca-certificate
+  ./tools/security-lab-local stop
+  ./tools/security-lab-local destroy
+  ./tools/security-lab-local purge-state --yes
+  ./tools/security-lab-local state-dir
+
+Opt-in security lab: an HTTPS ingress on host loopback in front of a
+containerized Work Items API, worker, PostgreSQL, and RabbitMQ that publish
+no ports. It is separate from the development lab and does not use the
+development credentials. Authentication is not implemented yet.
+
+Commands:
+  init               Create the lab CA, ingress certificate, and runtime
+                     secrets outside the repository. Keeps an existing CA and
+                     passwords; reissues the certificate near expiry.
+  check-secrets      Verify the required runtime secret files and certificate.
+  start              Check secrets, build images, start the lab, apply
+                     identities and migrations, and wait until healthy.
+  verify             Check HTTPS access and backend reachability from the
+                     host, Windows (through WSL interop), and test containers.
+  verify-failures    Check that missing secrets make each service fail.
+  status             Show lab containers.
+  logs               Show lab logs.
+  issue-certificate  Issue a new ingress certificate, reload the ingress, and
+                     confirm a new connection receives the new serial.
+  verify-renewal     Renew on the running lab and record before/after serials.
+  ca-certificate     Show the lab CA certificate paths and fingerprint.
+  stop               Stop the lab, keeping its volumes.
+  destroy            Remove only this lab's containers, networks, and volumes.
+  purge-state        Delete this lab's CA, certificates, and secrets; only a
+                     directory carrying this lab's marker and only lab entries.
+  state-dir          Print the validated, canonical state directory.
+
+Environment overrides:
+  ZTP_SECURITY_LAB_PROJECT     project name (must start with zero-to-prod-security-lab)
+  ZTP_SECURITY_LAB_STATE_DIR   secrets and PKI directory; must resolve below
+                               \${XDG_STATE_HOME:-~/.local/state} or \${TMPDIR:-/tmp},
+                               outside the repository and not containing home
+  ZTP_SECURITY_LAB_HTTPS_PORT  host loopback HTTPS port (default: 9443)
+  ZTP_SECURITY_LAB_CA_DAYS     lab CA validity in days (default: 90)
+  ZTP_SECURITY_LAB_CERT_DAYS   ingress certificate validity in days (default: 14)
+
+State directory: ${STATE_DIR}
+EOF_USAGE
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+check_configuration() {
+  case "$PROJECT" in
+    zero-to-prod-security-lab | zero-to-prod-security-lab-*) ;;
+    *) die "ZTP_SECURITY_LAB_PROJECT must start with zero-to-prod-security-lab: ${PROJECT}" ;;
+  esac
+
+  check_state_dir
+
+  [[ "$HTTPS_PORT" =~ ^[0-9]+$ ]] || die "invalid ZTP_SECURITY_LAB_HTTPS_PORT: ${HTTPS_PORT}"
+}
+
+# True when path $1 is $2 or below it.
+is_within() {
+  [[ "$1" == "$2" || "$1" == "$2"/* ]]
+}
+
+# The state directory holds keys and secrets and is deleted by purge-state,
+# so validate its canonical location (symlinks resolved), not its spelling.
+check_state_dir() {
+  case "$STATE_DIR" in
+    /*) ;;
+    *) die "ZTP_SECURITY_LAB_STATE_DIR must be an absolute path: ${STATE_DIR}" ;;
+  esac
+
+  require_command realpath
+
+  local requested="$STATE_DIR" root home state_base temp_base base allowed=false
+  STATE_DIR="$(realpath -m -- "$requested")"
+  root="$(cd -- "$ROOT_DIR" && pwd -P)"
+  home="$(realpath -m -- "$HOME")"
+  state_base="$(realpath -m -- "${XDG_STATE_HOME:-${HOME}/.local/state}")"
+  temp_base="$(realpath -m -- "${TMPDIR:-/tmp}")"
+
+  if is_within "$STATE_DIR" "$root" || is_within "$root" "$STATE_DIR"; then
+    die "the state directory must not overlap the repository: ${requested} -> ${STATE_DIR}"
+  fi
+
+  if is_within "$home" "$STATE_DIR"; then
+    die "the state directory must not be or contain the home directory: ${requested} -> ${STATE_DIR}"
+  fi
+
+  for base in "$state_base" "$temp_base"; do
+    # Ignore a base that would itself admit the home directory or the root.
+    if [[ "$base" == / ]] || is_within "$home" "$base"; then
+      continue
+    fi
+
+    if [[ "$STATE_DIR" == "$base"/* ]]; then
+      allowed=true
+    fi
+  done
+
+  if [[ "$allowed" != true ]]; then
+    die "the state directory must be below ${state_base} or ${temp_base}: ${requested} -> ${STATE_DIR}"
+  fi
+
+  SECRETS_DIR="${STATE_DIR}/secrets"
+  PKI_DIR="${STATE_DIR}/pki"
+  INGRESS_TLS_DIR="${STATE_DIR}/ingress-tls"
+  INGRESS_TLS_FILE="${INGRESS_TLS_DIR}/tls.pem"
+  STATE_MARKER="${STATE_DIR}/.zero-to-prod-security-lab"
+}
+
+STATE_ENTRIES=(.zero-to-prod-security-lab pki secrets ingress-tls)
+
+# Prints entries of the state directory that the lab does not create.
+unexpected_state_entries() {
+  local entry expected known
+  while IFS= read -r entry; do
+    known=false
+    for expected in "${STATE_ENTRIES[@]}"; do
+      if [[ "$entry" == "$expected" ]]; then
+        known=true
+      fi
+    done
+    if [[ "$known" != true ]]; then
+      echo "$entry"
+    fi
+  done < <(find "$STATE_DIR" -mindepth 1 -maxdepth 1 -printf '%f\n')
+}
+
+# Create the state directory, or adopt an existing one only when it is this
+# lab's: marked for this project, or unmarked but holding only lab entries
+# (state created before the marker existed).
+claim_state_dir() {
+  if [[ ! -e "$STATE_DIR" ]]; then
+    (umask 077; mkdir -p "$STATE_DIR")
+  elif [[ ! -d "$STATE_DIR" ]]; then
+    die "the state path exists and is not a directory: ${STATE_DIR}"
+  elif [[ -f "$STATE_MARKER" ]]; then
+    [[ "$(cat "$STATE_MARKER")" == "project=${PROJECT}" ]] ||
+      die "the state directory belongs to another lab: ${STATE_DIR}"
+    return 0
+  elif [[ -n "$(unexpected_state_entries)" ]]; then
+    die "refusing to use a directory that is not security lab state: ${STATE_DIR}"
+  fi
+
+  printf 'project=%s\n' "$PROJECT" > "$STATE_MARKER"
+  chmod 600 "$STATE_MARKER"
+}
+
+# Destructive operations require a directory this lab created and owns.
+require_owned_state() {
+  [[ -d "$STATE_DIR" ]] || die "state directory missing: ${STATE_DIR}"
+  [[ -f "$STATE_MARKER" && "$(cat "$STATE_MARKER")" == "project=${PROJECT}" ]] ||
+    die "no security lab marker for ${PROJECT} in ${STATE_DIR}; refusing"
+  [[ "$(stat -c '%u' "$STATE_DIR")" == "$(id -u)" ]] ||
+    die "the state directory is not owned by the current user: ${STATE_DIR}"
+
+  local unexpected
+  unexpected="$(unexpected_state_entries)"
+  [[ -z "$unexpected" ]] ||
+    die "unexpected entries in ${STATE_DIR}; refusing: $(tr '\n' ' ' <<< "$unexpected")"
+}
+
+compose() {
+  ZTP_SECURITY_LAB_SECRETS_DIR="$SECRETS_DIR" \
+    ZTP_SECURITY_LAB_INGRESS_TLS_DIR="$INGRESS_TLS_DIR" \
+    ZTP_SECURITY_LAB_HTTPS_PORT="$HTTPS_PORT" \
+    docker compose \
+      --project-name "$PROJECT" \
+      -f "$COMPOSE_FILE" \
+      "$@"
+}
+
+# ---------------------------------------------------------------------------
+# PKI and secrets
+# ---------------------------------------------------------------------------
+
+write_file() {
+  local path="$1"
+  local mode="$2"
+  local temporary="${path}.tmp.$$"
+
+  cat > "$temporary"
+  chmod "$mode" "$temporary"
+
+  # Keep an unchanged file in place: replacing it gives it a new inode, and
+  # containers created earlier would keep mounting the old one.
+  if [[ -f "$path" ]] && cmp -s "$temporary" "$path"; then
+    rm -f "$temporary"
+    chmod "$mode" "$path"
+    return 0
+  fi
+
+  mv -f "$temporary" "$path"
+}
+
+init_ca() {
+  if [[ -f "${PKI_DIR}/ca.key" ]]; then
+    echo "Lab CA exists: ${PKI_DIR}/ca.crt"
+    return 0
+  fi
+
+  echo "Creating lab CA (${CA_DAYS} days, name-constrained to ${LAB_HOSTNAME})..."
+
+  (
+    umask 077
+    openssl req -x509 -new \
+      -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${PKI_DIR}/ca.key" \
+      -out "${PKI_DIR}/ca.crt" \
+      -days "$CA_DAYS" \
+      -subj "/O=Zero-to-Prod security lab/CN=Zero-to-Prod security lab CA (${PROJECT})" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -addext "nameConstraints=critical,permitted;DNS:${LAB_HOSTNAME},excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::" \
+      -addext "subjectKeyIdentifier=hash" \
+      2>/dev/null
+  )
+
+  chmod 600 "${PKI_DIR}/ca.key"
+  chmod 644 "${PKI_DIR}/ca.crt"
+}
+
+issue_certificate() {
+  local csr="${PKI_DIR}/ingress.csr"
+  local extensions="${PKI_DIR}/ingress.ext"
+  local key="${INGRESS_TLS_DIR}/.tls.key.tmp"
+  local certificate="${PKI_DIR}/ingress.crt"
+  local bundle="${INGRESS_TLS_DIR}/.tls.pem.tmp"
+
+  [[ -f "${PKI_DIR}/ca.key" ]] || die "lab CA missing; run: $0 init"
+
+  echo "Issuing ingress certificate for ${LAB_HOSTNAME} (${CERT_DAYS} days)..."
+
+  cat > "$extensions" <<EOF_EXT
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:${LAB_HOSTNAME}
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid
+EOF_EXT
+
+  (
+    umask 077
+    openssl req -new \
+      -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "$key" \
+      -out "$csr" \
+      -subj "/CN=${LAB_HOSTNAME}" \
+      2>/dev/null
+
+    openssl x509 -req \
+      -in "$csr" \
+      -CA "${PKI_DIR}/ca.crt" \
+      -CAkey "${PKI_DIR}/ca.key" \
+      -set_serial "0x$(openssl rand -hex 16)" \
+      -days "$CERT_DAYS" \
+      -extfile "$extensions" \
+      -out "${certificate}.tmp" \
+      2>/dev/null
+  )
+
+  rm -f "$csr" "$extensions"
+
+  # Key and certificate in one file, replaced by a single rename, so nginx
+  # can never load a mismatched pair. The unprivileged ingress user must read
+  # it; see "Secret file permissions" in the security lab guide.
+  cat "$key" "${certificate}.tmp" > "$bundle"
+  rm -f "$key"
+  chmod 644 "$bundle" "${certificate}.tmp"
+  mv -f "$bundle" "$INGRESS_TLS_FILE"
+  mv -f "${certificate}.tmp" "$certificate"
+}
+
+certificate_serial() {
+  openssl x509 -noout -serial -in "$1" | cut -d= -f2
+}
+
+# Serial of the certificate the ingress serves on a new, verified connection.
+served_serial() {
+  openssl s_client \
+    -connect "127.0.0.1:${HTTPS_PORT}" \
+    -servername "$LAB_HOSTNAME" \
+    -verify_hostname "$LAB_HOSTNAME" \
+    -CAfile "${PKI_DIR}/ca.crt" \
+    -verify_return_error \
+    </dev/null 2>/dev/null \
+    | openssl x509 -noout -serial 2>/dev/null \
+    | cut -d= -f2
+}
+
+secret() {
+  tr -d '\r\n' < "${SECRETS_DIR}/$1"
+}
+
+rabbitmq_password_hash() {
+  # rabbit_password_hashing_sha256: base64(salt || sha256(salt || password))
+  local password="$1"
+  local salt_file
+  local digest_file
+
+  salt_file="$(mktemp "${SECRETS_DIR}/.salt.XXXXXX")"
+  digest_file="$(mktemp "${SECRETS_DIR}/.digest.XXXXXX")"
+
+  openssl rand 4 > "$salt_file"
+  { cat "$salt_file"; printf '%s' "$password"; } \
+    | openssl dgst -sha256 -binary > "$digest_file"
+  cat "$salt_file" "$digest_file" | openssl base64 -A
+
+  rm -f "$salt_file" "$digest_file"
+}
+
+derive_secrets() {
+  local migrator app worker publisher rabbitmq_worker
+
+  migrator="$(secret postgres-migrator-password)"
+  app="$(secret postgres-app-password)"
+  worker="$(secret postgres-worker-password)"
+  publisher="$(secret rabbitmq-publisher-password)"
+  rabbitmq_worker="$(secret rabbitmq-worker-password)"
+
+  # Datastore TLS is a later slice; these connections stay on internal
+  # networks and are explicitly unencrypted for now.
+  printf 'postgres://zero_to_prod_migrator:%s@postgres:5432/%s?sslmode=disable\n' "$migrator" "$POSTGRES_DB" \
+    | write_file "${SECRETS_DIR}/postgres-migrator-url" 644
+  printf 'postgres://zero_to_prod_app:%s@postgres:5432/%s?sslmode=disable\n' "$app" "$POSTGRES_DB" \
+    | write_file "${SECRETS_DIR}/api-database-url" 644
+  printf 'postgres://zero_to_prod_worker:%s@postgres:5432/%s?sslmode=disable\n' "$worker" "$POSTGRES_DB" \
+    | write_file "${SECRETS_DIR}/worker-database-url" 644
+  printf 'amqp://zero_to_prod_publisher:%s@rabbitmq:5672/%s\n' "$publisher" "$RABBITMQ_VHOST" \
+    | write_file "${SECRETS_DIR}/api-rabbitmq-url" 644
+  printf 'amqp://zero_to_prod_worker:%s@rabbitmq:5672/%s\n' "$rabbitmq_worker" "$RABBITMQ_VHOST" \
+    | write_file "${SECRETS_DIR}/worker-rabbitmq-url" 644
+
+  # The password hashes are salted randomly, so regenerate the definitions
+  # only when they are missing or a RabbitMQ password was just generated.
+  if [[ -s "${SECRETS_DIR}/rabbitmq-definitions" && "${1:-}" != regenerate-rabbitmq ]]; then
+    return 0
+  fi
+
+  # Same users and permissions as tools/rabbitmq-local; no default or
+  # administrative user is defined.
+  cat <<EOF_DEFINITIONS | write_file "${SECRETS_DIR}/rabbitmq-definitions" 644
+{
+  "users": [
+    {
+      "name": "zero_to_prod_publisher",
+      "password_hash": "$(rabbitmq_password_hash "$publisher")",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": []
+    },
+    {
+      "name": "zero_to_prod_worker",
+      "password_hash": "$(rabbitmq_password_hash "$rabbitmq_worker")",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": []
+    }
+  ],
+  "vhosts": [
+    { "name": "${RABBITMQ_VHOST}" }
+  ],
+  "permissions": [
+    {
+      "user": "zero_to_prod_publisher",
+      "vhost": "${RABBITMQ_VHOST}",
+      "configure": "^\$",
+      "write": "^amq\\\\.default\$",
+      "read": "^\$"
+    },
+    {
+      "user": "zero_to_prod_worker",
+      "vhost": "${RABBITMQ_VHOST}",
+      "configure": "^\$",
+      "write": "^\$",
+      "read": "^${RABBITMQ_QUEUE}\$"
+    }
+  ],
+  "queues": [
+    {
+      "name": "${RABBITMQ_QUEUE}",
+      "vhost": "${RABBITMQ_VHOST}",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ]
+}
+EOF_DEFINITIONS
+}
+
+init_state() {
+  require_command openssl
+
+  claim_state_dir
+  (umask 077; mkdir -p "$SECRETS_DIR" "$PKI_DIR" "$INGRESS_TLS_DIR")
+  chmod 700 "$STATE_DIR" "$SECRETS_DIR" "$PKI_DIR"
+  # Mounted as the container's directory, where the unprivileged nginx user
+  # must traverse it; on the host the mode-700 state directory protects it.
+  chmod 711 "$INGRESS_TLS_DIR"
+
+  init_ca
+
+  # Earlier versions mounted the ingress key and certificate as single files.
+  rm -f "${SECRETS_DIR}/ingress-tls-key" "${SECRETS_DIR}/ingress-tls-chain"
+
+  if [[ ! -f "$INGRESS_TLS_FILE" ]] ||
+     ! openssl x509 -checkend 172800 -noout -in "$INGRESS_TLS_FILE" >/dev/null 2>&1; then
+    issue_certificate
+  fi
+
+  local name rabbitmq_changed=""
+  for name in "${SOURCE_SECRETS[@]}"; do
+    if [[ ! -s "${SECRETS_DIR}/${name}" ]]; then
+      openssl rand -hex 24 | write_file "${SECRETS_DIR}/${name}" 600
+      echo "Generated ${name}"
+      if [[ "$name" == rabbitmq-* ]]; then
+        rabbitmq_changed=regenerate-rabbitmq
+      fi
+    fi
+  done
+
+  # PostgreSQL reads these as its own unprivileged user.
+  chmod 644 \
+    "${SECRETS_DIR}/postgres-admin-password" \
+    "${SECRETS_DIR}/postgres-migrator-password" \
+    "${SECRETS_DIR}/postgres-app-password" \
+    "${SECRETS_DIR}/postgres-worker-password"
+
+  derive_secrets "$rabbitmq_changed"
+
+  echo "Security lab state ready: ${STATE_DIR}"
+}
+
+check_secrets() {
+  local failures=0
+  local name path mode
+
+  require_command openssl
+
+  [[ -d "$SECRETS_DIR" ]] || die "secrets directory missing: ${SECRETS_DIR} (run: $0 init)"
+
+  mode="$(stat -c '%a' "$SECRETS_DIR")"
+  if [[ "$mode" != "700" ]]; then
+    echo "error: ${SECRETS_DIR} must have mode 700 (found ${mode})" >&2
+    failures=$((failures + 1))
+  fi
+
+  for name in "${MOUNTED_SECRETS[@]}"; do
+    path="${SECRETS_DIR}/${name}"
+
+    if [[ -d "$path" ]]; then
+      # Docker creates a directory when a bind-mounted secret file is missing.
+      echo "error: ${path} is a directory, not a secret file; remove it and run: $0 init" >&2
+      failures=$((failures + 1))
+    elif [[ ! -f "$path" ]]; then
+      echo "error: required secret file missing: ${path}" >&2
+      failures=$((failures + 1))
+    elif [[ ! -s "$path" ]]; then
+      echo "error: required secret file empty: ${path}" >&2
+      failures=$((failures + 1))
+    fi
+  done
+
+  if [[ ! -d "$INGRESS_TLS_DIR" ]]; then
+    echo "error: ingress TLS directory missing: ${INGRESS_TLS_DIR} (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif [[ "$(stat -c '%a' "$INGRESS_TLS_DIR")" != "711" ]]; then
+    echo "error: ${INGRESS_TLS_DIR} must have mode 711 (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif [[ ! -f "$INGRESS_TLS_FILE" || ! -s "$INGRESS_TLS_FILE" ]]; then
+    echo "error: required ingress TLS file missing or empty: ${INGRESS_TLS_FILE}" >&2
+    failures=$((failures + 1))
+  fi
+
+  if [[ "$failures" -eq 0 ]]; then
+    if ! openssl verify -CAfile "${PKI_DIR}/ca.crt" "$INGRESS_TLS_FILE" >/dev/null 2>&1; then
+      echo "error: the ingress certificate does not verify against the lab CA" >&2
+      failures=$((failures + 1))
+    fi
+
+    if ! openssl x509 -checkend 0 -noout -in "$INGRESS_TLS_FILE" >/dev/null; then
+      echo "error: the ingress certificate has expired; run: $0 issue-certificate" >&2
+      failures=$((failures + 1))
+    fi
+
+    if [[ "$(openssl x509 -noout -pubkey -in "$INGRESS_TLS_FILE" | openssl sha256)" != \
+          "$(openssl pkey -pubout -in "$INGRESS_TLS_FILE" | openssl sha256)" ]]; then
+      echo "error: the ingress key does not match its certificate" >&2
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [[ "$failures" -ne 0 ]]; then
+    echo "Security lab secret check failed (${failures} problem(s))." >&2
+    return 1
+  fi
+
+  echo "Security lab secrets present; ingress certificate valid until $(
+    openssl x509 -noout -enddate -in "$INGRESS_TLS_FILE" | cut -d= -f2
+  )."
+}
+
+show_ca_certificate() {
+  [[ -f "${PKI_DIR}/ca.crt" ]] || die "lab CA missing; run: $0 init"
+
+  echo "Lab CA certificate (public; safe to copy):"
+  echo "  WSL path:     ${PKI_DIR}/ca.crt"
+  if command -v wslpath >/dev/null 2>&1; then
+    echo "  Windows path: $(wslpath -w "${PKI_DIR}/ca.crt")"
+  fi
+  echo "  Subject:      $(openssl x509 -noout -subject -in "${PKI_DIR}/ca.crt" | cut -d= -f2-)"
+  echo "  SHA-256:      $(openssl x509 -noout -fingerprint -sha256 -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
+  echo "  SHA-1:        $(openssl x509 -noout -fingerprint -sha1 -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
+  echo "  Valid until:  $(openssl x509 -noout -enddate -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
+  echo "The CA private key never leaves ${PKI_DIR}."
+}
+
+# ---------------------------------------------------------------------------
+# Lifecycle
+# ---------------------------------------------------------------------------
+
+start_lab() {
+  check_secrets
+
+  compose --profile tools build
+
+  # Recreate containers so every file mount refers to the current secret
+  # files; a container created before a file was replaced would keep the old
+  # inode or fail to start. Volumes are kept.
+  compose up -d --wait --force-recreate postgres rabbitmq
+
+  # The init script runs only on an empty volume; re-apply identities so the
+  # secret files remain authoritative.
+  compose exec -T postgres /docker-entrypoint-initdb.d/001-security-lab-roles.sh
+  compose run --rm migrate
+
+  compose up -d --wait --force-recreate api worker ingress
+
+  echo
+  echo "Security lab running: https://${LAB_HOSTNAME}:${HTTPS_PORT}/"
+  echo "Not authenticated yet: anyone who can reach this host-loopback port can use it."
+}
+
+issue_certificate_command() {
+  require_owned_state
+  [[ -d "$INGRESS_TLS_DIR" ]] || die "ingress TLS directory missing; run: $0 init"
+
+  issue_certificate
+
+  local expected served=""
+  expected="$(certificate_serial "$INGRESS_TLS_FILE")"
+
+  if [[ -z "$(compose ps -q --status running ingress 2>/dev/null)" ]]; then
+    echo "Issued serial ${expected}; the ingress is not running."
+    return 0
+  fi
+
+  compose exec -T ingress nginx -s reload
+
+  # Reload is asynchronous: nginx starts the new worker before the old one
+  # stops accepting, so for about a second new connections can still receive
+  # the old certificate. Require consecutive new connections with the new
+  # serial rather than the first match.
+  local _ consecutive=0
+  for _ in $(seq 1 60); do
+    served="$(served_serial)"
+    if [[ "$served" == "$expected" ]]; then
+      consecutive=$((consecutive + 1))
+      [[ "$consecutive" -ge 5 ]] && break
+    else
+      consecutive=0
+    fi
+    sleep 0.25
+  done
+
+  if [[ "$consecutive" -lt 5 ]]; then
+    die "the ingress still serves serial ${served:-unknown}, expected ${expected}"
+  fi
+
+  echo "Ingress reloaded; ${consecutive} consecutive new connections were served serial ${served}."
+}
+
+# Renew the ingress certificate on a running lab and confirm that the
+# container sees the new file and new connections receive the new serial.
+verify_renewal() {
+  local evidence_file=""
+
+  if [[ "${1:-}" == "--evidence" ]]; then
+    evidence_file="${2:?--evidence requires a file}"
+  fi
+
+  [[ -n "$(compose ps -q --status running ingress 2>/dev/null)" ]] ||
+    die "the ingress is not running; run: $0 start"
+
+  local before_served before_file after_served after_file host_digest container_digest
+
+  before_served="$(served_serial)"
+  before_file="$(certificate_serial "$INGRESS_TLS_FILE")"
+
+  issue_certificate_command >/dev/null
+
+  after_served="$(served_serial)"
+  after_file="$(certificate_serial "$INGRESS_TLS_FILE")"
+  host_digest="$(sha256sum "$INGRESS_TLS_FILE" | cut -d' ' -f1)"
+  container_digest="$(compose exec -T ingress sha256sum /run/ingress-tls/tls.pem | cut -d' ' -f1)"
+
+  # Control: reproduce the failure this mount layout avoids. A single-file
+  # bind mount keeps the original inode after the host file is replaced.
+  local control_dir control_view single_file_mount
+  control_dir="$(mktemp -d)"
+  printf 'original\n' > "${control_dir}/file"
+  docker run -d --rm --name "${PROJECT}-mount-control" --network none \
+    -v "${control_dir}/file:/control/file:ro" "$PROBE_IMAGE" sleep 30 >/dev/null
+  printf 'replacement\n' > "${control_dir}/file.new"
+  mv -f "${control_dir}/file.new" "${control_dir}/file"
+  control_view="$(docker exec "${PROJECT}-mount-control" cat /control/file)"
+  docker rm -f "${PROJECT}-mount-control" >/dev/null 2>&1 || true
+  rm -rf -- "$control_dir"
+  if [[ "$control_view" == original ]]; then
+    single_file_mount=stale
+  else
+    single_file_mount=updated
+  fi
+
+  local result=fail
+  if [[ -n "$before_served" && "$before_served" == "$before_file" &&
+        "$after_file" != "$before_file" && "$after_served" == "$after_file" &&
+        "$container_digest" == "$host_digest" && "$single_file_mount" == stale ]]; then
+    result=pass
+  fi
+
+  printf '%s certificate renewal: served %s -> %s; file %s -> %s; container file %s host file; single-file mount control: %s\n' \
+    "$(tr '[:lower:]' '[:upper:]' <<< "$result")" \
+    "$before_served" "$after_served" "$before_file" "$after_file" \
+    "$([[ "$container_digest" == "$host_digest" ]] && echo matches || echo differs from)" \
+    "$single_file_mount"
+
+  if [[ -n "$evidence_file" ]]; then
+    cat > "$evidence_file" <<EOF_EVIDENCE
+{
+  "project": "${PROJECT}",
+  "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "mount": "directory bind mount <state>/ingress-tls -> /run/ingress-tls (read-only)",
+  "before": { "served_serial": "${before_served}", "file_serial": "${before_file}" },
+  "after": { "served_serial": "${after_served}", "file_serial": "${after_file}" },
+  "container_file_matches_host_file": $([[ "$container_digest" == "$host_digest" ]] && echo true || echo false),
+  "control_single_file_bind_mount_after_replacement": "${single_file_mount}",
+  "result": "${result}"
+}
+EOF_EVIDENCE
+    echo "Evidence written: ${evidence_file}"
+  fi
+
+  [[ "$result" == pass ]]
+}
+
+destroy_lab() {
+  compose --profile tools down -v --remove-orphans
+  docker network rm "$PROBE_NETWORK" >/dev/null 2>&1 || true
+}
+
+purge_state() {
+  [[ "${1:-}" == "--yes" ]] || die "purge-state deletes the lab CA and secrets; rerun with --yes"
+  [[ -e "$STATE_DIR" ]] || { echo "Nothing to purge: ${STATE_DIR}"; return 0; }
+
+  require_owned_state
+
+  rm -rf --one-file-system -- "$STATE_DIR"
+  echo "Deleted ${STATE_DIR}."
+  echo "If you trusted the lab CA in Windows or a browser, remove it there as well (see the guide)."
+}
+
+# ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
+
+RESULTS=()
+FAILED=0
+
+json_string() {
+  local value="${1//\\/\\\\}"
+  printf '"%s"' "${value//\"/\\\"}"
+}
+
+record() {
+  local vantage="$1" check="$2" expected="$3" observed="$4" result="$5"
+
+  printf '%-4s %-22s %-48s expected=%s observed=%s\n' \
+    "$(tr '[:lower:]' '[:upper:]' <<< "$result")" "$vantage" "$check" "$expected" "$observed"
+
+  RESULTS+=("{\"vantage\":$(json_string "$vantage"),\"check\":$(json_string "$check"),\"expected\":$(json_string "$expected"),\"observed\":$(json_string "$observed"),\"result\":\"${result}\"}")
+
+  if [[ "$result" == fail ]]; then
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+expect() {
+  local vantage="$1" check="$2" expected="$3" observed="$4"
+
+  if [[ "$observed" == "$expected" ]]; then
+    record "$vantage" "$check" "$expected" "$observed" pass
+  else
+    record "$vantage" "$check" "$expected" "$observed" fail
+  fi
+}
+
+# Passes only when curl established no TCP connection and failed with a
+# connection-level error; records the outcome, connection count, and exit code.
+expect_unreachable() {
+  local vantage="$1" check="$2" observed="$3"
+
+  case "$observed" in
+    "refused connects=0 "* | "timeout connects=0 "* | "unresolved connects=0 "*)
+      record "$vantage" "$check" "no-connection" "$observed" pass
+      ;;
+    *)
+      record "$vantage" "$check" "no-connection" "$observed" fail
+      ;;
+  esac
+}
+
+# Classify a TCP-level outcome from curl's count of established connections
+# and its exit code. The count decides: exit 28 alone also occurs when the
+# connection succeeded and only the application response timed out.
+classify_connection() {
+  local rc="$1" connects="${2:-}"
+
+  if [[ "$connects" =~ ^[1-9][0-9]*$ ]]; then
+    echo connected
+    return 0
+  fi
+
+  case "$rc" in
+    6) echo unresolved ;;
+    7) echo refused ;;
+    28) echo timeout ;;
+    # Anything else is not evidence of an unreachable service.
+    *) echo "unclassified-exit-${rc}" ;;
+  esac
+}
+
+# Prints "<outcome> connects=<n> exit=<code>".
+probe_tcp_detail() {
+  local network="$1" target="$2" rc=0 connects
+
+  connects="$(docker run --rm --network "$network" --entrypoint curl "$PROBE_IMAGE" \
+    -s -o /dev/null --connect-timeout 3 --max-time 5 -w '%{num_connects}' \
+    "http://${target}/" 2>/dev/null)" || rc=$?
+
+  echo "$(classify_connection "$rc" "$connects") connects=${connects:-none} exit=${rc}"
+}
+
+# TCP reachability with curl from a container on the given network.
+probe_tcp() {
+  local detail
+  detail="$(probe_tcp_detail "$@")"
+  echo "${detail%% *}"
+}
+
+# Name resolution from a container on the given network. Unknown names are
+# forwarded to the host resolver, which can take longer than a TCP timeout.
+probe_dns() {
+  local network="$1" name="$2" rc=0
+
+  # Port 9 is a placeholder: only resolution matters (curl exit 6).
+  docker run --rm --network "$network" --entrypoint curl "$PROBE_IMAGE" \
+    -s -o /dev/null --connect-timeout 10 --max-time 12 "http://${name}:9/" \
+    >/dev/null 2>&1 || rc=$?
+
+  if [[ "$rc" -eq 6 ]]; then
+    echo unresolved
+  else
+    echo resolved
+  fi
+}
+
+probe_tcp_host_detail() {
+  local target="$1" rc=0 connects
+
+  connects="$(curl -s -o /dev/null --connect-timeout 3 --max-time 5 -w '%{num_connects}' \
+    "http://${target}/" 2>/dev/null)" || rc=$?
+
+  echo "$(classify_connection "$rc" "$connects") connects=${connects:-none} exit=${rc}"
+}
+
+probe_tcp_host() {
+  local detail
+  detail="$(probe_tcp_host_detail "$@")"
+  echo "${detail%% *}"
+}
+
+# Start a TCP listener that completes the handshake but never responds, on
+# the given host address. Prints "<pid> <port>".
+start_silent_host_listener() {
+  local address="$1" port_file pid port=""
+
+  port_file="$(mktemp)"
+  python3 -I -c '
+import socket, sys, time
+s = socket.socket()
+s.bind((sys.argv[1], 0))
+s.listen(4)
+print(s.getsockname()[1], flush=True)
+time.sleep(60)
+' "$address" > "$port_file" 2>/dev/null &
+  pid=$!
+
+  local _
+  for _ in $(seq 1 50); do
+    port="$(cat "$port_file")"
+    [[ -n "$port" ]] && break
+    sleep 0.1
+  done
+  rm -f "$port_file"
+
+  echo "$pid $port"
+}
+
+# Regression controls for the reachability classifier: a reachable server
+# that delays its response must count as connected, and a closed port as
+# refused. Without them, a timeout after a successful connection could be
+# reported as isolation.
+verify_probe_controls() {
+  local listener="${PROJECT}-silent-listener" listener_ip
+
+  docker run -d --rm --name "$listener" --network "$PROBE_NETWORK" \
+    --entrypoint sh "$PROBE_IMAGE" \
+    -c 'while :; do sleep 60 | nc -l -p 8080 >/dev/null 2>&1; done' >/dev/null
+  listener_ip="$(docker inspect --format \
+    "{{(index .NetworkSettings.Networks \"${PROBE_NETWORK}\").IPAddress}}" "$listener")"
+  sleep 1
+
+  local detail
+  detail="$(probe_tcp_detail "$PROBE_NETWORK" "${listener_ip}:8080")"
+  expect "probe control" "container: listener that never responds" "connected connects=1 exit=28" "$detail"
+  detail="$(probe_tcp_detail "$PROBE_NETWORK" "${listener_ip}:8081")"
+  expect "probe control" "container: closed port" "refused connects=0 exit=7" "$detail"
+
+  docker rm -f "$listener" >/dev/null 2>&1 || true
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    record "probe control" "host: listener that never responds" "run" "python3 unavailable" skip
+    return 0
+  fi
+
+  local pid port
+  read -r pid port < <(start_silent_host_listener 127.0.0.1)
+  detail="$(probe_tcp_host_detail "127.0.0.1:${port}")"
+  expect "probe control" "wsl: listener that never responds" "connected connects=1 exit=28" "$detail"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+container_ip() {
+  local service="$1" network="$2" id
+
+  id="$(compose ps -q "$service")"
+  docker inspect \
+    --format "{{with index .NetworkSettings.Networks \"${PROJECT}_${network}\"}}{{.IPAddress}}{{end}}" \
+    "$id"
+}
+
+https_status() {
+  # Prints "<http_code> <ssl_verify_result>" or "error:<curl exit>".
+  local rc=0 output
+
+  output="$(curl -sS -o /dev/null --max-time 10 \
+    -w '%{http_code} %{ssl_verify_result}' "$@" 2>/dev/null)" || rc=$?
+
+  if [[ "$rc" -ne 0 ]]; then
+    echo "error:${rc}"
+  else
+    echo "$output"
+  fi
+}
+
+verify_lab() {
+  local evidence_file=""
+  local base="https://${LAB_HOSTNAME}:${HTTPS_PORT}"
+  local ca="${PKI_DIR}/ca.crt"
+
+  if [[ "${1:-}" == "--evidence" ]]; then
+    evidence_file="${2:?--evidence requires a file}"
+  fi
+
+  require_command curl
+  [[ -f "$ca" ]] || die "lab CA missing; run: $0 init"
+
+  local service health
+  for service in postgres rabbitmq api worker ingress; do
+    health="$(docker inspect --format '{{.State.Status}}{{with .State.Health}}/{{.Status}}{{end}}' \
+      "$(compose ps -q "$service")" 2>/dev/null || echo missing)"
+    case "$service" in
+      worker) expect "docker" "${service} state" "running" "$health" ;;
+      *) expect "docker" "${service} state" "running/healthy" "$health" ;;
+    esac
+  done
+
+  local published
+  published="$(
+    for service in postgres rabbitmq api worker ingress; do
+      docker inspect --format \
+        '{{range $port, $bindings := .NetworkSettings.Ports}}{{range $bindings}}{{$port}}->{{.HostIp}}:{{.HostPort}};{{end}}{{end}}' \
+        "$(compose ps -q "$service")" | sed "s/^/${service}=/"
+    done | grep -v '=$' | tr -d '\n'
+  )"
+  expect "docker" "published ports" "ingress=8443/tcp->127.0.0.1:${HTTPS_PORT};" "$published"
+
+  # --- WSL host -------------------------------------------------------------
+  expect "wsl" "HTTPS UI with lab CA" "200 0" "$(https_status --cacert "$ca" "${base}/")"
+  expect "wsl" "HTTPS API via ingress with lab CA" "200 0" "$(https_status --cacert "$ca" "${base}/api/items")"
+  expect "wsl" "HTTPS without lab CA (control)" "error:60" "$(https_status "${base}/")"
+  expect "wsl" "TLS for unconfigured name" "error:35" \
+    "$(https_status --cacert "$ca" --connect-to "other.localhost:${HTTPS_PORT}:127.0.0.1:${HTTPS_PORT}" "https://other.localhost:${HTTPS_PORT}/")"
+  expect "wsl" "API health not routed" "404 0" "$(https_status --cacert "$ca" "${base}/api/health")"
+  expect "wsl" "API version not routed" "404 0" "$(https_status --cacert "$ca" "${base}/api/version")"
+
+  local port
+  for port in 8080 5432 55432 5672 15672; do
+    expect "wsl" "127.0.0.1:${port}" "refused connects=0 exit=7" "$(probe_tcp_host_detail "127.0.0.1:${port}")"
+  done
+
+  local wsl_address
+  wsl_address="$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+  if [[ -n "$wsl_address" ]]; then
+    expect_unreachable "wsl" "WSL eth0 ${wsl_address}:${HTTPS_PORT}" "$(probe_tcp_host_detail "${wsl_address}:${HTTPS_PORT}")"
+  fi
+
+  local api_ip postgres_ip rabbitmq_ip ingress_edge_ip
+  api_ip="$(container_ip api app)"
+  postgres_ip="$(container_ip postgres data)"
+  rabbitmq_ip="$(container_ip rabbitmq data)"
+  ingress_edge_ip="$(container_ip ingress edge)"
+
+  expect_unreachable "wsl" "api container IP :8080" "$(probe_tcp_host_detail "${api_ip}:8080")"
+  expect_unreachable "wsl" "postgres container IP :5432" "$(probe_tcp_host_detail "${postgres_ip}:5432")"
+  expect_unreachable "wsl" "rabbitmq container IP :5672" "$(probe_tcp_host_detail "${rabbitmq_ip}:5672")"
+
+  # --- Windows host through WSL interop ------------------------------------
+  local curl_exe=""
+  curl_exe="$(command -v curl.exe 2>/dev/null || true)"
+  if [[ -z "$curl_exe" && -x /mnt/c/Windows/System32/curl.exe ]]; then
+    curl_exe=/mnt/c/Windows/System32/curl.exe
+  fi
+
+  if [[ -n "$curl_exe" ]] && command -v wslpath >/dev/null 2>&1; then
+    local windows_ca rc output
+    windows_ca="$(wslpath -w "$ca")"
+
+    windows_https() {
+      local rc=0 output
+      output="$("$curl_exe" -sS -o NUL --max-time 10 -w '%{http_code}' "$@" 2>/dev/null)" || rc=$?
+      if [[ "$rc" -ne 0 ]]; then echo "error:${rc}"; else echo "$output"; fi
+    }
+
+    windows_tcp_detail() {
+      local rc=0 connects
+      connects="$("$curl_exe" -s -o NUL --connect-timeout 3 --max-time 5 -w '%{num_connects}' \
+        "http://$1/" 2>/dev/null | tr -d '\r')" || rc=$?
+      echo "$(classify_connection "$rc" "$connects") connects=${connects:-none} exit=${rc}"
+    }
+
+    windows_tcp() {
+      local detail
+      detail="$(windows_tcp_detail "$1")"
+      echo "${detail%% *}"
+    }
+
+    # Classifier control from Windows: a WSL listener that accepts but never
+    # responds, reachable from Windows through the WSL NAT address.
+    if [[ -n "$wsl_address" ]] && command -v python3 >/dev/null 2>&1; then
+      local listener_pid listener_port
+      read -r listener_pid listener_port < <(start_silent_host_listener "$wsl_address")
+      expect "probe control" "windows: listener that never responds" "connected connects=1 exit=28" \
+        "$(windows_tcp_detail "${wsl_address}:${listener_port}")"
+      kill "$listener_pid" 2>/dev/null || true
+      wait "$listener_pid" 2>/dev/null || true
+    fi
+
+    # Schannel cannot check revocation for a private CA without a CRL; only
+    # revocation checking is relaxed, chain and name verification are not.
+    expect "windows-curl" "HTTPS UI with lab CA" "200" \
+      "$(windows_https --cacert "$windows_ca" --ssl-revoke-best-effort "${base}/")"
+    expect "windows-curl" "HTTPS API via ingress with lab CA" "200" \
+      "$(windows_https --cacert "$windows_ca" --ssl-revoke-best-effort "${base}/api/items")"
+    # The negative control is only meaningful while Windows does not trust
+    # the lab CA itself, for example after the manual browser check.
+    local thumbprint windows_trust
+    thumbprint="$(openssl x509 -noout -fingerprint -sha1 -in "$ca" | cut -d= -f2 | tr -d ':')"
+    windows_trust="$(
+      powershell.exe -NoProfile -Command \
+        "@(Get-ChildItem Cert:\\CurrentUser\\Root, Cert:\\LocalMachine\\Root | Where-Object Thumbprint -eq '${thumbprint}').Count" \
+        2>/dev/null | tr -d '\r\n'
+    )"
+
+    if [[ "$windows_trust" == 0 ]]; then
+      record "windows" "lab CA in Windows trust stores" "observe" "not trusted" info
+      expect "windows-curl" "HTTPS without lab CA (control)" "error:60" \
+        "$(windows_https --ssl-revoke-best-effort "${base}/")"
+    else
+      record "windows" "lab CA in Windows trust stores" "observe" "trusted (${windows_trust:-unknown})" info
+      record "windows-curl" "HTTPS without lab CA (control)" "run" \
+        "not meaningful: Windows trusts the lab CA" skip
+    fi
+
+    for port in 8080 5432 55432 5672 15672; do
+      expect "windows-curl" "127.0.0.1:${port}" "refused connects=0 exit=7" "$(windows_tcp_detail "127.0.0.1:${port}")"
+    done
+
+    local windows_addresses address
+    windows_addresses="$(
+      powershell.exe -NoProfile -Command \
+        "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike '127.*' -and \$_.IPAddress -notlike '169.254.*' } | ForEach-Object { \$_.IPAddress }" \
+        2>/dev/null | tr -d '\r'
+    )"
+    for address in $windows_addresses; do
+      expect_unreachable "windows-curl" "Windows ${address}:${HTTPS_PORT}" "$(windows_tcp_detail "${address}:${HTTPS_PORT}")"
+    done
+
+    local listeners
+    listeners="$(
+      powershell.exe -NoProfile -Command \
+        "Get-NetTCPConnection -State Listen -LocalPort ${HTTPS_PORT},8080,5432,55432,5672,15672 -ErrorAction SilentlyContinue | ForEach-Object { \"\$(\$_.LocalAddress):\$(\$_.LocalPort)\" } | Sort-Object -Unique" \
+        2>/dev/null | tr -d '\r' | tr '\n' ';'
+    )"
+    expect "windows" "listening sockets on lab ports" "127.0.0.1:${HTTPS_PORT};" "$listeners"
+  else
+    record "windows-curl" "Windows checks" "run" "curl.exe unavailable" skip
+  fi
+
+  # --- Containers -------------------------------------------------------------
+  docker network inspect "$PROBE_NETWORK" >/dev/null 2>&1 ||
+    docker network create "$PROBE_NETWORK" >/dev/null
+
+  verify_probe_controls
+
+  local edge="${PROJECT}_edge"
+  local edge_https_status rc
+  rc=0
+  edge_https_status="$(
+    docker run --rm --network "$edge" -v "${ca}:/lab-ca.crt:ro" --entrypoint curl "$PROBE_IMAGE" \
+      -sS -o /dev/null --max-time 10 -w '%{http_code} %{ssl_verify_result}' \
+      --cacert /lab-ca.crt \
+      --connect-to "${LAB_HOSTNAME}:8443:ingress:8443" \
+      "https://${LAB_HOSTNAME}:8443/api/items" 2>/dev/null
+  )" || rc=$?
+  [[ "$rc" -eq 0 ]] || edge_https_status="error:${rc}"
+  expect "edge-network client" "HTTPS API via ingress with lab CA" "200 0" "$edge_https_status"
+  expect "edge-network client" "resolve api" "unresolved" "$(probe_dns "$edge" api)"
+  expect "edge-network client" "resolve postgres" "unresolved" "$(probe_dns "$edge" postgres)"
+  expect_unreachable "edge-network client" "api container IP :8080" "$(probe_tcp_detail "$edge" "${api_ip}:8080")"
+  expect_unreachable "edge-network client" "postgres container IP :5432" "$(probe_tcp_detail "$edge" "${postgres_ip}:5432")"
+  expect_unreachable "edge-network client" "rabbitmq container IP :5672" "$(probe_tcp_detail "$edge" "${rabbitmq_ip}:5672")"
+
+  expect "unrelated container" "resolve api" "unresolved" "$(probe_dns "$PROBE_NETWORK" api)"
+  expect_unreachable "unrelated container" "api container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${api_ip}:8080")"
+  expect_unreachable "unrelated container" "postgres container IP :5432" "$(probe_tcp_detail "$PROBE_NETWORK" "${postgres_ip}:5432")"
+  expect_unreachable "unrelated container" "rabbitmq container IP :5672" "$(probe_tcp_detail "$PROBE_NETWORK" "${rabbitmq_ip}:5672")"
+  expect_unreachable "default-bridge container" "api container IP :8080" "$(probe_tcp_detail bridge "${api_ip}:8080")"
+  expect_unreachable "default-bridge container" "postgres container IP :5432" "$(probe_tcp_detail bridge "${postgres_ip}:5432")"
+
+  # Observed, not asserted: Docker forwards a published port to the
+  # container from any network on the same engine, even when the host
+  # binding is loopback-only, and Docker Desktop also exposes the loopback
+  # publication through host.docker.internal. The ingress is the intended
+  # entry point, so this widens who can reach it, not what is reachable.
+  record "unrelated container" "ingress edge IP :8443" "observe" \
+    "$(probe_tcp_detail "$PROBE_NETWORK" "${ingress_edge_ip}:8443")" info
+  record "unrelated container" "ingress edge IP :8081 (health)" "observe" \
+    "$(probe_tcp_detail "$PROBE_NETWORK" "${ingress_edge_ip}:8081")" info
+  record "unrelated container" "host.docker.internal:${HTTPS_PORT}" "observe" \
+    "$(probe_tcp_detail "$PROBE_NETWORK" "host.docker.internal:${HTTPS_PORT}")" info
+
+  # Positive controls: the same probe reaches each backend from its own
+  # network, so the refusals above are not caused by stopped services.
+  expect "app-network control" "resolve api" "resolved" "$(probe_dns "${PROJECT}_app" api)"
+  expect "app-network control" "api:8080" "connected" "$(probe_tcp "${PROJECT}_app" "api:8080")"
+  expect "data-network control" "postgres:5432" "connected" "$(probe_tcp "${PROJECT}_data" "postgres:5432")"
+  expect "data-network control" "rabbitmq:5672" "connected" "$(probe_tcp "${PROJECT}_data" "rabbitmq:5672")"
+
+  local ingress_to_api
+  ingress_to_api="$(compose exec -T ingress wget -q -O - http://api:8080/health 2>/dev/null | tr -d '\n' || true)"
+  expect "ingress container" "http://api:8080/health" '{"status":"healthy"}' "$ingress_to_api"
+
+  docker network rm "$PROBE_NETWORK" >/dev/null 2>&1 || true
+
+  if [[ -n "$evidence_file" ]]; then
+    {
+      printf '{\n  "project": "%s",\n  "host": "%s",\n  "https_port": %s,\n' "$PROJECT" "$LAB_HOSTNAME" "$HTTPS_PORT"
+      printf '  "recorded_at": "%s",\n  "results": [\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      local index
+      for index in "${!RESULTS[@]}"; do
+        printf '    %s' "${RESULTS[$index]}"
+        [[ "$index" -lt $(( ${#RESULTS[@]} - 1 )) ]] && printf ','
+        printf '\n'
+      done
+      printf '  ]\n}\n'
+    } > "$evidence_file"
+    echo "Evidence written: ${evidence_file}"
+  fi
+
+  echo
+  if [[ "$FAILED" -ne 0 ]]; then
+    echo "Security lab verification failed: ${FAILED} check(s)." >&2
+    return 1
+  fi
+  echo "Security lab verification passed (${#RESULTS[@]} checks)."
+}
+
+# Each missing-secret case must fail before the service starts serving, with
+# an error that names the missing input and contains no secret value.
+verify_failures() {
+  local failures=0 output rc evidence_file=""
+  local -a failure_results=()
+
+  if [[ "${1:-}" == "--evidence" ]]; then
+    evidence_file="${2:?--evidence requires a file}"
+  fi
+
+  check_failure() {
+    local name="$1" expected_message="$2"
+    shift 2
+
+    rc=0
+    output="$("$@" 2>&1)" || rc=$?
+
+    local leaked=""
+    local secret_name
+    for secret_name in "${SOURCE_SECRETS[@]}"; do
+      if [[ -s "${SECRETS_DIR}/${secret_name}" ]] &&
+         grep -qF -- "$(secret "$secret_name")" <<< "$output"; then
+        leaked="$secret_name"
+      fi
+    done
+
+    local result=fail
+    if [[ "$rc" -ne 0 ]] && grep -qF -- "$expected_message" <<< "$output" && [[ -z "$leaked" ]]; then
+      result=pass
+      printf 'PASS %-44s exit=%s message="%s"\n' "$name" "$rc" "$expected_message"
+    else
+      printf 'FAIL %-44s exit=%s leaked=%s\n%s\n' "$name" "$rc" "${leaked:-none}" "$output"
+      failures=$((failures + 1))
+    fi
+
+    # The temporary preflight path varies per run; record a stable form.
+    local stable_message="${expected_message/#required secret file missing: *\//required secret file missing: <state>/secrets/}"
+    failure_results+=("{\"case\":$(json_string "$name"),\"exit_code\":${rc},\"expected_message\":$(json_string "$stable_message"),\"secret_value_in_output\":$([[ -n "$leaked" ]] && echo true || echo false),\"result\":\"${result}\"}")
+  }
+
+  # Preflight against a copy of the state with one secret file removed.
+  local partial
+  partial="$(mktemp -d)"
+  mkdir -m 700 "${partial}/secrets" "${partial}/pki"
+  cp -p "${SECRETS_DIR}"/* "${partial}/secrets/"
+  cp -p "${PKI_DIR}/ca.crt" "${partial}/pki/"
+  rm -f "${partial}/secrets/api-database-url"
+
+  check_failure "preflight: missing api-database-url" \
+    "required secret file missing: ${partial}/secrets/api-database-url" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+
+  rm -rf "$partial"
+
+  check_failure "api: DATABASE_URL_FILE missing" "read DATABASE_URL_FILE" \
+    compose run --rm --no-deps -e DATABASE_URL_FILE=/run/secrets/absent api
+  check_failure "api: Compose directory artifact" "is a directory" \
+    compose run --rm --no-deps -e DATABASE_URL_FILE=/run api
+  check_failure "api: RABBITMQ_PUBLISHER_URL_FILE missing" "read RABBITMQ_PUBLISHER_URL_FILE" \
+    compose run --rm --no-deps -e RABBITMQ_PUBLISHER_URL_FILE=/run/secrets/absent api
+  check_failure "worker: DATABASE_URL_FILE missing" "read DATABASE_URL_FILE" \
+    compose run --rm --no-deps -e DATABASE_URL_FILE=/run/secrets/absent worker
+  check_failure "worker: RABBITMQ_WORKER_URL_FILE missing" "read RABBITMQ_WORKER_URL_FILE" \
+    compose run --rm --no-deps -e RABBITMQ_WORKER_URL_FILE=/run/secrets/absent worker
+  check_failure "ingress: TLS key and certificate missing" "cannot load certificate" \
+    docker run --rm --network none --add-host api:127.0.0.1 \
+      --read-only --tmpfs /tmp --tmpfs /var/cache/nginx \
+      --user 101:101 zero-to-prod-security-lab-ingress:local
+  check_failure "postgres: admin password file missing" "/run/secrets/absent" \
+    docker run --rm --network none \
+      -e POSTGRES_PASSWORD_FILE=/run/secrets/absent \
+      postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+
+  if [[ -n "$evidence_file" ]]; then
+    {
+      printf '{\n  "project": "%s",\n  "recorded_at": "%s",\n  "results": [\n' \
+        "$PROJECT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      local index
+      for index in "${!failure_results[@]}"; do
+        printf '    %s' "${failure_results[$index]}"
+        [[ "$index" -lt $(( ${#failure_results[@]} - 1 )) ]] && printf ','
+        printf '\n'
+      done
+      printf '  ]\n}\n'
+    } > "$evidence_file"
+    echo "Evidence written: ${evidence_file}"
+  fi
+
+  if [[ "$failures" -ne 0 ]]; then
+    echo "Missing-secret verification failed: ${failures} case(s)." >&2
+    return 1
+  fi
+  echo "Missing-secret verification passed."
+}
+
+check_configuration
+
+case "${1:-}" in
+  init)
+    init_state
+    ;;
+  state-dir)
+    echo "$STATE_DIR"
+    ;;
+  check-secrets)
+    check_secrets
+    ;;
+  start)
+    require_command docker
+    start_lab
+    ;;
+  verify)
+    require_command docker
+    shift
+    verify_lab "$@"
+    ;;
+  verify-failures)
+    require_command docker
+    shift
+    verify_failures "$@"
+    ;;
+  status)
+    compose --profile tools ps -a
+    ;;
+  logs)
+    shift
+    compose logs --no-color "$@"
+    ;;
+  issue-certificate)
+    issue_certificate_command
+    ;;
+  verify-renewal)
+    require_command docker
+    shift
+    verify_renewal "$@"
+    ;;
+  ca-certificate)
+    show_ca_certificate
+    ;;
+  stop)
+    compose stop
+    ;;
+  destroy)
+    destroy_lab
+    ;;
+  purge-state)
+    shift
+    purge_state "$@"
+    ;;
+  help | -h | --help)
+    usage
+    ;;
+  "")
+    usage >&2
+    exit 2
+    ;;
+  *)
+    echo "error: unknown command: $1" >&2
+    echo >&2
+    usage >&2
+    exit 2
+    ;;
+esac

@@ -358,6 +358,30 @@ jobs:
             echo "- Runtime user: \`${configured_user}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Build worker Docker image
+        env:
+          IMAGE_NAME: zero-to-prod-work-items-worker
+        run: |
+          image="${IMAGE_NAME}:${GITHUB_SHA}"
+
+          docker build \
+            --file worker/Dockerfile \
+            --tag "${image}" \
+            .
+
+          configured_user="$(
+            docker image inspect \
+              "${image}" \
+              --format '{{.Config.User}}'
+          )"
+
+          if [ "$configured_user" != "app" ]; then
+            echo "::error::Worker image must run as the app user, found: ${configured_user}"
+            exit 1
+          fi
+
+          echo "Worker image: ${image} (user ${configured_user})"
+
   frontend-validation:
     name: Validate Work Items frontend
     needs: changes
@@ -420,21 +444,30 @@ jobs:
           bash -n scripts/test-ci-required-gate.sh
           bash -n scripts/test-ci-workflow.sh
           bash -n scripts/test-postgres-backup-validation.sh
+          bash -n scripts/test-security-lab-state-safety.sh
           bash -n tools/work-items-api-local
           bash -n tools/postgres-local
           bash -n scripts/test-async-result-recovery.sh
           bash -n tools/postgres-backup-local
           bash -n tools/work-items-worker-local
           bash -n tools/rabbitmq-local
+          bash -n tools/security-lab-local
           bash -n infra/local/postgres/init/001-roles.sh
+          bash -n infra/security-lab/postgres/init/001-security-lab-roles.sh
 
           docker compose -f infra/local/compose.yaml config --quiet
           docker compose -f infra/local/rabbitmq/compose.yaml config --quiet
+          # Compose validates the model only; secret files are checked by
+          # tools/security-lab-local before the lab starts.
+          ZTP_SECURITY_LAB_SECRETS_DIR=/nonexistent \
+            ZTP_SECURITY_LAB_INGRESS_TLS_DIR=/nonexistent \
+            docker compose -f infra/security-lab/compose.yaml config --quiet
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
           bash scripts/test-ci-workflow.sh
           bash scripts/test-postgres-backup-validation.sh
+          bash scripts/test-security-lab-state-safety.sh
 
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
