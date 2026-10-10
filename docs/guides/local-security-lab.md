@@ -59,7 +59,8 @@ under [limitations](#limitations).
 
 ## Prerequisites
 
-- Docker with Compose v2 (verified with Docker Desktop 29.6.2, Compose 5.3.1);
+- Docker with Compose v2 (verified with Docker Desktop on the WSL 2 backend,
+  Docker Engine 29.6.2, Compose 5.3.1, WSL NAT networking mode);
 - `openssl` and `curl` in WSL;
 - network access for the first image build (Go modules, pnpm packages, pinned
   base images).
@@ -83,7 +84,19 @@ Port 9443 on host loopback must be free; override it with
 └── ingress-tls/  tls.pem: ingress key and certificate (directory mode 711)
 ```
 
-It never overwrites existing values, and leaves unchanged files in place.
+Rerunning `init` keeps the existing lab CA and generated passwords, and leaves
+derived files whose content would not change in place. It does replace or
+remove:
+
+- the ingress certificate and key, when missing or within two days of expiry;
+- the RabbitMQ definitions, when missing or when a RabbitMQ password was just
+  generated (its password hashes are salted randomly);
+- derived connection-URL files, if their content would change;
+- ingress key and certificate files left in `secrets/` by earlier versions of
+  the tool.
+
+Running containers keep using the files they were created with; `start`
+recreates them.
 
 Override the location with `ZTP_SECURITY_LAB_STATE_DIR`. Because
 `purge-state` deletes this directory, the tool validates its canonical path
@@ -103,8 +116,8 @@ refuses an existing directory that is not this lab's state.
 
 ### Secret file permissions
 
-Docker Desktop bind mounts keep the host owner and mode, and each image runs
-as its own unprivileged user (PostgreSQL 70, RabbitMQ 999, ingress 101, API
+With Docker Desktop on WSL 2 (as verified), bind mounts keep the host owner
+and mode, and each image runs as its own unprivileged user (PostgreSQL 70, RabbitMQ 999, ingress 101, API
 and worker `app`). A mode-600 file owned by your WSL user is therefore not
 readable inside those containers. Mounted secret files are mode 644 inside the
 mode-700 `secrets/` directory:
@@ -142,8 +155,8 @@ Containers are recreated on every start (volumes are kept) so their file
 mounts always refer to the current secret files: a container created before a
 file was replaced keeps the old file, or fails to start if it is gone.
 
-> Compose alone does not fail when a secret file is missing: Docker creates an
-> empty directory at the mount point. Always start through the tool, which
+> In the verified environment, Compose did not fail when a secret file was
+> missing: Docker created an empty directory at the mount point. Always start through the tool, which
 > checks first. If you see a directory where a secret file should be, remove it
 > and run `init`.
 
@@ -249,8 +262,9 @@ certificate as one file, replaced by a single rename in `ingress-tls/`. The
 ingress mounts that directory, not the file, because a file bind mount keeps
 the original file after it is replaced. If the ingress is running, the tool
 reloads nginx and then requires five consecutive new verified connections to
-receive the new serial: for about a second after a reload, the old worker can
-still accept connections with the old certificate.
+receive the new serial: nginx starts the new worker before the old one stops
+accepting, and in the verified environment new connections could still
+receive the old certificate for about a second after a reload.
 
 There is no revocation (no CRL or OCSP). Windows `curl.exe` therefore runs
 with `--ssl-revoke-best-effort`; chain and name checks stay on.
@@ -288,13 +302,14 @@ nothing. Remove any browser trust first.
 - No authentication, authorization, CSRF protection, or rate limiting.
 - Ingress → API, and API/worker → PostgreSQL and RabbitMQ, are unencrypted on
   internal networks.
-- Docker forwards the published ingress port to the ingress container from any
-  network on the same Docker engine, and Docker Desktop also exposes it
-  through `host.docker.internal`. "Host loopback only" therefore limits host
-  listeners, not access from other local containers. Backends are not
-  affected.
-- The ingress sees every host client as the edge network gateway address, so
-  per-address limits would treat all host clients as one.
+- In the verified environment, Docker forwarded the published ingress port to
+  the ingress container from any network on the same Docker engine, and
+  Docker Desktop also exposed it through `host.docker.internal`. "Host
+  loopback only" there limits host listeners, not access from other local
+  containers. Backends were not affected.
+- In the verified environment, the ingress saw every host client as the edge
+  network gateway address, so per-address limits would treat all host clients
+  as one.
 - No secret rotation procedure yet. The migrator URL is visible in the migrate
   container's process arguments while it runs.
 - Single-tier lab CA without revocation; no public-CA operations.

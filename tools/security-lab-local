@@ -80,7 +80,8 @@ development credentials. Authentication is not implemented yet.
 
 Commands:
   init               Create the lab CA, ingress certificate, and runtime
-                     secrets outside the repository (never overwrites).
+                     secrets outside the repository. Keeps an existing CA and
+                     passwords; reissues the certificate near expiry.
   check-secrets      Verify the required runtime secret files and certificate.
   start              Check secrets, build images, start the lab, apply
                      identities and migrations, and wait until healthy.

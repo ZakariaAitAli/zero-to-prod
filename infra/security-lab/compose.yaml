@@ -1,8 +1,9 @@
 # Zero-to-Prod security lab (opt-in, local-first).
 #
 # Use through tools/security-lab-local, which checks the runtime secret
-# files before starting. Compose alone does not fail on a missing secret
-# file: it mounts an empty directory in its place.
+# files before starting. With the verified Compose 5.3.1 / Docker Desktop
+# setup, a missing secret file did not fail: an empty directory was mounted
+# in its place.
 #
 # Only the ingress publishes a port, on host loopback. The API, worker,
 # PostgreSQL, and RabbitMQ are reachable only on internal networks.
