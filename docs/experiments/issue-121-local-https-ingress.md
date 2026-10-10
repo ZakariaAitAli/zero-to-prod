@@ -174,8 +174,9 @@ and labelled defaults:
 
 - That the ingress is unreachable from another device on the LAN: no second
   device was used. Windows' own non-loopback addresses did not connect.
-- Browser behavior: the Windows browser check below is manual and was not
-  performed in this record.
+- Browser behavior beyond the
+  [user-reported check](#user-reported-manual-verification): the automated
+  checks above used `curl`, not a browser.
 - Anything about authentication, authorization, CSRF, rate limiting, datastore
   TLS, certificate expiry behavior, or secret rotation.
 - Isolation under a different Docker or WSL networking mode (for example WSL
@@ -193,6 +194,27 @@ and labelled defaults:
 4. Remove the CA from the trust store when finished.
 5. Optionally, from another device on the LAN, try the Windows LAN address on
    port 9443: expect no connection.
+
+## User-reported manual verification
+
+Reported by the repository owner on 2026-10-10, after the automated checks.
+These are the owner's own observations in a Windows browser, not captured by
+the lab tooling. No machine-readable evidence exists for them; the source of
+each result is shown.
+
+| Step | Result | Source |
+| --- | --- | --- |
+| Open `https://work-items.localhost:9443/` in Brave on Windows before trusting the lab CA | Browser showed `NET::ERR_CERT_AUTHORITY_INVALID` | Screenshot provided by the owner (not stored in the repository) |
+| Trust the lab CA, then reload | Page loaded without a certificate warning | Owner's report |
+| Create a Work Item titled "New Item" and process it | Item reached `done`; its job showed `succeeded`; result 8 characters, 2 words | Owner's report |
+| `./tools/security-lab-local stop` | Lab stopped successfully | Owner's report |
+
+The reported result matches the title-analysis rule for "New Item" (8 code
+points, 2 words).
+
+Not reported, so not verified: the certificate issuer shown by the browser,
+the absence of console errors, removal of the CA from the trust store
+(step 4), and the LAN check from another device (step 5).
 
 ## Remaining gaps
 
@@ -218,6 +240,7 @@ failure experiments the later slices add.
 
 The security lab is **kept** as scaffolding for the remaining #121 slices; its
 exit decision is due when #121 closes. The temporary compatibility lab was
-destroyed. The security lab was left running after this record so the manual
-browser check can be performed; stop it with `./tools/security-lab-local stop`
-or remove it with `destroy`.
+destroyed. The security lab was left running for the manual browser check;
+the owner reported stopping it afterwards with `./tools/security-lab-local
+stop`, which keeps its volumes. Remove it with `destroy` and its CA and secrets
+with `purge-state --yes`.
