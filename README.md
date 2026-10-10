@@ -86,7 +86,7 @@ A separate browser Web UI calls the API. See [ADR 0002](docs/adr/0002-work-items
 It currently uses PostgreSQL for durable state and RabbitMQ for message delivery.
 
 ```text
-Client
+Web UI or other client
   │
   ▼
 Work Items API
@@ -94,7 +94,8 @@ Work Items API
   ├──────────────► PostgreSQL
   │                 ├─ Work Items
   │                 ├─ Processing Jobs
-  │                 └─ Transactional Outbox
+  │                 ├─ Transactional Outbox
+  │                 └─ Title-analysis results
   │
   │                 durable acceptance
   │                       │
@@ -109,6 +110,8 @@ Work Items API
                           │
                           ▼
                       PostgreSQL
+            (result + done item + succeeded job
+                  in one transaction)
 ```
 
 The API currently exposes health, readiness, version, Work Item, and processing operations.
@@ -116,6 +119,8 @@ The API currently exposes health, readiness, version, Work Item, and processing 
 The asynchronous path uses a transactional outbox so acceptance of processing responsibility is committed durably in PostgreSQL before publication to RabbitMQ.
 
 The worker consumes with manual acknowledgement, bounded retry behavior, terminal failure handling, and guarded durable state transitions.
+
+Successful processing commits a title-analysis result, changes the Work Item from `pending` to `done`, and marks the job `succeeded` in one PostgreSQL transaction before the worker acknowledges the message. The state rules are in the [Work Items architecture](docs/architecture/work-items.md#state-semantics).
 
 The design currently provides **at-least-once processing with idempotent effects**. Exactly-once delivery or publication is not claimed.
 
@@ -131,7 +136,8 @@ Evidence-backed capabilities currently include:
 - least-privilege runtime database access;
 - dependency-aware readiness;
 - additive schema evolution and application/schema compatibility experiments;
-- logical backup and destructive recovery of the persisted accepted-work state (`work_items`, `processing_jobs`, `outbox_messages`);
+- logical backup and destructive recovery of the persisted accepted-work and result state (`work_items`, `processing_jobs`, `outbox_messages`, `work_item_results`);
+- a durable title-analysis result committed atomically with the Work Item and job state transitions;
 - transactional creation of processing jobs and outbox messages;
 - confirmed RabbitMQ publication;
 - separate RabbitMQ publisher and worker identities;
@@ -141,6 +147,7 @@ Evidence-backed capabilities currently include:
 - idempotent processing effects;
 - recovery across API, broker, worker, and datastore failures;
 - restart and redelivery experiments;
+- crash-consistency experiments with real process crashes, uncertain commits, and concurrent delivery ([experiment](docs/experiments/issue-118-crash-consistency.md));
 - graceful in-flight worker shutdown behavior;
 - a browser Web UI for listing and creating Work Items, submitting processing, and polling job state (implementation level, exercised manually; lint and build in CI).
 
@@ -153,7 +160,7 @@ Important current limitations include:
 - no representative messaging-architecture comparison;
 - no sustained-operation L6 claim;
 - snapshot recovery remains limited to the captured recovery point;
-- PostgreSQL backup does not recover RabbitMQ messages already published but lost from the broker;
+- restoring PostgreSQL does not restore RabbitMQ: a job whose message was already delivered can restore blocked ([#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)), and a stale queued message can target reused IDs ([#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131)); both are unmitigated;
 - no automated frontend behavioral tests.
 
 These limitations are experiment boundaries rather than hidden production-readiness assumptions.
@@ -264,7 +271,7 @@ Recovery is migration-first: migrations must already be applied, and all four ta
 
 The original accepted-work boundary was defined by [ADR 0001](docs/adr/0001-work-items-async-recovery-boundary.md) after the [Issue #111 recovery experiment](docs/experiments/issue-111-recovery-model.md) showed that restoring `work_items` alone lost accepted asynchronous work.
 
-PostgreSQL restore recovers persisted accepted-work state. It does **not** by itself provide complete RabbitMQ recovery: messages that the outbox has already recorded as published but that the broker has lost need a separate recovery or reconciliation design, which does not exist yet.
+PostgreSQL restore recovers persisted accepted-work and result state. It does **not** restore RabbitMQ, and a successful restore does not by itself make resuming safe: a job whose message was already delivered can remain blocked ([#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)), and a stale queued message can target IDs that new work reuses ([#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131)). No reconciliation or redrive exists yet.
 
 ADR 0003 adds the result to that boundary. See the [current recovery runbook](docs/runbooks/work-items-recovery.md). The original Work-Item-only design is preserved in the [Issue #99 backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md).
 
@@ -275,7 +282,7 @@ GitHub Actions currently provides change-aware validation of the local-first sys
 Application validation includes:
 
 - Go formatting;
-- `go vet`;
+- `go vet`, including a compile check of the opt-in crash-experiment harness;
 - Go tests;
 - PostgreSQL integration setup and migrations;
 - API integration tests;
@@ -330,7 +337,7 @@ Their removal does not invalidate the capabilities learned through those experim
 
 Sprint 03 moved the project into a local-first stateful-system backbone.
 
-The work so far includes:
+It covered:
 
 - PostgreSQL persistence and migration foundations;
 - runtime database privilege separation;
@@ -339,9 +346,11 @@ The work so far includes:
 - application/schema compatibility;
 - durable asynchronous processing;
 - RabbitMQ delivery;
-- distributed partial-failure and recovery experiments.
+- a browser Web UI;
+- durable business results and business/execution state separation;
+- distributed partial-failure, crash-consistency, and recovery experiments.
 
-Sprint 03 remains active while the system continues to develop deeper engineering understanding rather than simply accumulating technologies.
+Sprint 03's engineering work is complete. Work Items becomes a stable reference workload rather than a product under feature development; the [Sprint 03 summary](docs/sprint-03/README.md) records the outcome, the decision, and the open limitations.
 
 ## Current direction
 
@@ -387,7 +396,7 @@ zero-to-prod/
 │   ├── reference/      durable reference information
 │   ├── sprint-01/      historical Sprint 01 experiments
 │   ├── sprint-02/      historical Sprint 02 experiments
-│   └── sprint-03/      current Sprint 03 experiments
+│   └── sprint-03/      Sprint 03 summary and experiments
 ├── evidence/           durable experiment and retirement evidence
 ├── scripts/            repository and CI controls
 ├── tools/              local development and operational helpers
