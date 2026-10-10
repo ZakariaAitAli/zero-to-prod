@@ -358,6 +358,30 @@ jobs:
             echo "- Runtime user: \`${configured_user}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Build worker Docker image
+        env:
+          IMAGE_NAME: zero-to-prod-work-items-worker
+        run: |
+          image="${IMAGE_NAME}:${GITHUB_SHA}"
+
+          docker build \
+            --file worker/Dockerfile \
+            --tag "${image}" \
+            .
+
+          configured_user="$(
+            docker image inspect \
+              "${image}" \
+              --format '{{.Config.User}}'
+          )"
+
+          if [ "$configured_user" != "app" ]; then
+            echo "::error::Worker image must run as the app user, found: ${configured_user}"
+            exit 1
+          fi
+
+          echo "Worker image: ${image} (user ${configured_user})"
+
   frontend-validation:
     name: Validate Work Items frontend
     needs: changes
