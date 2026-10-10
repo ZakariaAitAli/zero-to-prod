@@ -139,9 +139,10 @@ services:
     tmpfs:
       - /tmp
       - /var/cache/nginx
-    secrets:
-      - ingress-tls-chain
-      - ingress-tls-key
+    volumes:
+      # A directory mount, so a renewed certificate (replaced by rename) is
+      # visible to nginx on reload; a single-file mount keeps the old inode.
+      - ${ZTP_SECURITY_LAB_INGRESS_TLS_DIR:?set by tools/security-lab-local}:/run/ingress-tls:ro
     networks:
       - edge
       - app
@@ -188,7 +189,3 @@ secrets:
     file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/worker-rabbitmq-url
   rabbitmq-definitions:
     file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/rabbitmq-definitions
-  ingress-tls-chain:
-    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/ingress-tls-chain
-  ingress-tls-key:
-    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/ingress-tls-key

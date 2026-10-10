@@ -459,6 +459,7 @@ jobs:
           # Compose validates the model only; secret files are checked by
           # tools/security-lab-local before the lab starts.
           ZTP_SECURITY_LAB_SECRETS_DIR=/nonexistent \
+            ZTP_SECURITY_LAB_INGRESS_TLS_DIR=/nonexistent \
             docker compose -f infra/security-lab/compose.yaml config --quiet
 
           ./scripts/test-ci-change-classifier.sh

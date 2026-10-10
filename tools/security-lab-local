@@ -16,6 +16,10 @@ PROJECT="${ZTP_SECURITY_LAB_PROJECT:-zero-to-prod-security-lab}"
 STATE_DIR="${ZTP_SECURITY_LAB_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/zero-to-prod/${PROJECT}}"
 SECRETS_DIR="${STATE_DIR}/secrets"
 PKI_DIR="${STATE_DIR}/pki"
+# Mounted as a directory, not as single files: a file bind mount keeps the
+# replaced inode, so a renewed certificate would never reach the container.
+INGRESS_TLS_DIR="${STATE_DIR}/ingress-tls"
+INGRESS_TLS_FILE="${INGRESS_TLS_DIR}/tls.pem"
 HTTPS_PORT="${ZTP_SECURITY_LAB_HTTPS_PORT:-9443}"
 LAB_HOSTNAME="work-items.localhost"
 CA_DAYS="${ZTP_SECURITY_LAB_CA_DAYS:-90}"
@@ -39,8 +43,6 @@ MOUNTED_SECRETS=(
   worker-database-url
   worker-rabbitmq-url
   rabbitmq-definitions
-  ingress-tls-chain
-  ingress-tls-key
 )
 
 # Generated once and never mounted; mounted files are derived from them.
@@ -64,6 +66,7 @@ Usage:
   ./tools/security-lab-local status
   ./tools/security-lab-local logs [service]
   ./tools/security-lab-local issue-certificate
+  ./tools/security-lab-local verify-renewal [--evidence <file>]
   ./tools/security-lab-local ca-certificate
   ./tools/security-lab-local stop
   ./tools/security-lab-local destroy
@@ -85,7 +88,9 @@ Commands:
   verify-failures    Check that missing secrets make each service fail.
   status             Show lab containers.
   logs               Show lab logs.
-  issue-certificate  Issue a new ingress certificate and reload the ingress.
+  issue-certificate  Issue a new ingress certificate, reload the ingress, and
+                     confirm a new connection receives the new serial.
+  verify-renewal     Renew on the running lab and record before/after serials.
   ca-certificate     Show the lab CA certificate paths and fingerprint.
   stop               Stop the lab, keeping its volumes.
   destroy            Remove only this lab's containers, networks, and volumes.
@@ -131,6 +136,7 @@ check_configuration() {
 
 compose() {
   ZTP_SECURITY_LAB_SECRETS_DIR="$SECRETS_DIR" \
+    ZTP_SECURITY_LAB_INGRESS_TLS_DIR="$INGRESS_TLS_DIR" \
     ZTP_SECURITY_LAB_HTTPS_PORT="$HTTPS_PORT" \
     docker compose \
       --project-name "$PROJECT" \
@@ -149,6 +155,15 @@ write_file() {
 
   cat > "$temporary"
   chmod "$mode" "$temporary"
+
+  # Keep an unchanged file in place: replacing it gives it a new inode, and
+  # containers created earlier would keep mounting the old one.
+  if [[ -f "$path" ]] && cmp -s "$temporary" "$path"; then
+    rm -f "$temporary"
+    chmod "$mode" "$path"
+    return 0
+  fi
+
   mv -f "$temporary" "$path"
 }
 
@@ -182,8 +197,9 @@ init_ca() {
 issue_certificate() {
   local csr="${PKI_DIR}/ingress.csr"
   local extensions="${PKI_DIR}/ingress.ext"
-  local key="${SECRETS_DIR}/ingress-tls-key"
+  local key="${INGRESS_TLS_DIR}/.tls.key.tmp"
   local certificate="${PKI_DIR}/ingress.crt"
+  local bundle="${INGRESS_TLS_DIR}/.tls.pem.tmp"
 
   [[ -f "${PKI_DIR}/ca.key" ]] || die "lab CA missing; run: $0 init"
 
@@ -202,7 +218,7 @@ EOF_EXT
     umask 077
     openssl req -new \
       -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
-      -keyout "${key}.tmp" \
+      -keyout "$key" \
       -out "$csr" \
       -subj "/CN=${LAB_HOSTNAME}" \
       2>/dev/null
@@ -220,14 +236,31 @@ EOF_EXT
 
   rm -f "$csr" "$extensions"
 
-  # The unprivileged ingress user must read the key; see "Secret file
-  # permissions" in the security lab guide.
-  chmod 644 "${key}.tmp" "${certificate}.tmp"
-  mv -f "${key}.tmp" "$key"
+  # Key and certificate in one file, replaced by a single rename, so nginx
+  # can never load a mismatched pair. The unprivileged ingress user must read
+  # it; see "Secret file permissions" in the security lab guide.
+  cat "$key" "${certificate}.tmp" > "$bundle"
+  rm -f "$key"
+  chmod 644 "$bundle" "${certificate}.tmp"
+  mv -f "$bundle" "$INGRESS_TLS_FILE"
   mv -f "${certificate}.tmp" "$certificate"
-  cp "$certificate" "${SECRETS_DIR}/ingress-tls-chain.tmp"
-  chmod 644 "${SECRETS_DIR}/ingress-tls-chain.tmp"
-  mv -f "${SECRETS_DIR}/ingress-tls-chain.tmp" "${SECRETS_DIR}/ingress-tls-chain"
+}
+
+certificate_serial() {
+  openssl x509 -noout -serial -in "$1" | cut -d= -f2
+}
+
+# Serial of the certificate the ingress serves on a new, verified connection.
+served_serial() {
+  openssl s_client \
+    -connect "127.0.0.1:${HTTPS_PORT}" \
+    -servername "$LAB_HOSTNAME" \
+    -verify_hostname "$LAB_HOSTNAME" \
+    -CAfile "${PKI_DIR}/ca.crt" \
+    -verify_return_error \
+    </dev/null 2>/dev/null \
+    | openssl x509 -noout -serial 2>/dev/null \
+    | cut -d= -f2
 }
 
 secret() {
@@ -272,6 +305,12 @@ derive_secrets() {
     | write_file "${SECRETS_DIR}/api-rabbitmq-url" 644
   printf 'amqp://zero_to_prod_worker:%s@rabbitmq:5672/%s\n' "$rabbitmq_worker" "$RABBITMQ_VHOST" \
     | write_file "${SECRETS_DIR}/worker-rabbitmq-url" 644
+
+  # The password hashes are salted randomly, so regenerate the definitions
+  # only when they are missing or a RabbitMQ password was just generated.
+  if [[ -s "${SECRETS_DIR}/rabbitmq-definitions" && "${1:-}" != regenerate-rabbitmq ]]; then
+    return 0
+  fi
 
   # Same users and permissions as tools/rabbitmq-local; no default or
   # administrative user is defined.
@@ -326,21 +365,30 @@ EOF_DEFINITIONS
 init_state() {
   require_command openssl
 
-  (umask 077; mkdir -p "$STATE_DIR" "$SECRETS_DIR" "$PKI_DIR")
+  (umask 077; mkdir -p "$STATE_DIR" "$SECRETS_DIR" "$PKI_DIR" "$INGRESS_TLS_DIR")
   chmod 700 "$STATE_DIR" "$SECRETS_DIR" "$PKI_DIR"
+  # Mounted as the container's directory, where the unprivileged nginx user
+  # must traverse it; on the host the mode-700 state directory protects it.
+  chmod 711 "$INGRESS_TLS_DIR"
 
   init_ca
 
-  if [[ ! -f "${SECRETS_DIR}/ingress-tls-key" ]] ||
-     ! openssl x509 -checkend 172800 -noout -in "${PKI_DIR}/ingress.crt" >/dev/null 2>&1; then
+  # Earlier versions mounted the ingress key and certificate as single files.
+  rm -f "${SECRETS_DIR}/ingress-tls-key" "${SECRETS_DIR}/ingress-tls-chain"
+
+  if [[ ! -f "$INGRESS_TLS_FILE" ]] ||
+     ! openssl x509 -checkend 172800 -noout -in "$INGRESS_TLS_FILE" >/dev/null 2>&1; then
     issue_certificate
   fi
 
-  local name
+  local name rabbitmq_changed=""
   for name in "${SOURCE_SECRETS[@]}"; do
     if [[ ! -s "${SECRETS_DIR}/${name}" ]]; then
       openssl rand -hex 24 | write_file "${SECRETS_DIR}/${name}" 600
       echo "Generated ${name}"
+      if [[ "$name" == rabbitmq-* ]]; then
+        rabbitmq_changed=regenerate-rabbitmq
+      fi
     fi
   done
 
@@ -351,7 +399,7 @@ init_state() {
     "${SECRETS_DIR}/postgres-app-password" \
     "${SECRETS_DIR}/postgres-worker-password"
 
-  derive_secrets
+  derive_secrets "$rabbitmq_changed"
 
   echo "Security lab state ready: ${STATE_DIR}"
 }
@@ -386,19 +434,30 @@ check_secrets() {
     fi
   done
 
+  if [[ ! -d "$INGRESS_TLS_DIR" ]]; then
+    echo "error: ingress TLS directory missing: ${INGRESS_TLS_DIR} (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif [[ "$(stat -c '%a' "$INGRESS_TLS_DIR")" != "711" ]]; then
+    echo "error: ${INGRESS_TLS_DIR} must have mode 711 (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif [[ ! -f "$INGRESS_TLS_FILE" || ! -s "$INGRESS_TLS_FILE" ]]; then
+    echo "error: required ingress TLS file missing or empty: ${INGRESS_TLS_FILE}" >&2
+    failures=$((failures + 1))
+  fi
+
   if [[ "$failures" -eq 0 ]]; then
-    if ! openssl verify -CAfile "${PKI_DIR}/ca.crt" "${SECRETS_DIR}/ingress-tls-chain" >/dev/null 2>&1; then
+    if ! openssl verify -CAfile "${PKI_DIR}/ca.crt" "$INGRESS_TLS_FILE" >/dev/null 2>&1; then
       echo "error: the ingress certificate does not verify against the lab CA" >&2
       failures=$((failures + 1))
     fi
 
-    if ! openssl x509 -checkend 0 -noout -in "${SECRETS_DIR}/ingress-tls-chain" >/dev/null; then
+    if ! openssl x509 -checkend 0 -noout -in "$INGRESS_TLS_FILE" >/dev/null; then
       echo "error: the ingress certificate has expired; run: $0 issue-certificate" >&2
       failures=$((failures + 1))
     fi
 
-    if [[ "$(openssl x509 -noout -pubkey -in "${SECRETS_DIR}/ingress-tls-chain" | openssl sha256)" != \
-          "$(openssl pkey -pubout -in "${SECRETS_DIR}/ingress-tls-key" | openssl sha256)" ]]; then
+    if [[ "$(openssl x509 -noout -pubkey -in "$INGRESS_TLS_FILE" | openssl sha256)" != \
+          "$(openssl pkey -pubout -in "$INGRESS_TLS_FILE" | openssl sha256)" ]]; then
       echo "error: the ingress key does not match its certificate" >&2
       failures=$((failures + 1))
     fi
@@ -410,7 +469,7 @@ check_secrets() {
   fi
 
   echo "Security lab secrets present; ingress certificate valid until $(
-    openssl x509 -noout -enddate -in "${SECRETS_DIR}/ingress-tls-chain" | cut -d= -f2
+    openssl x509 -noout -enddate -in "$INGRESS_TLS_FILE" | cut -d= -f2
   )."
 }
 
@@ -437,14 +496,18 @@ start_lab() {
   check_secrets
 
   compose --profile tools build
-  compose up -d --wait postgres rabbitmq
+
+  # Recreate containers so every file mount refers to the current secret
+  # files; a container created before a file was replaced would keep the old
+  # inode or fail to start. Volumes are kept.
+  compose up -d --wait --force-recreate postgres rabbitmq
 
   # The init script runs only on an empty volume; re-apply identities so the
   # secret files remain authoritative.
   compose exec -T postgres /docker-entrypoint-initdb.d/001-security-lab-roles.sh
   compose run --rm migrate
 
-  compose up -d --wait api worker ingress
+  compose up -d --wait --force-recreate api worker ingress
 
   echo
   echo "Security lab running: https://${LAB_HOSTNAME}:${HTTPS_PORT}/"
@@ -452,14 +515,115 @@ start_lab() {
 }
 
 issue_certificate_command() {
-  [[ -d "$SECRETS_DIR" ]] || die "state missing; run: $0 init"
+  [[ -d "$INGRESS_TLS_DIR" ]] || die "ingress TLS directory missing; run: $0 init"
 
   issue_certificate
 
-  if [[ -n "$(compose ps -q --status running ingress 2>/dev/null)" ]]; then
-    compose exec -T ingress nginx -s reload
-    echo "Ingress reloaded."
+  local expected served=""
+  expected="$(certificate_serial "$INGRESS_TLS_FILE")"
+
+  if [[ -z "$(compose ps -q --status running ingress 2>/dev/null)" ]]; then
+    echo "Issued serial ${expected}; the ingress is not running."
+    return 0
   fi
+
+  compose exec -T ingress nginx -s reload
+
+  # Reload is asynchronous: nginx starts the new worker before the old one
+  # stops accepting, so for about a second new connections can still receive
+  # the old certificate. Require consecutive new connections with the new
+  # serial rather than the first match.
+  local _ consecutive=0
+  for _ in $(seq 1 60); do
+    served="$(served_serial)"
+    if [[ "$served" == "$expected" ]]; then
+      consecutive=$((consecutive + 1))
+      [[ "$consecutive" -ge 5 ]] && break
+    else
+      consecutive=0
+    fi
+    sleep 0.25
+  done
+
+  if [[ "$consecutive" -lt 5 ]]; then
+    die "the ingress still serves serial ${served:-unknown}, expected ${expected}"
+  fi
+
+  echo "Ingress reloaded; ${consecutive} consecutive new connections were served serial ${served}."
+}
+
+# Renew the ingress certificate on a running lab and confirm that the
+# container sees the new file and new connections receive the new serial.
+verify_renewal() {
+  local evidence_file=""
+
+  if [[ "${1:-}" == "--evidence" ]]; then
+    evidence_file="${2:?--evidence requires a file}"
+  fi
+
+  [[ -n "$(compose ps -q --status running ingress 2>/dev/null)" ]] ||
+    die "the ingress is not running; run: $0 start"
+
+  local before_served before_file after_served after_file host_digest container_digest
+
+  before_served="$(served_serial)"
+  before_file="$(certificate_serial "$INGRESS_TLS_FILE")"
+
+  issue_certificate_command >/dev/null
+
+  after_served="$(served_serial)"
+  after_file="$(certificate_serial "$INGRESS_TLS_FILE")"
+  host_digest="$(sha256sum "$INGRESS_TLS_FILE" | cut -d' ' -f1)"
+  container_digest="$(compose exec -T ingress sha256sum /run/ingress-tls/tls.pem | cut -d' ' -f1)"
+
+  # Control: reproduce the failure this mount layout avoids. A single-file
+  # bind mount keeps the original inode after the host file is replaced.
+  local control_dir control_view single_file_mount
+  control_dir="$(mktemp -d)"
+  printf 'original\n' > "${control_dir}/file"
+  docker run -d --rm --name "${PROJECT}-mount-control" --network none \
+    -v "${control_dir}/file:/control/file:ro" "$PROBE_IMAGE" sleep 30 >/dev/null
+  printf 'replacement\n' > "${control_dir}/file.new"
+  mv -f "${control_dir}/file.new" "${control_dir}/file"
+  control_view="$(docker exec "${PROJECT}-mount-control" cat /control/file)"
+  docker rm -f "${PROJECT}-mount-control" >/dev/null 2>&1 || true
+  rm -rf -- "$control_dir"
+  if [[ "$control_view" == original ]]; then
+    single_file_mount=stale
+  else
+    single_file_mount=updated
+  fi
+
+  local result=fail
+  if [[ -n "$before_served" && "$before_served" == "$before_file" &&
+        "$after_file" != "$before_file" && "$after_served" == "$after_file" &&
+        "$container_digest" == "$host_digest" && "$single_file_mount" == stale ]]; then
+    result=pass
+  fi
+
+  printf '%s certificate renewal: served %s -> %s; file %s -> %s; container file %s host file; single-file mount control: %s\n' \
+    "$(tr '[:lower:]' '[:upper:]' <<< "$result")" \
+    "$before_served" "$after_served" "$before_file" "$after_file" \
+    "$([[ "$container_digest" == "$host_digest" ]] && echo matches || echo differs from)" \
+    "$single_file_mount"
+
+  if [[ -n "$evidence_file" ]]; then
+    cat > "$evidence_file" <<EOF_EVIDENCE
+{
+  "project": "${PROJECT}",
+  "recorded_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "mount": "directory bind mount <state>/ingress-tls -> /run/ingress-tls (read-only)",
+  "before": { "served_serial": "${before_served}", "file_serial": "${before_file}" },
+  "after": { "served_serial": "${after_served}", "file_serial": "${after_file}" },
+  "container_file_matches_host_file": $([[ "$container_digest" == "$host_digest" ]] && echo true || echo false),
+  "control_single_file_bind_mount_after_replacement": "${single_file_mount}",
+  "result": "${result}"
+}
+EOF_EVIDENCE
+    echo "Evidence written: ${evidence_file}"
+  fi
+
+  [[ "$result" == pass ]]
 }
 
 destroy_lab() {
@@ -918,6 +1082,11 @@ case "${1:-}" in
     ;;
   issue-certificate)
     issue_certificate_command
+    ;;
+  verify-renewal)
+    require_command docker
+    shift
+    verify_renewal "$@"
     ;;
   ca-certificate)
     show_ca_certificate
