@@ -224,3 +224,29 @@ effects.
 - `apps/work-items/api/items.go`: the Work Item model permits `done`.
 - `apps/work-items/api/store.go`: `AcceptProcessingJob` creates a job and
   outbox message without enforcing the proposed per-item cardinality.
+
+## Later evidence
+
+The decision above is unchanged. Entries record evidence gathered after it was
+accepted.
+
+### 2026-10-10 — Stale broker messages after PostgreSQL restore
+
+The [crash-consistency experiment](../experiments/issue-118-crash-consistency.md)
+exercised the failure ordering above with real process crashes; the success
+invariant held in every case. Its snapshot-recovery run
+([evidence](../../evidence/issue-118/e12-snapshot-recovery.json)) also
+demonstrated a risk this decision did not name. Restoring PostgreSQL rewinds
+identity sequences while RabbitMQ keeps its messages, so a message for work
+accepted after the restore point targeted new work that received the same job
+and Work Item IDs, and completed it before that job's own message was
+published. This differs from the missing-delivery limitation under
+[Refused requests and stalled acceptance](#refused-requests-and-stalled-acceptance):
+it is an extra, misattributed delivery. The experiment also reproduced that
+missing-delivery limitation.
+
+Follow-ups: [#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)
+(redrive of blocked accepted jobs) and
+[#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131) (stale messages
+targeting reused IDs). Either may require revisiting this decision's recovery
+section.
