@@ -30,7 +30,7 @@ for changed_file in "$@"; do
       backend=true
       ;;
 
-    infra/local/*|tools/work-items-api-local|tools/postgres-local|tools/postgres-backup-local|tools/work-items-worker-local|tools/rabbitmq-local)
+    infra/local/*|infra/security-lab/*|tools/work-items-api-local|tools/postgres-local|tools/postgres-backup-local|tools/work-items-worker-local|tools/rabbitmq-local|tools/security-lab-local)
       backend=true
       workflow=true
       ;;

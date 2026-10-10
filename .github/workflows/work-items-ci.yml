@@ -450,10 +450,16 @@ jobs:
           bash -n tools/postgres-backup-local
           bash -n tools/work-items-worker-local
           bash -n tools/rabbitmq-local
+          bash -n tools/security-lab-local
           bash -n infra/local/postgres/init/001-roles.sh
+          bash -n infra/security-lab/postgres/init/001-security-lab-roles.sh
 
           docker compose -f infra/local/compose.yaml config --quiet
           docker compose -f infra/local/rabbitmq/compose.yaml config --quiet
+          # Compose validates the model only; secret files are checked by
+          # tools/security-lab-local before the lab starts.
+          ZTP_SECURITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/security-lab/compose.yaml config --quiet
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh

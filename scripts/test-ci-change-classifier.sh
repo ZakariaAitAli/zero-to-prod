@@ -110,6 +110,26 @@ assert_case \
   tools/rabbitmq-local
 
 assert_case \
+  "security lab Compose runtime" \
+  "$backend_workflow_expected" \
+  infra/security-lab/compose.yaml
+
+assert_case \
+  "security lab ingress configuration" \
+  "$backend_workflow_expected" \
+  infra/security-lab/ingress/nginx.conf
+
+assert_case \
+  "security lab tooling" \
+  "$backend_workflow_expected" \
+  tools/security-lab-local
+
+assert_case \
+  "worker Dockerfile" \
+  "$backend_expected" \
+  apps/work-items/worker/Dockerfile
+
+assert_case \
   "workflow YAML" \
   "$full_expected" \
   .github/workflows/work-items-ci.yml
