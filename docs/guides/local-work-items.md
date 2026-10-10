@@ -67,11 +67,13 @@ If the default PostgreSQL project already holds data from before migration 5,
 separate projects instead. Isolate RabbitMQ too: an older broker can still hold
 messages naming job IDs that a new database will reuse.
 
-Choose unused names and ports, then export the overrides once per terminal:
+Choose unused project names and ports, then export the overrides once per
+terminal. The example ports avoid those used by the default lab and the
+isolated labs documented here:
 
 ```bash
-export ZTP_COMPOSE_PROJECT_NAME=zero-to-prod-current ZTP_POSTGRES_PORT=55433
-export ZTP_RABBITMQ_COMPOSE_PROJECT_NAME=zero-to-prod-current-rabbitmq ZTP_RABBITMQ_AMQP_PORT=5673 ZTP_RABBITMQ_MANAGEMENT_PORT=15673
+export ZTP_COMPOSE_PROJECT_NAME=zero-to-prod-current ZTP_POSTGRES_PORT=55435
+export ZTP_RABBITMQ_COMPOSE_PROJECT_NAME=zero-to-prod-current-rabbitmq ZTP_RABBITMQ_AMQP_PORT=5674 ZTP_RABBITMQ_MANAGEMENT_PORT=15674
 pg=127.0.0.1:$ZTP_POSTGRES_PORT/zero_to_prod?sslmode=disable; mq=127.0.0.1:$ZTP_RABBITMQ_AMQP_PORT/zero_to_prod
 export DATABASE_URL="postgres://zero_to_prod_app:zero-to-prod-local-app@$pg" \
   RABBITMQ_PUBLISHER_URL="amqp://zero_to_prod_publisher:zero-to-prod-local-rabbitmq-publisher@$mq"
@@ -203,7 +205,8 @@ Expected responses for a running, ready instance are:
 
 ### Stop and clean up
 
-Stop the API and worker with `Ctrl+C`; both shut down gracefully on `SIGTERM`.
+Stop the API and worker with `Ctrl+C`, which sends `SIGINT`. Both processes
+shut down gracefully on `SIGINT` or `SIGTERM`.
 
 `stop` keeps data. It stops the containers and leaves their volumes, so a later
 `start` resumes with the same Work Items, jobs, and queued messages:

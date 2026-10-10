@@ -88,7 +88,7 @@ broker confirms
 process crashes before database marks it published
 ```
 
-After restart, the publisher may send the same message again because the database still represents it as unpublished. Zero-to-Prod reproduced this window with a real publisher crash in the [crash-consistency experiment](../experiments/issue-118-crash-consistency.md).
+After restart, the publisher may send the same message again because the database still represents it as unpublished. Zero-to-Prod reproduced this window in the [crash-consistency experiment](../experiments/issue-118-crash-consistency.md) by killing the publisher and terminating its in-flight publication-marker statement. In the observed run, killing the publisher alone let PostgreSQL finish the marker, so no duplicate was published.
 
 The correct design question is therefore not "how do we guarantee the message is never duplicated?" but "how does the consumer behave safely when a message is delivered again?"
 

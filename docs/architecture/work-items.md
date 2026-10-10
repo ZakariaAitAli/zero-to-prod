@@ -277,8 +277,9 @@ success cannot be committed.
 | Database error, uncertain commit, or other infrastructure error | Requeue |
 
 Every requeue ends the worker's broker session; the worker reconnects after one
-second and receives the message again. Delivery is at least once; computation can repeat, but at most one business
-result commits. Exactly-once delivery is not claimed.
+second and receives the message again. Delivery is at least once; computation
+can repeat, but at most one business result commits. Exactly-once delivery is
+not claimed.
 
 ## Failure model
 
@@ -305,7 +306,7 @@ The [crash-consistency experiment](../experiments/issue-118-crash-consistency.md
 - worker killed before any write, after uncommitted result writes, during COMMIT, and after COMMIT but before acknowledgement;
 - COMMIT outcome uncertain from the worker's side: committed after the worker died when PostgreSQL did not check the connection, rolled back otherwise;
 - PostgreSQL stopped, and PostgreSQL killed during COMMIT;
-- outbox publisher killed after broker confirmation, including the window that produces a duplicate publication;
+- outbox publisher killed after broker confirmation; a duplicate publication occurred only when its in-flight publication-marker statement was also terminated;
 - two worker processes holding copies of one message at the same time;
 - destructive restore with live processes and messages still in RabbitMQ.
 
