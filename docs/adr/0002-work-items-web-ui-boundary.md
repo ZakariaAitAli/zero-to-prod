@@ -287,3 +287,20 @@ worker
 ~~~
 
 This broadens the reference system while preserving the existing PostgreSQL, transactional-outbox, RabbitMQ, and worker reliability model.
+
+## Later evidence
+
+The decision above is unchanged. Entries record evidence gathered after it was
+accepted.
+
+### 2026-10-10 — Processing now produces a business result
+
+The "Current limitations" section described the worker before
+[ADR 0003](0003-work-items-async-success-semantics.md) was implemented. The
+worker now commits a title-analysis result, changes the Work Item to `done`, and
+marks the job `succeeded` in one transaction. Work Item status and job state
+remain separate models, but a succeeded job now implies a done item with a
+result. The UI shows that result and handles the `409` conflicts ADR 0003
+introduced; see the [Issue #117 validation](../experiments/issue-117-result-validation.md).
+The other limitations still apply: no object storage, authentication, cloud deployment,
+production ingress, production CORS configuration, or full observability stack.
