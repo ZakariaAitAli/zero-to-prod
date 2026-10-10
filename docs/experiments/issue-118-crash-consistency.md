@@ -69,6 +69,35 @@ observes conditions and never substitutes for them.
 | Outbox crash window | `BEFORE UPDATE` trigger on the `published_at` transition waits on a harness-held lock; API backend observed in that `UPDATE` after RabbitMQ already holds the confirmed message. |
 | Broker state | `rabbitmqctl list_queues` inside the validated container (ready, unacknowledged, consumers), not lagging management statistics. |
 
+### Why observed locks and triggers
+
+Three ways to place a crash were considered:
+
+- **Timing-based crashes** (sleep, then signal) cannot show where the process
+  was. A run that kills too early or too late still passes, so the evidence
+  would not prove which window was exercised.
+- **Crash hooks in the production binaries** would place crashes exactly, but
+  they add fault-injection paths to shipped code and test a modified program.
+  This issue keeps production behavior unchanged.
+- **Database locks and test-only triggers** hold the unmodified binaries at a
+  real wait inside PostgreSQL. The harness reads that wait, the transaction ID,
+  and the tuples already written before it signals anything.
+
+The third option was chosen. Its cost is that every window is wider than at
+natural timing; see the remaining unknowns.
+
+### Privileges and isolation
+
+Observation and instrumentation need a PostgreSQL superuser. Other roles'
+wait events, queries, and transaction IDs are hidden from ordinary roles;
+`pageinspect`, `pg_terminate_backend` on another role's backend, and triggers
+on application tables all need elevated rights. Those same rights could stall,
+terminate, or corrupt a real lab. The harness therefore refuses non-isolated
+projects and protected ports, proves the database URL and the container are the
+same cluster, re-checks targets before each destructive step, and requires an
+explicit opt-in naming the project before destroying a volume. Credentials are
+local lab defaults and are redacted from evidence.
+
 Destructive actions re-validate the Compose project prefix, labels, the
 container's host-port binding, and (PostgreSQL) that the URL endpoint and the
 container report the same `system_identifier`. Volume destruction also checks
@@ -129,7 +158,8 @@ destroyed, recreated, migrated, and restored.
   with `published_at` set, but its message had already been consumed. It
   remains blocked without operator intervention or a redrive mechanism. A new
   request returns `409 processing_already_active`. This is ADR 0003's known
-  missing-delivery limitation.
+  missing-delivery limitation, tracked in
+  [#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130).
 - **Stale message after sequence rewind:** all three identity sequences
   returned to their backup values. A message for post-backup work (job 195,
   item 183) remained queued in RabbitMQ. New work created after restore
@@ -146,12 +176,25 @@ matched, the worker rejects the message as an identity mismatch; if the job did
 not exist yet, it rejects it as unknown — dropping it, which is harmless for
 lost work.
 
-Implications: this is an extra, misattributed delivery, not a missing one. It
-was benign here only because messages carry identities and processing is
-deterministic over database state. It breaks provenance (the new job completed before its
-own message was published), would count injected or real failures
-against the wrong job, and would become unsafe if messages carried business
-data, processing versions, or triggered external effects.
+#### Integrity implications
+
+This is an extra, misattributed delivery, not a missing one.
+
+- **Result integrity held by construction, not by design.** The result was
+  correct only because messages carry identities and the worker reads its input
+  from PostgreSQL. The worker does verify that the message's job exists and
+  belongs to the named Work Item, but after a restore reuses both IDs, an old
+  message and the new work satisfy those checks identically, so the worker
+  cannot tell them apart.
+- **Provenance is wrong.** The new job completed before its own message was
+  published, so delivery history no longer explains the outcome.
+- **Failures would be misattributed.** A failing stale delivery would consume
+  the new job's retry budget.
+- **The risk grows with the message contract.** If messages carried business
+  data or processing versions, or triggered external effects, a stale message
+  would apply them to unrelated work.
+
+Tracked in [#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131).
 
 ## Analysis
 
@@ -198,18 +241,28 @@ interacts with an independently durable broker.
 
 ## Decision
 
-No architectural decision changes in this issue. Candidate follow-ups:
+No architectural decision changes in this issue. ADR 0003 records a dated
+pointer to this evidence. Follow-ups, not implemented here:
 
-- Restore procedure or redrive work for blocked accepted jobs (ADR 0003 already
+- [#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130): redrive
+  accepted jobs whose delivery was lost across a restore (ADR 0003 already
   scopes this out).
-- Prevent stale-message aliasing after restore: quarantine/purge queued messages
-  for identities beyond the restored sequences, advance sequences past the
-  pre-loss high-water mark, or add a non-reusable delivery identity checked by
-  the worker. This needs its own decision.
+- [#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131): prevent
+  stale broker messages from targeting reused IDs. Candidate directions include
+  restore-time queue quarantine, advancing sequences past the pre-loss
+  high-water mark, and a non-reusable delivery identity checked by the worker.
 
-## Cleanup
+## Cost and cleanup
 
-The harness is **kept** as opt-in scaffolding; CI vets it. Instrumentation
+No cloud resources are used. The isolated lab adds two containers. Measured
+idle memory was about 46 MiB for PostgreSQL and 188 MiB for RabbitMQ, and the
+volumes held about 66 MB and 0.4 MB. A full run of the process and outage
+experiments took about 90 seconds, and snapshot recovery about 40 seconds.
+
+The harness is **kept** as opt-in scaffolding; CI vets it. Whoever starts the
+isolated lab tears it down; the harness never removes it. Instrumentation
 objects (`issue118` schema, `pageinspect`, gate triggers) exist only in the
-isolated database and are removed by destroying it. Tear down the isolated lab
-with the commands in the [local guide](../guides/local-work-items.md#isolated-crash-consistency-lab).
+isolated database and are removed by destroying it. Child processes are killed
+when each experiment ends; on failure the isolated queue is purged. Tear down
+the isolated lab with the commands in the
+[local guide](../guides/local-work-items.md#isolated-crash-consistency-lab).
