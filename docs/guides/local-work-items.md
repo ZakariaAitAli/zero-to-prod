@@ -56,21 +56,40 @@ The default binary is written outside the repository:
 /tmp/zero-to-prod-work-items-api
 ```
 
-### Move to the result-processing schema
+### Start the current system next to preserved legacy data
 
-Migration 5 refuses to upgrade populated application tables. Preserve the
-legacy database/volume and use a separate local project and port:
+The commands under [Run](#run) use the default Compose projects
+(`zero-to-prod-local` on port 55432 and `zero-to-prod-rabbitmq` on 5672). On a
+fresh machine those are empty and the defaults work.
+
+If the default PostgreSQL project already holds data from before migration 5,
+`migrate-up` refuses to upgrade it. Do not reset it. Start the current system in
+separate projects instead. Isolate RabbitMQ too: an older broker can still hold
+messages naming job IDs that a new database will reuse.
+
+Choose unused names and ports, then export the overrides once per terminal:
 
 ```bash
-export ZTP_COMPOSE_PROJECT_NAME=zero-to-prod-results
-export ZTP_POSTGRES_PORT=55433
-./tools/postgres-local start
-./tools/postgres-local migrate-up
+export ZTP_COMPOSE_PROJECT_NAME=zero-to-prod-current ZTP_POSTGRES_PORT=55433
+export ZTP_RABBITMQ_COMPOSE_PROJECT_NAME=zero-to-prod-current-rabbitmq ZTP_RABBITMQ_AMQP_PORT=5673 ZTP_RABBITMQ_MANAGEMENT_PORT=15673
+pg=127.0.0.1:$ZTP_POSTGRES_PORT/zero_to_prod?sslmode=disable; mq=127.0.0.1:$ZTP_RABBITMQ_AMQP_PORT/zero_to_prod
+export DATABASE_URL="postgres://zero_to_prod_app:zero-to-prod-local-app@$pg" \
+  RABBITMQ_PUBLISHER_URL="amqp://zero_to_prod_publisher:zero-to-prod-local-rabbitmq-publisher@$mq"
 ```
 
-Use port 55433 in the API and worker `DATABASE_URL` values. Keep these overrides
-for backup/restore commands too. The default project and its data are retained;
-no reset or truncation is part of migration. See the
+Start the dependencies and the API with these overrides, exactly as under
+[Run](#run). The worker needs its own identities, so start it in a second
+terminal after running the same three lines above:
+
+```bash
+DATABASE_URL="postgres://zero_to_prod_worker:zero-to-prod-local-worker@$pg" \
+  RABBITMQ_WORKER_URL="amqp://zero_to_prod_worker:zero-to-prod-local-rabbitmq-worker@$mq" \
+  ./tools/work-items-worker-local run
+```
+
+Keep the same overrides for status, backup, restore, stop, and destroy
+commands; without them the tools act on the default projects. Recover legacy
+data only with its historical schema and application. See the
 [current recovery runbook](../runbooks/work-items-recovery.md).
 
 ### Isolated crash-consistency lab
@@ -182,6 +201,28 @@ Expected responses for a running, ready instance are:
 /version  {"version":"local"}
 ```
 
+### Stop and clean up
+
+Stop the API and worker with `Ctrl+C`; both shut down gracefully on `SIGTERM`.
+
+`stop` keeps data. It stops the containers and leaves their volumes, so a later
+`start` resumes with the same Work Items, jobs, and queued messages:
+
+```bash
+./tools/rabbitmq-local stop
+./tools/postgres-local stop
+```
+
+`destroy` permanently removes the containers, network, and data volume of the
+selected project. Use it only for a lab you intend to discard, with the same
+project overrides that started it, and check the result:
+
+```bash
+./tools/rabbitmq-local destroy
+./tools/postgres-local destroy
+docker volume ls --format '{{.Name}}' | grep zero-to-prod
+```
+
 ## Health and readiness
 
 The two status endpoints have different purposes.
@@ -190,7 +231,7 @@ The two status endpoints have different purposes.
 
 `GET /ready` is the traffic-acceptance signal. Readiness requires both application lifecycle readiness and usable PostgreSQL persistence.
 
-The datastore check is a bounded, read-only query against the exact `work_items` columns required by the application:
+The datastore check runs bounded, read-only `LIMIT 0` queries against the exact columns the API requires in `work_items`, `processing_jobs`, `outbox_messages`, and `work_item_results`. For example:
 
 ```sql
 SELECT id, title, status, created_at
@@ -225,27 +266,17 @@ POST /items
 GET /items
 ```
 
-`POST /items` accepts a JSON body containing a non-empty `title`.
-
-It also accepts an optional `status`:
+`POST /items` accepts a JSON body containing a non-empty `title`:
 
 ```json
 {
-  "title": "example",
-  "status": "done"
+  "title": "example"
 }
 ```
 
-Supported status values are:
-
-```text
-pending
-done
-```
-
-If `status` is omitted, the application uses `pending`.
-
-An unsupported status returns:
+New Work Items are always `pending`. `done` is system-owned: only successful
+processing sets it. An explicit `"status": "pending"` is accepted; `"done"` or
+any other value returns:
 
 ```text
 HTTP 400
@@ -319,7 +350,9 @@ A second active request returns `409 processing_already_active` with
 Neither creates another job/outbox row. The UI follows the active job on a
 conflict and disables processing for done items. Failed jobs leave the item
 pending and eligible for a new request. Accepted jobs have no automatic timeout;
-restore delivery dependencies rather than create a replacement job.
+restore delivery dependencies rather than create a replacement job. The full
+state rules, including how attempts are counted, are in the
+[architecture document](../architecture/work-items.md#state-semantics).
 
 ## Web UI
 
