@@ -202,7 +202,9 @@ backups retain their original schema/application contract. See the
 
 Issue #117 integration checks cover the new success path, duplicate completion,
 concurrent acceptance, partial-success rejection, guard rollback, and logical
-result restore. The broader crash/restart experiment matrix belongs to #118.
+result restore. Process crashes, concurrent delivery, outages, and destructive
+restore are covered by the
+[crash-consistency experiment](../experiments/issue-118-crash-consistency.md).
 
 ## Failure model
 

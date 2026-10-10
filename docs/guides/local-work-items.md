@@ -110,18 +110,19 @@ export OUTBOX_INTEGRATION_DATABASE_URL="postgres://zero_to_prod_app:zero-to-prod
 
 Run the API integration tests, purge the isolated queue, then the worker
 integration tests; the `crashexperiment` build tag adds the process-crash
-harness. The snapshot experiment destroys the isolated PostgreSQL volume and
-runs only when `ISSUE118_ALLOW_DESTROY` names that project. The harness refuses
-non-`zero-to-prod-118*` projects, protected ports, and endpoints that do not
-match the validated containers. See the
-[Issue #118 experiment](../experiments/issue-118-crash-consistency.md).
+harness. The snapshot-recovery experiment (`TestIssue118E12SnapshotRecovery`)
+destroys the isolated PostgreSQL volume and runs only when
+`ISSUE118_ALLOW_DESTROY` names that project; otherwise it is skipped. The
+harness refuses non-`zero-to-prod-118*` projects, protected ports, and
+endpoints that do not match the validated containers. See the
+[crash-consistency experiment](../experiments/issue-118-crash-consistency.md).
 
 ```bash
 (cd apps/work-items && go test ./api -count=1 -v)
 docker compose --project-name "$ZTP_RABBITMQ_COMPOSE_PROJECT_NAME" --file infra/local/rabbitmq/compose.yaml exec -T rabbitmq rabbitmqctl -p zero_to_prod purge_queue work_item_processing
 (cd apps/work-items && go test ./worker -count=1 -v)
 (cd apps/work-items && go test -tags crashexperiment ./worker -count=1 -v -timeout 15m -run TestIssue118)
-(cd apps/work-items && ISSUE118_ALLOW_DESTROY=zero-to-prod-118 go test -tags crashexperiment ./worker -count=1 -v -timeout 15m -run TestIssue118E12)
+(cd apps/work-items && ISSUE118_ALLOW_DESTROY=zero-to-prod-118 go test -tags crashexperiment ./worker -count=1 -v -timeout 15m -run TestIssue118E12SnapshotRecovery)
 ```
 
 With the same project overrides still exported, tear down only the isolated lab:
