@@ -10,9 +10,22 @@ Can Work Items run behind one HTTPS entry point on host loopback, with private
 backend services and runtime secrets that are not development defaults, and
 can that exposure be measured rather than assumed?
 
-Environment: **LOCAL-FIRST**. Network isolation, TLS verification, and secret
-delivery are portable behaviors. Docker Desktop and WSL networking details are
-specific to this workstation and are recorded as such.
+Environment classification: **LOCAL-FIRST**. Network isolation, TLS
+verification, and secret delivery are portable behaviors. The measurements
+below come from one workstation; Docker and WSL networking results are
+specific to it.
+
+## Environment
+
+| Component | Version or mode |
+| --- | --- |
+| Host | Windows 11 Pro (build 26300) |
+| WSL | WSL 2, NAT networking mode, Ubuntu distribution, kernel 6.18.33.2-microsoft-standard-WSL2 |
+| Docker | Docker Desktop with the WSL 2 backend; Docker Engine and CLI 29.6.2; Compose 5.3.1 |
+| Ingress | nginx 1.30.5 (Alpine image, digest-pinned) |
+| Probe clients | curl 8.22.0 (container image), WSL `curl`, Windows `curl.exe` (Schannel) |
+
+The Docker Desktop application version was not recorded.
 
 ## Exposure before the change
 
@@ -51,24 +64,25 @@ tag).
 
 ## Ingress choice
 
-Two conventional reverse proxies fit a single host-local entry point that
-serves static files and proxies one upstream:
+nginx and Caddy were compared from their documentation and, for nginx, the
+contents of the image used here (`nginx -V` and its module directory). Caddy
+was not implemented or run, so this is a provisional choice, not a measured
+comparison.
 
-| | nginx | Caddy |
+| | nginx (official 1.30.5 Alpine image) | Caddy |
 | --- | --- | --- |
 | TLS with operator-supplied certificates | Yes | Yes |
-| Automatic certificate management | No | Yes (ACME, internal CA) |
-| Configuration model | Explicit directives | Concise Caddyfile with secure defaults |
+| Automatic certificate management | Optional: the official `ngx_http_acme_module` ships in the image as a dynamic module; the lab does not load it | Enabled by default and configurable, including use of supplied certificates only |
 | Static files, path allow-list, header replacement | Yes | Yes |
-| Later needs (request limits, subrequest auth for a session gateway) | `limit_req`, `auth_request` built in | `rate_limit` is a plugin; `forward_auth` built in |
-| Familiarity and documentation | Very widely deployed | Widely used, smaller footprint |
+| Request limiting | `limit_req` built in | Third-party module |
+| Subrequest authentication for a later session gateway | `auth_request` built in | `forward_auth` built in |
 
-**Choice: nginx (provisional).** Caddy's main advantage, automatic certificate
-management, would hide the certificate lifecycle that #121 must make explicit,
-and the lab CA is deliberately operated by hand. nginx's explicit
-configuration makes each boundary rule reviewable, and it has built-in request
-limiting for the rate-limit slice. Revisit if automatic issuance becomes the
-subject of an experiment.
+**Choice: nginx (provisional).** Both proxies can serve the lab's
+operator-supplied certificates. nginx was selected for its explicit,
+directive-level configuration of each boundary rule and for its built-in
+request limiting, which the rate-limit slice needs. Revisit if automatic
+issuance becomes the subject of an experiment or the rate-limit slice favors
+a different design.
 
 ## What was built
 
@@ -93,25 +107,28 @@ subject of an experiment.
   without query string. Its key and certificate are one file in a mounted
   directory, so renewal reaches the container.
 
-## Corrections after review
+The structure is described in the
+[security lab architecture](../architecture/security-lab.md) and operated
+through the [security lab guide](../guides/local-security-lab.md).
 
-A review of the first version of this branch on 2026-10-10 found three
-defects. Two were reproduced by the reviewer with disposable checks. All three
-were fixed in separate commits, and the affected experiments were rerun from a
-freshly destroyed and restarted lab. The results below are from that rerun;
-the first version's evidence remains in Git history (commit `48f067d`).
+## Defects corrected before merge
 
-| Finding | Effect on the first version | Fix and new evidence |
+Three defects in the first version of this slice were identified after its
+first evidence run on 2026-10-10; two of them were reproduced with disposable
+checks. Each was fixed in a separate commit, and the affected experiments were
+rerun from a freshly destroyed and restarted lab. The results below are from
+that rerun. The first evidence run remains in Git history at commit `48f067d`.
+
+| Defect | Effect on the first version | Fix and new evidence |
 | --- | --- | --- |
-| Certificate renewal replaced the mounted key and certificate by rename, but a single-file bind mount keeps the original inode | `issue-certificate` reloaded nginx with the old certificate; the guide's renewal instructions were wrong. Renewal had not been exercised | Directory mount and a single combined file; renewal waits for five consecutive new connections with the new serial; [`certificate-renewal.json`](../../evidence/issue-121/certificate-renewal.json) |
-| The reachability classifier read curl exit 28 as "no connection", but exit 28 also follows a successful connection whose response times out | An exposed service that delayed its response could have passed an isolation check. Rerun: every isolation probe still made no connection (`connects=0`), so no earlier conclusion changes | Classification from curl's connection count first; classifier controls with a listener that never responds, from a container, WSL, and Windows |
+| Certificate renewal replaced the mounted key and certificate by rename, but a single-file bind mount keeps the original inode | `issue-certificate` reloaded nginx with the old certificate, and the guide's renewal instructions were wrong. Renewal had not been exercised | Directory mount and a single combined file; renewal waits for five consecutive new connections with the new serial; [`certificate-renewal.json`](../../evidence/issue-121/certificate-renewal.json) |
+| The reachability classifier read curl exit 28 as "no connection", but exit 28 also follows a successful connection whose response times out | An exposed service that delayed its response could have passed an isolation check. In the rerun every isolation probe still made no connection (`connects=0`), so no earlier conclusion changes | Classification from curl's connection count first; classifier controls with a listener that never responds, from a container, WSL, and Windows |
 | `purge-state` recursively deleted any absolute state path outside the textual repository path | An override pointing at the home directory, or a symlink into the repository, would have been deleted | Canonical-path validation, allowed bases, an ownership marker, and refusal of unexpected entries; `scripts/test-security-lab-state-safety.sh` (33 cases, fixtures only) |
-
-See the [security lab guide](../guides/local-security-lab.md).
 
 ## Hypotheses and results
 
-Evidence: [`local-https-ingress-verification.json`](../../evidence/issue-121/local-https-ingress-verification.json)
+Automated evidence:
+[`local-https-ingress-verification.json`](../../evidence/issue-121/local-https-ingress-verification.json)
 (58 results: 53 pass, 4 observations, 1 skipped),
 [`missing-secret-failures.json`](../../evidence/issue-121/missing-secret-failures.json)
 (8 pass), and
@@ -125,7 +142,7 @@ exit code; "no connection" requires `connects=0`.
 | --- | --- |
 | Only the ingress publishes a port, on 127.0.0.1 | Docker reports only `ingress=8443/tcp->127.0.0.1:9443`; Windows lists only `127.0.0.1:9443` among lab ports |
 | A client verifying with the lab CA reaches the UI and API | WSL `curl` and Windows `curl.exe`: 200 with verification result 0 |
-| Verification is actually enforced | Without the lab CA: curl exit 60 on WSL; another name: handshake rejected (exit 35). On Windows, exit 60 was observed in the first run; in the rerun the control was skipped because the owner had since trusted the lab CA in the Windows user store (recorded as an observation) |
+| Verification is actually enforced | Without the lab CA: curl exit 60 on WSL; another name: handshake rejected (exit 35). On Windows, exit 60 was observed in the first evidence run (`48f067d`). In the rerun the Windows control was skipped, with the reason recorded, because the lab CA was by then trusted in the Windows user store for the [manual browser verification](#manual-browser-verification) |
 | The classifier detects a connection even without a response | A listener that accepts but never responds classified `connected connects=1 exit=28` from a container, WSL, and Windows; a closed port classified `refused connects=0 exit=7` |
 | API operational endpoints are not exposed | `/api/health` and `/api/version`: 404 at the ingress |
 | The ingress reaches the API internally | 200 through the ingress; `wget http://api:8080/health` inside the ingress |
@@ -149,12 +166,13 @@ only `*_FILE` paths and no connection URLs.
 
 ### Development compatibility
 
-In the temporary `zero-to-prod-121-compat` lab, using the development tools
-and labelled defaults. This ran before the review fixes, which change only the
-security lab tooling, its Compose and nginx files, and CI policy; the Go code
-and development tools are unchanged. After the fixes, `gofmt`, `go vet`,
-`go test ./...`, the CI policy tests, the state-safety tests, shellcheck, and
-actionlint were rerun and passed; the integration suites were not rerun.
+Run in the temporary `zero-to-prod-121-compat` lab with the development tools
+and labelled defaults, before the corrections above. The corrections change
+only the security lab tooling, its Compose and nginx files, and CI policy; the
+Go code and development tools are unchanged. After the corrections, `gofmt`,
+`go vet`, `go test ./...`, the CI policy tests, the state-safety tests,
+shellcheck, and actionlint were rerun and passed; the integration suites were
+not rerun.
 
 | Check | Result |
 | --- | --- |
@@ -167,37 +185,60 @@ actionlint were rerun and passed; the integration suites were not rerun.
 | `gofmt`, `go vet` (including `crashexperiment`), `go test ./...` | Passed |
 | CI policy tests, shellcheck, Compose config, actionlint | Passed |
 
+## Manual browser verification
+
+Performed on 2026-10-10 in Brave on the Windows host against the running lab,
+after the first automated evidence run. These observations were not captured
+by the lab tooling, and no machine-readable record exists for them.
+
+| Step | Observed | Evidence |
+| --- | --- | --- |
+| Open `https://work-items.localhost:9443/` before trusting the lab CA | `NET::ERR_CERT_AUTHORITY_INVALID` | Screenshot; not retained in the repository |
+| Trust the lab CA in the Windows user store, then reload | Page loaded without a certificate warning | Manual observation |
+| Create a Work Item titled "New Item" and process it | Item reached `done`; job `succeeded`; result 8 characters, 2 words (matches the title-analysis rule) | Manual observation |
+| `./tools/security-lab-local stop` | Lab stopped | Manual observation; all five lab containers were afterwards listed as exited by `docker ps` |
+
+Not verified in the browser: the certificate issuer displayed, the absence of
+console errors, removal of the CA from the trust store, and access from
+another device on the LAN.
+
 ## Unexpected behavior
 
-1. **A missing Compose secret file does not fail.** Outside Swarm, Docker
-   creates an empty directory at the mount point and the container starts.
-   Compose `config` also passes. Fail-closed behavior therefore comes from the
-   tool's preflight and from the applications rejecting a directory.
-2. **Bind mounts keep the host owner and mode.** A mode-600 file owned by the
+Items 1–6 and 9–10 were observed in the environment above; they depend on
+Docker, Docker Desktop, or WSL behavior and may differ elsewhere. Items 7, 8,
+and 11 follow from general Linux bind-mount, nginx, and curl behavior.
+
+1. **A missing Compose secret file does not fail.** With Compose 5.3.1
+   outside Swarm, Docker created an empty directory at the mount point and the
+   container started; `docker compose config` also passed. Fail-closed
+   behavior therefore comes from the tool's preflight and from the
+   applications rejecting a directory.
+2. **Bind mounts kept the host owner and mode.** A mode-600 file owned by the
    WSL user was readable only by root or the same UID in containers. Mounted
    secret files are mode 644 inside a mode-700 directory instead.
-3. **A loopback-only publication is still reachable from other containers.**
-   An unrelated network, and the default bridge, connected to the ingress
+3. **A loopback-only publication was still reachable from other containers.**
+   An unrelated network and the default bridge connected to the ingress
    container's IP on 8443, and a verified HTTPS request succeeded that way.
    `host.docker.internal:9443` also connected. The container-loopback health
    port 8081 did not. Backends without published ports stayed unreachable.
-   Any container on this Docker engine can therefore reach the ingress.
-4. **Every host client appears as one address.** The ingress logged
+   In this environment, any container on the same Docker engine can reach the
+   ingress.
+4. **Every host client appeared as one address.** The ingress logged
    `172.22.0.1` (the edge network gateway) for all WSL and Windows requests.
    Per-address limiting would treat all host clients as a single client.
-5. **Unknown names are slow to fail.** From non-lab networks, `api` took about
-   4 seconds to return NXDOMAIN through the host resolver, longer than a 3-second
-   TCP timeout. BusyBox `nslookup` also exited 0 after printing NXDOMAIN. The
-   resolution check uses curl's resolver with a longer timeout.
+5. **Unknown names were slow to fail.** From non-lab networks, `api` took
+   about 4 seconds to return NXDOMAIN through the host resolver, longer than a
+   3-second TCP timeout. BusyBox `nslookup` also exited 0 after printing
+   NXDOMAIN. The resolution check uses curl's resolver with a longer timeout.
 6. **Host-to-container-IP probes are weak evidence here.** From WSL, lab
    container IPs returned "refused" or "timeout" depending on the run; the
    Docker subnets (for example 172.20.0.0/16) overlap a Windows virtual
-   adapter (172.20.208.1). The containers live in the Docker Desktop VM,
-   so these probes say little; the container vantage points with positive
+   adapter (172.20.208.1). The containers run in the Docker Desktop VM, so
+   these probes say little; the container vantage points with positive
    controls and the listener tables are the primary evidence.
 7. **A single-file bind mount pins the original file.** Replacing a mounted
-   file by rename left the container reading the old inode (found in review).
-   Directory mounts see the replacement.
+   file by rename left the container reading the old inode. Directory mounts
+   see the replacement.
 8. **nginx serves the old certificate briefly after reload.** The new worker
    starts before the old one stops accepting; for about one second new
    connections could still receive the old certificate. Renewal therefore
@@ -205,66 +246,31 @@ actionlint were rerun and passed; the integration suites were not rerun.
 9. **Rewriting secret files broke existing containers.** Rerunning `init`
    replaced the RabbitMQ definitions (new random salts) by rename, and the
    stopped broker container then failed to start with a missing mount source.
-   `init` now leaves unchanged files in place and `start` recreates
-   containers.
-10. **Bind mounts keep directory modes too.** The mode-700 TLS directory
-    blocked the ingress user (uid 101); it is mode 711 inside the mode-700
+   `init` now keeps unchanged files and `start` recreates containers.
+10. **Bind mounts kept directory modes too.** The mode-700 TLS directory
+    blocked the ingress user (UID 101); it is mode 711 inside the mode-700
     state directory.
 11. **curl exit 28 is ambiguous.** It occurs both for a connection timeout and
-    for a response timeout after a successful connection (found in review).
+    for a response timeout after a successful connection.
 
 ## What this does not prove
 
 - That the ingress is unreachable from another device on the LAN: no second
   device was used. Windows' own non-loopback addresses did not connect.
 - Browser behavior beyond the
-  [user-reported check](#user-reported-manual-verification): the automated
-  checks above used `curl`, not a browser.
+  [manual browser verification](#manual-browser-verification); the automated
+  checks used `curl`, not a browser.
 - Anything about authentication, authorization, CSRF, rate limiting, datastore
   TLS, certificate expiry behavior, or secret rotation.
 - Isolation under a different Docker or WSL networking mode (for example WSL
   mirrored networking or Docker Engine without Docker Desktop).
 
-## Manual verification required
-
-1. Before trusting the lab CA, open `https://work-items.localhost:9443/` in
-   the Windows browser: expect a certificate error.
-2. Trust the CA ([guide](../guides/local-security-lab.md#trusting-the-lab-ca)),
-   checking the SHA-1 thumbprint; reload: expect a valid connection issued by
-   "Zero-to-Prod security lab CA".
-3. List, create, and process a Work Item; expect `succeeded` and the result,
-   with no console errors.
-4. Remove the CA from the trust store when finished.
-5. Optionally, from another device on the LAN, try the Windows LAN address on
-   port 9443: expect no connection.
-
-## User-reported manual verification
-
-Reported by the repository owner on 2026-10-10, after the automated checks.
-These are the owner's own observations in a Windows browser, not captured by
-the lab tooling. No machine-readable evidence exists for them; the source of
-each result is shown.
-
-| Step | Result | Source |
-| --- | --- | --- |
-| Open `https://work-items.localhost:9443/` in Brave on Windows before trusting the lab CA | Browser showed `NET::ERR_CERT_AUTHORITY_INVALID` | Screenshot provided by the owner (not stored in the repository) |
-| Trust the lab CA, then reload | Page loaded without a certificate warning | Owner's report |
-| Create a Work Item titled "New Item" and process it | Item reached `done`; its job showed `succeeded`; result 8 characters, 2 words | Owner's report |
-| `./tools/security-lab-local stop` | Lab stopped successfully | Owner's report |
-
-The reported result matches the title-analysis rule for "New Item" (8 code
-points, 2 words).
-
-Not reported, so not verified: the certificate issuer shown by the browser,
-the absence of console errors, removal of the CA from the trust store
-(step 4), and the LAN check from another device (step 5).
-
 ## Remaining gaps
 
 - No authentication or authorization; the lab must stay on loopback.
 - Unencrypted internal hops (ingress → API, PostgreSQL, RabbitMQ).
-- Ingress reachable from any container on the same Docker engine (finding 3).
-- Host client addresses collapse to the gateway (finding 4).
+- Ingress reachable from any container on the same Docker engine (item 3).
+- Host client addresses collapse to the gateway (item 4).
 - The native development API listens on all interfaces and is reachable from
   Windows through the WSL NAT address; unchanged here.
 - No rotation, no revocation, single-tier CA, no CSP or HSTS, ingress image not
@@ -275,18 +281,17 @@ the absence of console errors, removal of the CA from the trust store
 ## Decision and capability levels
 
 No ADR yet: the ingress choice is provisional, and the decisions #121 must
-record (session model, authorization placement, transport policy) come in later
-slices. No capability level changes; this slice is implementation without the
-failure experiments the later slices add.
+record (session model, authorization placement, transport policy) come in
+later slices. This record changes no capability level; levels are assessed
+against the baseline when #121's evidence is complete.
 
 ## Cleanup
 
 The security lab is **kept** as scaffolding for the remaining #121 slices; its
 exit decision is due when #121 closes. The temporary compatibility lab was
-destroyed. The security lab was left running for the manual browser check;
-the owner reported stopping it afterwards with `./tools/security-lab-local
-stop`, which keeps its volumes. For the review rerun it was destroyed,
-started fresh, and stopped again afterwards. At the rerun the lab CA was
-still trusted in the Windows user store; remove it as described in the guide
-when it is no longer needed. Remove it with `destroy` and its CA and secrets
-with `purge-state --yes`.
+destroyed. The security lab was stopped after the manual browser verification;
+for the rerun it was destroyed, started fresh, and stopped again, keeping its
+volumes and state directory. At the rerun the lab CA was still trusted in the
+Windows user store; the guide's
+[removal steps](../guides/local-security-lab.md#removing-the-lab-ca) undo
+that, and `destroy` and `purge-state --yes` remove the lab and its state.
