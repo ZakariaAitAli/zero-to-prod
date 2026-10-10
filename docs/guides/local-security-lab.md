@@ -34,7 +34,7 @@ Windows browser / WSL client
 
 | Component | Networks | Published | Runtime secrets (files) |
 | --- | --- | --- | --- |
-| ingress | edge, app | `127.0.0.1:9443 → 8443` | TLS certificate and key |
+| ingress | edge, app | `127.0.0.1:9443 → 8443` | TLS key and certificate (one file in a mounted directory) |
 | api | app, data | none | database URL, RabbitMQ publisher URL |
 | worker | data | none | database URL, RabbitMQ worker URL |
 | postgres | data | none | admin, migrator, app, worker passwords |
@@ -77,12 +77,21 @@ Port 9443 on host loopback must be free; override it with
 
 ```text
 ~/.local/state/zero-to-prod/zero-to-prod-security-lab/   (mode 700)
-├── pki/       lab CA key (600) and certificate; issued certificates
-└── secrets/   runtime secret files (directory mode 700)
+├── .zero-to-prod-security-lab   ownership marker
+├── pki/          lab CA key (600) and certificate; issued certificates
+├── secrets/      runtime secret files (directory mode 700)
+└── ingress-tls/  tls.pem: ingress key and certificate (directory mode 711)
 ```
 
-It never overwrites existing values. Override the location with
-`ZTP_SECURITY_LAB_STATE_DIR`; the tool refuses a path inside the repository.
+It never overwrites existing values, and leaves unchanged files in place.
+
+Override the location with `ZTP_SECURITY_LAB_STATE_DIR`. Because
+`purge-state` deletes this directory, the tool validates its canonical path
+(symlinks and `..` resolved): it must lie strictly below
+`${XDG_STATE_HOME:-~/.local/state}` or `${TMPDIR:-/tmp}`, must not be or
+contain your home directory, and must not overlap the repository.
+`./tools/security-lab-local state-dir` prints the validated path. `init`
+refuses an existing directory that is not this lab's state.
 
 - The lab CA is valid for 90 days, may not issue intermediate CAs, and is
   name-constrained to `work-items.localhost` (and its subdomains) with IP
@@ -104,6 +113,10 @@ mode-700 `secrets/` directory:
 - each container receives only its own files;
 - any process inside a container can read that container's files.
 
+Modes of mounted directories are kept too. The ingress mounts `ingress-tls/`
+itself, so that directory is mode 711 (enter, not list) for the ingress user;
+on the host it is protected by the mode-700 state directory.
+
 The files are **not** on tmpfs, **not** encrypted at rest, and **not** managed
 by a secret manager. Compose `secrets:` outside Swarm are plain read-only bind
 mounts. The CA key and the two RabbitMQ source passwords are never mounted and
@@ -120,10 +133,14 @@ stay mode 600.
 1. checks every required secret file (exists, is a regular non-empty file;
    certificate verifies against the lab CA, is unexpired, and matches its key);
 2. builds the API, worker, ingress, and migration images;
-3. starts PostgreSQL and RabbitMQ and waits until healthy;
+3. recreates and starts PostgreSQL and RabbitMQ and waits until healthy;
 4. re-applies the PostgreSQL identities from the secret files;
 5. applies migrations with the migrator identity;
-6. starts the API, worker, and ingress and waits until healthy.
+6. recreates and starts the API, worker, and ingress and waits until healthy.
+
+Containers are recreated on every start (volumes are kept) so their file
+mounts always refer to the current secret files: a container created before a
+file was replaced keeps the old file, or fails to start if it is gone.
 
 > Compose alone does not fail when a secret file is missing: Docker creates an
 > empty directory at the mount point. Always start through the tool, which
@@ -139,13 +156,20 @@ stay mode 600.
 
 `verify` checks, with positive controls:
 
+- that the reachability probe itself works: a listener that accepts but never
+  responds must count as connected (from a container, WSL, and Windows) and a
+  closed port as refused. Reachability is judged from curl's count of
+  established connections, because exit 28 also follows a successful
+  connection whose response times out;
 - container health and that only the ingress publishes a port, on 127.0.0.1;
 - HTTPS from WSL with the lab CA (UI and API), failure without the lab CA, and
   handshake rejection for other names;
 - that `/api/health` and `/api/version` are not routed;
 - no listener on common backend ports on WSL or Windows loopback;
 - HTTPS from Windows with `curl.exe` and the lab CA (through WSL interop), and
-  no connection to the ingress port on Windows' non-loopback addresses;
+  no connection to the ingress port on Windows' non-loopback addresses. The
+  Windows "without lab CA" control is skipped, with the reason recorded, while
+  Windows itself trusts the lab CA;
 - that a container on the ingress's client network, a container on an
   unrelated network, and a container on the default bridge cannot resolve or
   connect to the API, PostgreSQL, or RabbitMQ;
@@ -155,7 +179,12 @@ stay mode 600.
 `verify-failures` checks that each service fails clearly, without printing
 secret values, when a required secret is missing.
 
-Both accept `--evidence <file>` to write machine-readable results.
+`verify-renewal` renews the ingress certificate on the running lab and
+records the served and file serials before and after, whether the container
+sees the host's file, and a control showing that a single-file bind mount
+would have kept the old file.
+
+All three accept `--evidence <file>` to write machine-readable results.
 
 ## Use it from the Windows browser (manual)
 
@@ -215,9 +244,16 @@ Authorities. Remove it before `purge-state`, which deletes the CA files.
 ./tools/security-lab-local issue-certificate
 ```
 
-This issues a new ingress certificate from the lab CA and reloads nginx if the
-ingress is running. There is no revocation (no CRL or OCSP). Windows `curl.exe`
-therefore runs with `--ssl-revoke-best-effort`; chain and name checks stay on.
+This issues a new ingress certificate from the lab CA and writes key and
+certificate as one file, replaced by a single rename in `ingress-tls/`. The
+ingress mounts that directory, not the file, because a file bind mount keeps
+the original file after it is replaced. If the ingress is running, the tool
+reloads nginx and then requires five consecutive new verified connections to
+receive the new serial: for about a second after a reload, the old worker can
+still accept connections with the old certificate.
+
+There is no revocation (no CRL or OCSP). Windows `curl.exe` therefore runs
+with `--ssl-revoke-best-effort`; chain and name checks stay on.
 
 ## Stop and remove
 
@@ -229,8 +265,12 @@ therefore runs with `--ssl-revoke-best-effort`; chain and name checks stay on.
 
 `destroy` acts only on the `zero-to-prod-security-lab` Compose project (the
 tool rejects other project names) and its probe network. It never touches the
-development lab projects or their volumes. `purge-state` deletes only the
-security lab's state directory; remove any browser trust first.
+development lab projects or their volumes.
+
+`purge-state` deletes the state directory only if it passes the location
+checks above, carries this lab's ownership marker, belongs to your user, and
+contains nothing but the lab's own entries; otherwise it refuses and deletes
+nothing. Remove any browser trust first.
 
 ## Troubleshooting
 
@@ -240,6 +280,8 @@ security lab's state directory; remove any browser trust first.
 | `port is already allocated` | Something else uses host port 9443 | Set `ZTP_SECURITY_LAB_HTTPS_PORT` |
 | Browser certificate error after trusting | Certificate expired, or the browser does not use the Windows store | `issue-certificate`; check which store the browser uses |
 | API or worker exits with `read DATABASE_URL_FILE` | A secret file is missing in the container | `check-secrets`; recreate with `init` |
+| `refusing to use a directory that is not security lab state` or `no security lab marker` | `ZTP_SECURITY_LAB_STATE_DIR` points at a directory the lab did not create | Choose an empty or new path below an allowed base |
+| `ingress TLS directory missing` or `must have mode 711` | State created by an earlier version of the tool | Run `init` |
 
 ## Limitations
 

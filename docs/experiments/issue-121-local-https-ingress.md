@@ -84,51 +84,77 @@ subject of an experiment.
   a generated definitions file. There is no default user and no management
   plugin.
 - `tools/security-lab-local`: creates a name-constrained lab CA, an ingress
-  certificate, and random runtime secrets outside the repository; checks them
-  before start; starts, verifies, stops, and destroys only this lab.
+  certificate, and random runtime secrets in a validated, marked state
+  directory outside the repository; checks them before start; starts,
+  verifies, renews, stops, and destroys only this lab.
 - nginx: TLS 1.2/1.3 for `work-items.localhost` only (other names fail the
   handshake), the built Web UI, an allow-list of three API routes, replacement
   of client forwarding headers, a 64 KiB body limit, and an access log of path
-  without query string.
+  without query string. Its key and certificate are one file in a mounted
+  directory, so renewal reaches the container.
+
+## Corrections after review
+
+A review of the first version of this branch on 2026-10-10 found three
+defects. Two were reproduced by the reviewer with disposable checks. All three
+were fixed in separate commits, and the affected experiments were rerun from a
+freshly destroyed and restarted lab. The results below are from that rerun;
+the first version's evidence remains in Git history (commit `48f067d`).
+
+| Finding | Effect on the first version | Fix and new evidence |
+| --- | --- | --- |
+| Certificate renewal replaced the mounted key and certificate by rename, but a single-file bind mount keeps the original inode | `issue-certificate` reloaded nginx with the old certificate; the guide's renewal instructions were wrong. Renewal had not been exercised | Directory mount and a single combined file; renewal waits for five consecutive new connections with the new serial; [`certificate-renewal.json`](../../evidence/issue-121/certificate-renewal.json) |
+| The reachability classifier read curl exit 28 as "no connection", but exit 28 also follows a successful connection whose response times out | An exposed service that delayed its response could have passed an isolation check. Rerun: every isolation probe still made no connection (`connects=0`), so no earlier conclusion changes | Classification from curl's connection count first; classifier controls with a listener that never responds, from a container, WSL, and Windows |
+| `purge-state` recursively deleted any absolute state path outside the textual repository path | An override pointing at the home directory, or a symlink into the repository, would have been deleted | Canonical-path validation, allowed bases, an ownership marker, and refusal of unexpected entries; `scripts/test-security-lab-state-safety.sh` (33 cases, fixtures only) |
 
 See the [security lab guide](../guides/local-security-lab.md).
 
 ## Hypotheses and results
 
 Evidence: [`local-https-ingress-verification.json`](../../evidence/issue-121/local-https-ingress-verification.json)
-(53 results: 50 pass, 3 observations) and
+(58 results: 53 pass, 4 observations, 1 skipped),
 [`missing-secret-failures.json`](../../evidence/issue-121/missing-secret-failures.json)
-(8 pass). Both were produced by `tools/security-lab-local` on a freshly
-destroyed and restarted lab, from the source in this change. The Windows LAN
-address is redacted.
+(8 pass), and
+[`certificate-renewal.json`](../../evidence/issue-121/certificate-renewal.json)
+(pass). All were produced by `tools/security-lab-local` at commit `68d13fd`
+on a freshly destroyed and restarted lab. The Windows LAN address and local
+paths are redacted. Reachability results record curl's connection count and
+exit code; "no connection" requires `connects=0`.
 
 | Hypothesis | Observed |
 | --- | --- |
 | Only the ingress publishes a port, on 127.0.0.1 | Docker reports only `ingress=8443/tcp->127.0.0.1:9443`; Windows lists only `127.0.0.1:9443` among lab ports |
 | A client verifying with the lab CA reaches the UI and API | WSL `curl` and Windows `curl.exe`: 200 with verification result 0 |
-| Verification is actually enforced | Without the lab CA: curl exit 60 on WSL and Windows; another name: handshake rejected (exit 35) |
+| Verification is actually enforced | Without the lab CA: curl exit 60 on WSL; another name: handshake rejected (exit 35). On Windows, exit 60 was observed in the first run; in the rerun the control was skipped because the owner had since trusted the lab CA in the Windows user store (recorded as an observation) |
+| The classifier detects a connection even without a response | A listener that accepts but never responds classified `connected connects=1 exit=28` from a container, WSL, and Windows; a closed port classified `refused connects=0 exit=7` |
 | API operational endpoints are not exposed | `/api/health` and `/api/version`: 404 at the ingress |
 | The ingress reaches the API internally | 200 through the ingress; `wget http://api:8080/health` inside the ingress |
 | Host clients cannot reach backends directly | No listener on 8080, 5432, 55432, 5672, 15672 on WSL or Windows loopback; no connection on Windows non-loopback addresses or WSL `eth0` |
-| An unrelated container cannot reach backends | `api` unresolvable; API, PostgreSQL, and RabbitMQ container IPs time out from an unrelated network, the default bridge, and the ingress's own client network |
+| An unrelated container cannot reach backends | `api` unresolvable; API, PostgreSQL, and RabbitMQ container IPs give `timeout connects=0` from an unrelated network, the default bridge, and the ingress's own client network |
 | Those failures are not caused by stopped services | Same probe from the `app` network resolves `api` and connects to `api:8080`; from the `data` network it connects to PostgreSQL and RabbitMQ |
 | Missing secrets fail clearly | Preflight, API (missing file, directory artifact, both URLs), worker (both URLs), ingress (certificate), PostgreSQL (admin password): all exit 1 with a message naming the input; no secret value in output |
 | Work Items semantics unchanged through the ingress | Create 201; process 202; job `succeeded`, `attempt_count` 1; item `done` with result (26 characters, 4 words); second process `409 work_item_already_done` |
+| Certificate renewal reaches new connections | Served serial changed with the file serial; the container's file matched the host file; control: a single-file bind mount still showed the original content after the host file was replaced |
+| State cleanup cannot target unrelated directories | Rejected: relative path, `/`, home, an ancestor of home, the allowed base itself, paths outside the bases, the repository, symlink aliases to the repository and home, `..` escapes. Unmarked, foreign-marked, or extra-content directories survived `purge-state`; lab-created state was removed and its parent kept |
 
 ### Secret exposure checks
 
-Run against the final lab instance after the processing check: each of the six
-generated passwords was searched for in all container logs (326 lines),
+Run against the rerun lab instance after the processing check: each of the
+six generated passwords was searched for in all container logs (322 lines),
 `docker inspect` output for every lab container, `docker image inspect` and
-`docker history` for the three lab images, the Git tree, and this change's
-documentation and evidence. No match. As a positive control, the same search found the app
+`docker history` for the three lab images, the evidence files, and the Git
+tree. No match. As a positive control, the same search found the app
 password inside its own connection-URL file. Container environments contain
 only `*_FILE` paths and no connection URLs.
 
 ### Development compatibility
 
 In the temporary `zero-to-prod-121-compat` lab, using the development tools
-and labelled defaults:
+and labelled defaults. This ran before the review fixes, which change only the
+security lab tooling, its Compose and nginx files, and CI policy; the Go code
+and development tools are unchanged. After the fixes, `gofmt`, `go vet`,
+`go test ./...`, the CI policy tests, the state-safety tests, shellcheck, and
+actionlint were rerun and passed; the integration suites were not rerun.
 
 | Check | Result |
 | --- | --- |
@@ -169,6 +195,23 @@ and labelled defaults:
    adapter (172.20.208.1). The containers live in the Docker Desktop VM,
    so these probes say little; the container vantage points with positive
    controls and the listener tables are the primary evidence.
+7. **A single-file bind mount pins the original file.** Replacing a mounted
+   file by rename left the container reading the old inode (found in review).
+   Directory mounts see the replacement.
+8. **nginx serves the old certificate briefly after reload.** The new worker
+   starts before the old one stops accepting; for about one second new
+   connections could still receive the old certificate. Renewal therefore
+   waits for consecutive matching connections.
+9. **Rewriting secret files broke existing containers.** Rerunning `init`
+   replaced the RabbitMQ definitions (new random salts) by rename, and the
+   stopped broker container then failed to start with a missing mount source.
+   `init` now leaves unchanged files in place and `start` recreates
+   containers.
+10. **Bind mounts keep directory modes too.** The mode-700 TLS directory
+    blocked the ingress user (uid 101); it is mode 711 inside the mode-700
+    state directory.
+11. **curl exit 28 is ambiguous.** It occurs both for a connection timeout and
+    for a response timeout after a successful connection (found in review).
 
 ## What this does not prove
 
@@ -242,5 +285,8 @@ The security lab is **kept** as scaffolding for the remaining #121 slices; its
 exit decision is due when #121 closes. The temporary compatibility lab was
 destroyed. The security lab was left running for the manual browser check;
 the owner reported stopping it afterwards with `./tools/security-lab-local
-stop`, which keeps its volumes. Remove it with `destroy` and its CA and secrets
+stop`, which keeps its volumes. For the review rerun it was destroyed,
+started fresh, and stopped again afterwards. At the rerun the lab CA was
+still trusted in the Windows user store; remove it as described in the guide
+when it is no longer needed. Remove it with `destroy` and its CA and secrets
 with `purge-state --yes`.
