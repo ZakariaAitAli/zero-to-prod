@@ -1,5 +1,3 @@
-Using the same structure and level of detail as your Issue #6 documentation.
-
 # Sprint 01 — Push Immutable Images to ECR
 
 ## Purpose
