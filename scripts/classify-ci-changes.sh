@@ -35,7 +35,7 @@ for changed_file in "$@"; do
       workflow=true
       ;;
 
-    .github/workflows/*|scripts/classify-ci-changes.sh|scripts/test-ci-change-classifier.sh|scripts/verify-ci-required.sh|scripts/test-ci-required-gate.sh|scripts/test-ci-workflow.sh|scripts/test-postgres-backup-validation.sh)
+    .github/workflows/*|scripts/classify-ci-changes.sh|scripts/test-ci-change-classifier.sh|scripts/verify-ci-required.sh|scripts/test-ci-required-gate.sh|scripts/test-ci-workflow.sh|scripts/test-postgres-backup-validation.sh|scripts/test-security-lab-state-safety.sh)
       backend=true
       frontend=true
       workflow=true

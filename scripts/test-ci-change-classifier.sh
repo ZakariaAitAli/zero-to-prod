@@ -170,6 +170,11 @@ assert_case \
   scripts/test-postgres-backup-validation.sh
 
 assert_case \
+  "security lab state-safety regression tests" \
+  "$full_expected" \
+  scripts/test-security-lab-state-safety.sh
+
+assert_case \
   "unknown repository path remains conservative" \
   "$full_expected" \
   some/future/unclassified-file.txt

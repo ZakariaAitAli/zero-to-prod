@@ -71,6 +71,7 @@ Usage:
   ./tools/security-lab-local stop
   ./tools/security-lab-local destroy
   ./tools/security-lab-local purge-state --yes
+  ./tools/security-lab-local state-dir
 
 Opt-in security lab: an HTTPS ingress on host loopback in front of a
 containerized Work Items API, worker, PostgreSQL, and RabbitMQ that publish
@@ -94,11 +95,15 @@ Commands:
   ca-certificate     Show the lab CA certificate paths and fingerprint.
   stop               Stop the lab, keeping its volumes.
   destroy            Remove only this lab's containers, networks, and volumes.
-  purge-state        Delete this lab's CA, certificates, and secrets.
+  purge-state        Delete this lab's CA, certificates, and secrets; only a
+                     directory carrying this lab's marker and only lab entries.
+  state-dir          Print the validated, canonical state directory.
 
 Environment overrides:
   ZTP_SECURITY_LAB_PROJECT     project name (must start with zero-to-prod-security-lab)
-  ZTP_SECURITY_LAB_STATE_DIR   secrets and PKI directory (must be outside the repository)
+  ZTP_SECURITY_LAB_STATE_DIR   secrets and PKI directory; must resolve below
+                               \${XDG_STATE_HOME:-~/.local/state} or \${TMPDIR:-/tmp},
+                               outside the repository and not containing home
   ZTP_SECURITY_LAB_HTTPS_PORT  host loopback HTTPS port (default: 9443)
   ZTP_SECURITY_LAB_CA_DAYS     lab CA validity in days (default: 90)
   ZTP_SECURITY_LAB_CERT_DAYS   ingress certificate validity in days (default: 14)
@@ -122,16 +127,113 @@ check_configuration() {
     *) die "ZTP_SECURITY_LAB_PROJECT must start with zero-to-prod-security-lab: ${PROJECT}" ;;
   esac
 
+  check_state_dir
+
+  [[ "$HTTPS_PORT" =~ ^[0-9]+$ ]] || die "invalid ZTP_SECURITY_LAB_HTTPS_PORT: ${HTTPS_PORT}"
+}
+
+# True when path $1 is $2 or below it.
+is_within() {
+  [[ "$1" == "$2" || "$1" == "$2"/* ]]
+}
+
+# The state directory holds keys and secrets and is deleted by purge-state,
+# so validate its canonical location (symlinks resolved), not its spelling.
+check_state_dir() {
   case "$STATE_DIR" in
     /*) ;;
     *) die "ZTP_SECURITY_LAB_STATE_DIR must be an absolute path: ${STATE_DIR}" ;;
   esac
 
-  case "${STATE_DIR}/" in
-    "${ROOT_DIR}/"*) die "the state directory must be outside the repository: ${STATE_DIR}" ;;
-  esac
+  require_command realpath
 
-  [[ "$HTTPS_PORT" =~ ^[0-9]+$ ]] || die "invalid ZTP_SECURITY_LAB_HTTPS_PORT: ${HTTPS_PORT}"
+  local requested="$STATE_DIR" root home state_base temp_base base allowed=false
+  STATE_DIR="$(realpath -m -- "$requested")"
+  root="$(cd -- "$ROOT_DIR" && pwd -P)"
+  home="$(realpath -m -- "$HOME")"
+  state_base="$(realpath -m -- "${XDG_STATE_HOME:-${HOME}/.local/state}")"
+  temp_base="$(realpath -m -- "${TMPDIR:-/tmp}")"
+
+  if is_within "$STATE_DIR" "$root" || is_within "$root" "$STATE_DIR"; then
+    die "the state directory must not overlap the repository: ${requested} -> ${STATE_DIR}"
+  fi
+
+  if is_within "$home" "$STATE_DIR"; then
+    die "the state directory must not be or contain the home directory: ${requested} -> ${STATE_DIR}"
+  fi
+
+  for base in "$state_base" "$temp_base"; do
+    # Ignore a base that would itself admit the home directory or the root.
+    if [[ "$base" == / ]] || is_within "$home" "$base"; then
+      continue
+    fi
+
+    if [[ "$STATE_DIR" == "$base"/* ]]; then
+      allowed=true
+    fi
+  done
+
+  if [[ "$allowed" != true ]]; then
+    die "the state directory must be below ${state_base} or ${temp_base}: ${requested} -> ${STATE_DIR}"
+  fi
+
+  SECRETS_DIR="${STATE_DIR}/secrets"
+  PKI_DIR="${STATE_DIR}/pki"
+  INGRESS_TLS_DIR="${STATE_DIR}/ingress-tls"
+  INGRESS_TLS_FILE="${INGRESS_TLS_DIR}/tls.pem"
+  STATE_MARKER="${STATE_DIR}/.zero-to-prod-security-lab"
+}
+
+STATE_ENTRIES=(.zero-to-prod-security-lab pki secrets ingress-tls)
+
+# Prints entries of the state directory that the lab does not create.
+unexpected_state_entries() {
+  local entry expected known
+  while IFS= read -r entry; do
+    known=false
+    for expected in "${STATE_ENTRIES[@]}"; do
+      if [[ "$entry" == "$expected" ]]; then
+        known=true
+      fi
+    done
+    if [[ "$known" != true ]]; then
+      echo "$entry"
+    fi
+  done < <(find "$STATE_DIR" -mindepth 1 -maxdepth 1 -printf '%f\n')
+}
+
+# Create the state directory, or adopt an existing one only when it is this
+# lab's: marked for this project, or unmarked but holding only lab entries
+# (state created before the marker existed).
+claim_state_dir() {
+  if [[ ! -e "$STATE_DIR" ]]; then
+    (umask 077; mkdir -p "$STATE_DIR")
+  elif [[ ! -d "$STATE_DIR" ]]; then
+    die "the state path exists and is not a directory: ${STATE_DIR}"
+  elif [[ -f "$STATE_MARKER" ]]; then
+    [[ "$(cat "$STATE_MARKER")" == "project=${PROJECT}" ]] ||
+      die "the state directory belongs to another lab: ${STATE_DIR}"
+    return 0
+  elif [[ -n "$(unexpected_state_entries)" ]]; then
+    die "refusing to use a directory that is not security lab state: ${STATE_DIR}"
+  fi
+
+  printf 'project=%s\n' "$PROJECT" > "$STATE_MARKER"
+  chmod 600 "$STATE_MARKER"
+}
+
+# Destructive operations require a directory this lab created and owns.
+require_owned_state() {
+  [[ -d "$STATE_DIR" ]] || die "state directory missing: ${STATE_DIR}"
+  [[ -f "$STATE_MARKER" && "$(cat "$STATE_MARKER")" == "project=${PROJECT}" ]] ||
+    die "no security lab marker for ${PROJECT} in ${STATE_DIR}; refusing"
+  [[ "$(stat -c '%u' "$STATE_DIR")" == "$(id -u)" ]] ||
+    die "the state directory is not owned by the current user: ${STATE_DIR}"
+
+  local unexpected
+  unexpected="$(unexpected_state_entries)"
+  [[ -z "$unexpected" ]] ||
+    die "unexpected entries in ${STATE_DIR}; refusing: $(tr '\n' ' ' <<< "$unexpected")"
 }
 
 compose() {
@@ -365,7 +467,8 @@ EOF_DEFINITIONS
 init_state() {
   require_command openssl
 
-  (umask 077; mkdir -p "$STATE_DIR" "$SECRETS_DIR" "$PKI_DIR" "$INGRESS_TLS_DIR")
+  claim_state_dir
+  (umask 077; mkdir -p "$SECRETS_DIR" "$PKI_DIR" "$INGRESS_TLS_DIR")
   chmod 700 "$STATE_DIR" "$SECRETS_DIR" "$PKI_DIR"
   # Mounted as the container's directory, where the unprivileged nginx user
   # must traverse it; on the host the mode-700 state directory protects it.
@@ -515,6 +618,7 @@ start_lab() {
 }
 
 issue_certificate_command() {
+  require_owned_state
   [[ -d "$INGRESS_TLS_DIR" ]] || die "ingress TLS directory missing; run: $0 init"
 
   issue_certificate
@@ -633,9 +737,11 @@ destroy_lab() {
 
 purge_state() {
   [[ "${1:-}" == "--yes" ]] || die "purge-state deletes the lab CA and secrets; rerun with --yes"
-  [[ -d "$STATE_DIR" ]] || { echo "Nothing to purge: ${STATE_DIR}"; return 0; }
+  [[ -e "$STATE_DIR" ]] || { echo "Nothing to purge: ${STATE_DIR}"; return 0; }
 
-  rm -rf -- "$STATE_DIR"
+  require_owned_state
+
+  rm -rf --one-file-system -- "$STATE_DIR"
   echo "Deleted ${STATE_DIR}."
   echo "If you trusted the lab CA in Windows or a browser, remove it there as well (see the guide)."
 }
@@ -1178,6 +1284,9 @@ check_configuration
 case "${1:-}" in
   init)
     init_state
+    ;;
+  state-dir)
+    echo "$STATE_DIR"
     ;;
   check-secrets)
     check_secrets

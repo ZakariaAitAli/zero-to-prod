@@ -444,6 +444,7 @@ jobs:
           bash -n scripts/test-ci-required-gate.sh
           bash -n scripts/test-ci-workflow.sh
           bash -n scripts/test-postgres-backup-validation.sh
+          bash -n scripts/test-security-lab-state-safety.sh
           bash -n tools/work-items-api-local
           bash -n tools/postgres-local
           bash -n scripts/test-async-result-recovery.sh
@@ -466,6 +467,7 @@ jobs:
           ./scripts/test-ci-required-gate.sh
           bash scripts/test-ci-workflow.sh
           bash scripts/test-postgres-backup-validation.sh
+          bash scripts/test-security-lab-state-safety.sh
 
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
