@@ -284,22 +284,29 @@ ADR 0003 adds the result to that boundary. See the [current recovery runbook](do
 
 ## CI
 
-GitHub Actions currently provides change-aware validation of the local-first system.
+GitHub Actions (`.github/workflows/work-items-ci.yml`) provides change-aware validation of the local-first system. A `Detect changes` job classifies the changed paths, three validation jobs run when their paths change, and `CI required` fails unless every required job succeeded.
 
-Application validation includes:
+**Validate Work Items backend**
 
-- Go formatting;
-- `go vet`, including a compile check of the opt-in crash-experiment harness;
-- Go tests;
-- PostgreSQL integration setup and migrations;
-- API integration tests;
-- RabbitMQ integration setup;
-- worker integration tests;
-- PostgreSQL archive scope/payload validation and result backup/restore regression;
-- API container image build validation;
-- frontend lint and production build.
+- Go formatting, `go vet` (including a compile check of the opt-in crash-experiment harness), and dependency-free Go tests;
+- PostgreSQL and RabbitMQ integration setup with explicit migrations;
+- PostgreSQL archive scope and payload validation;
+- API and worker integration tests, failing on any skipped test;
+- result migration and backup/restore compatibility (`scripts/test-async-result-recovery.sh`);
+- API and worker container image builds, requiring the worker image to run as its unprivileged user.
 
-The current CI path requires no AWS credentials and performs no cloud deployment.
+**Validate Work Items frontend**
+
+- `pnpm install --frozen-lockfile`, lint, and production build.
+
+**Validate CI workflows**
+
+- shell syntax checks for the CI scripts, local tools, and security lab tooling;
+- Compose model validation for the development lab and the security lab;
+- CI path-classifier, required-gate, workflow, backup-validation, and security lab state-safety regression tests;
+- `actionlint`.
+
+CI does not start the security lab or build its ingress image. It requires no AWS credentials and performs no cloud deployment.
 
 ## Historical capability layers
 
