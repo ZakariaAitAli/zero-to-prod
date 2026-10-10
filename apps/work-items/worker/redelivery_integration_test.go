@@ -252,4 +252,10 @@ func TestWorkerRedeliveryIntegrationDoesNotDuplicateCompletion(
 			completion.Job.AttemptCount,
 		)
 	}
+
+	requireCompletedOnce(
+		t,
+		requireBusinessState(t, ctx, fixture.Pool, workItemID),
+		jobID,
+	)
 }

@@ -137,6 +137,12 @@ func TestWorkerRestartBeforeCompletionRecoversOutstandingDelivery(
 		)
 	}
 
+	requireUntouched(
+		t,
+		requireBusinessState(t, ctx, fixture.Pool, workItemID),
+		jobID,
+	)
+
 	secondSession, err := newRabbitMQWorkerSession(
 		ctx,
 		rabbitMQURL,
@@ -241,4 +247,10 @@ func TestWorkerRestartBeforeCompletionRecoversOutstandingDelivery(
 			"recovered job did not record finished_at",
 		)
 	}
+
+	requireCompletedOnce(
+		t,
+		requireBusinessState(t, ctx, fixture.Pool, workItemID),
+		jobID,
+	)
 }
