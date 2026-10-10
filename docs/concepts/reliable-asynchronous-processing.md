@@ -88,7 +88,7 @@ broker confirms
 process crashes before database marks it published
 ```
 
-After restart, the publisher may send the same message again because the database still represents it as unpublished.
+After restart, the publisher may send the same message again because the database still represents it as unpublished. Zero-to-Prod reproduced this window with a real publisher crash in the [crash-consistency experiment](../experiments/issue-118-crash-consistency.md).
 
 The correct design question is therefore not "how do we guarantee the message is never duplicated?" but "how does the consumer behave safely when a message is delivered again?"
 
@@ -197,3 +197,5 @@ ACK / terminal outcome
 - [Work Items architecture](../architecture/work-items.md)
 - [Local Work Items development](../guides/local-work-items.md)
 - [Reliable asynchronous processing experiments](../sprint-03/reliable-async-processing.md)
+- [ADR 0003 — async success semantics and result ownership](../adr/0003-work-items-async-success-semantics.md)
+- [Crash-consistency experiment](../experiments/issue-118-crash-consistency.md)

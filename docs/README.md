@@ -53,7 +53,7 @@ Current recovery: [Work Items result recovery](runbooks/work-items-recovery.md).
 Historical recovery procedures and experiments remain in the Sprint runbooks:
 
 - [Sprint 01 operations runbook](sprint-01/runbook.md)
-- [Sprint 03 PostgreSQL backup and recovery runbook](sprint-03/runbook.md) — current recovery procedure for the `work_items`, `processing_jobs`, and `outbox_messages` boundary
+- [Sprint 03 PostgreSQL backup and recovery runbook](sprint-03/runbook.md) — the Issue #99/#111 procedure for the earlier `work_items`, `processing_jobs`, and `outbox_messages` boundary; superseded by the current runbook above
 
 These can be consolidated later when the operational boundary, rather than the Sprint boundary, makes that more useful.
 
@@ -63,12 +63,14 @@ ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
 
 - [ADR 0001 — Work Items async recovery boundary](adr/0001-work-items-async-recovery-boundary.md) — why the PostgreSQL backup covers `work_items`, `processing_jobs`, and `outbox_messages`.
 - [ADR 0002 — Work Items Web UI boundary](adr/0002-work-items-web-ui-boundary.md) — why the browser UI is a separate artifact and how it reaches the API locally.
+- [ADR 0003 — Work Items async success semantics](adr/0003-work-items-async-success-semantics.md) — what successful processing means, why PostgreSQL owns the result, and the required failure model.
 
 ## Experiments
 
 Experiment records answer **what did we test and what happened?** Focused experiments since the documentation reorganization live in [`experiments/`](experiments/). Earlier experiments are in the Sprint records below.
 
 - [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
+- [Issue #117 — result implementation validation](experiments/issue-117-result-validation.md) — title-analysis results, atomic business completion, migration refusal, and result backup compatibility.
 - [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
 
 Experiment records describe what was true when the experiment ran. They are not rewritten when the system changes later.
@@ -77,7 +79,7 @@ Experiment records describe what was true when the experiment ran. They are not 
 
 Evidence answers **what proves the claim?** It currently lives in three places:
 
-- [`../evidence/`](../evidence/) — durable, sanitized artifacts (for example Sprint 02 verified-deployment records and AWS retirement evidence);
+- [`../evidence/`](../evidence/) — durable, sanitized artifacts (for example Sprint 02 verified-deployment records, AWS retirement evidence, and the [crash-consistency experiment records](../evidence/issue-118/));
 - the **Evidence** sections of ADRs and the observations recorded in experiment and Sprint documents;
 - repository tests and CI checks, such as the Go integration tests and `scripts/test-postgres-backup-validation.sh`.
 
@@ -107,9 +109,7 @@ Browse [Sprint 02](sprint-02/).
 
 ### Sprint 03 — stateful and asynchronous systems
 
-Sprint 03 moved the active reference system local-first and introduced PostgreSQL persistence, migrations, destructive recovery, schema evolution, transactional outbox processing, RabbitMQ, idempotent consumption, and distributed failure experiments.
-
-Browse [Sprint 03](sprint-03/).
+Sprint 03 moved the active reference system local-first and introduced PostgreSQL persistence, migrations, destructive recovery, schema evolution, transactional outbox processing, RabbitMQ, idempotent consumption, durable business results, and distributed failure experiments. Its engineering work is complete; the [Sprint 03 summary](sprint-03/README.md) records the outcome, the reference-workload decision, and what remains open.
 
 ## How to use the layers
 
