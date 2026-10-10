@@ -12,7 +12,7 @@ ROOT_DIR="$(
 )"
 
 COMPOSE_FILE="${ROOT_DIR}/infra/local/rabbitmq/compose.yaml"
-COMPOSE_PROJECT_NAME="zero-to-prod-rabbitmq"
+COMPOSE_PROJECT_NAME="${ZTP_RABBITMQ_COMPOSE_PROJECT_NAME:-zero-to-prod-rabbitmq}"
 
 RABBITMQ_ADMIN_USER="${ZTP_RABBITMQ_USER:-zero_to_prod}"
 RABBITMQ_ADMIN_PASSWORD="${ZTP_RABBITMQ_PASSWORD:-zero-to-prod-local-rabbitmq}"
@@ -46,6 +46,7 @@ Commands:
   diagnostics  Verify the broker and show non-secret broker metadata.
 
 Environment overrides:
+  ZTP_RABBITMQ_COMPOSE_PROJECT_NAME  isolated broker project (default: zero-to-prod-rabbitmq)
   ZTP_RABBITMQ_USER
   ZTP_RABBITMQ_PASSWORD
   ZTP_RABBITMQ_VHOST
