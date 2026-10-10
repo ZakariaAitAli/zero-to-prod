@@ -38,6 +38,7 @@ Architecture documents describe the current or retained Zero-to-Prod system boun
 
 - [Delivery architecture](architecture/delivery.md) — the delivery and recovery model established by Sprint 01 and Sprint 02.
 - [Work Items architecture](architecture/work-items.md) — the current local-first Work Items system using PostgreSQL and RabbitMQ.
+- [Security lab architecture](architecture/security-lab.md) — the opt-in Issue #121 environment: HTTPS ingress, private networks, lab CA, and runtime secrets (first slice; no authentication yet).
 
 ## Guides
 
