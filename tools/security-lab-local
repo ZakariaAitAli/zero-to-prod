@@ -675,12 +675,13 @@ expect() {
   fi
 }
 
-# Passes when no TCP connection was established; records the exact outcome.
+# Passes only when curl established no TCP connection and failed with a
+# connection-level error; records the outcome, connection count, and exit code.
 expect_unreachable() {
   local vantage="$1" check="$2" observed="$3"
 
   case "$observed" in
-    refused | timeout | unresolved)
+    "refused connects=0 "* | "timeout connects=0 "* | "unresolved connects=0 "*)
       record "$vantage" "$check" "no-connection" "$observed" pass
       ;;
     *)
@@ -689,25 +690,42 @@ expect_unreachable() {
   esac
 }
 
-# Classify a curl exit code as a TCP-level outcome.
+# Classify a TCP-level outcome from curl's count of established connections
+# and its exit code. The count decides: exit 28 alone also occurs when the
+# connection succeeded and only the application response timed out.
 classify_connection() {
-  case "$1" in
+  local rc="$1" connects="${2:-}"
+
+  if [[ "$connects" =~ ^[1-9][0-9]*$ ]]; then
+    echo connected
+    return 0
+  fi
+
+  case "$rc" in
     6) echo unresolved ;;
     7) echo refused ;;
     28) echo timeout ;;
-    *) echo connected ;;
+    # Anything else is not evidence of an unreachable service.
+    *) echo "unclassified-exit-${rc}" ;;
   esac
+}
+
+# Prints "<outcome> connects=<n> exit=<code>".
+probe_tcp_detail() {
+  local network="$1" target="$2" rc=0 connects
+
+  connects="$(docker run --rm --network "$network" --entrypoint curl "$PROBE_IMAGE" \
+    -s -o /dev/null --connect-timeout 3 --max-time 5 -w '%{num_connects}' \
+    "http://${target}/" 2>/dev/null)" || rc=$?
+
+  echo "$(classify_connection "$rc" "$connects") connects=${connects:-none} exit=${rc}"
 }
 
 # TCP reachability with curl from a container on the given network.
 probe_tcp() {
-  local network="$1" target="$2" rc=0
-
-  docker run --rm --network "$network" --entrypoint curl "$PROBE_IMAGE" \
-    -s -o /dev/null --connect-timeout 3 --max-time 5 "http://${target}/" \
-    >/dev/null 2>&1 || rc=$?
-
-  classify_connection "$rc"
+  local detail
+  detail="$(probe_tcp_detail "$@")"
+  echo "${detail%% *}"
 }
 
 # Name resolution from a container on the given network. Unknown names are
@@ -727,13 +745,81 @@ probe_dns() {
   fi
 }
 
+probe_tcp_host_detail() {
+  local target="$1" rc=0 connects
+
+  connects="$(curl -s -o /dev/null --connect-timeout 3 --max-time 5 -w '%{num_connects}' \
+    "http://${target}/" 2>/dev/null)" || rc=$?
+
+  echo "$(classify_connection "$rc" "$connects") connects=${connects:-none} exit=${rc}"
+}
+
 probe_tcp_host() {
-  local target="$1" rc=0
+  local detail
+  detail="$(probe_tcp_host_detail "$@")"
+  echo "${detail%% *}"
+}
 
-  curl -s -o /dev/null --connect-timeout 3 --max-time 5 "http://${target}/" \
-    >/dev/null 2>&1 || rc=$?
+# Start a TCP listener that completes the handshake but never responds, on
+# the given host address. Prints "<pid> <port>".
+start_silent_host_listener() {
+  local address="$1" port_file pid port=""
 
-  classify_connection "$rc"
+  port_file="$(mktemp)"
+  python3 -I -c '
+import socket, sys, time
+s = socket.socket()
+s.bind((sys.argv[1], 0))
+s.listen(4)
+print(s.getsockname()[1], flush=True)
+time.sleep(60)
+' "$address" > "$port_file" 2>/dev/null &
+  pid=$!
+
+  local _
+  for _ in $(seq 1 50); do
+    port="$(cat "$port_file")"
+    [[ -n "$port" ]] && break
+    sleep 0.1
+  done
+  rm -f "$port_file"
+
+  echo "$pid $port"
+}
+
+# Regression controls for the reachability classifier: a reachable server
+# that delays its response must count as connected, and a closed port as
+# refused. Without them, a timeout after a successful connection could be
+# reported as isolation.
+verify_probe_controls() {
+  local listener="${PROJECT}-silent-listener" listener_ip
+
+  docker run -d --rm --name "$listener" --network "$PROBE_NETWORK" \
+    --entrypoint sh "$PROBE_IMAGE" \
+    -c 'while :; do sleep 60 | nc -l -p 8080 >/dev/null 2>&1; done' >/dev/null
+  listener_ip="$(docker inspect --format \
+    "{{(index .NetworkSettings.Networks \"${PROBE_NETWORK}\").IPAddress}}" "$listener")"
+  sleep 1
+
+  local detail
+  detail="$(probe_tcp_detail "$PROBE_NETWORK" "${listener_ip}:8080")"
+  expect "probe control" "container: listener that never responds" "connected connects=1 exit=28" "$detail"
+  detail="$(probe_tcp_detail "$PROBE_NETWORK" "${listener_ip}:8081")"
+  expect "probe control" "container: closed port" "refused connects=0 exit=7" "$detail"
+
+  docker rm -f "$listener" >/dev/null 2>&1 || true
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    record "probe control" "host: listener that never responds" "run" "python3 unavailable" skip
+    return 0
+  fi
+
+  local pid port
+  read -r pid port < <(start_silent_host_listener 127.0.0.1)
+  detail="$(probe_tcp_host_detail "127.0.0.1:${port}")"
+  expect "probe control" "wsl: listener that never responds" "connected connects=1 exit=28" "$detail"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
 }
 
 container_ip() {
@@ -802,13 +888,13 @@ verify_lab() {
 
   local port
   for port in 8080 5432 55432 5672 15672; do
-    expect "wsl" "127.0.0.1:${port}" "refused" "$(probe_tcp_host "127.0.0.1:${port}")"
+    expect "wsl" "127.0.0.1:${port}" "refused connects=0 exit=7" "$(probe_tcp_host_detail "127.0.0.1:${port}")"
   done
 
   local wsl_address
   wsl_address="$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
   if [[ -n "$wsl_address" ]]; then
-    expect_unreachable "wsl" "WSL eth0 ${wsl_address}:${HTTPS_PORT}" "$(probe_tcp_host "${wsl_address}:${HTTPS_PORT}")"
+    expect_unreachable "wsl" "WSL eth0 ${wsl_address}:${HTTPS_PORT}" "$(probe_tcp_host_detail "${wsl_address}:${HTTPS_PORT}")"
   fi
 
   local api_ip postgres_ip rabbitmq_ip ingress_edge_ip
@@ -817,9 +903,9 @@ verify_lab() {
   rabbitmq_ip="$(container_ip rabbitmq data)"
   ingress_edge_ip="$(container_ip ingress edge)"
 
-  expect_unreachable "wsl" "api container IP :8080" "$(probe_tcp_host "${api_ip}:8080")"
-  expect_unreachable "wsl" "postgres container IP :5432" "$(probe_tcp_host "${postgres_ip}:5432")"
-  expect_unreachable "wsl" "rabbitmq container IP :5672" "$(probe_tcp_host "${rabbitmq_ip}:5672")"
+  expect_unreachable "wsl" "api container IP :8080" "$(probe_tcp_host_detail "${api_ip}:8080")"
+  expect_unreachable "wsl" "postgres container IP :5432" "$(probe_tcp_host_detail "${postgres_ip}:5432")"
+  expect_unreachable "wsl" "rabbitmq container IP :5672" "$(probe_tcp_host_detail "${rabbitmq_ip}:5672")"
 
   # --- Windows host through WSL interop ------------------------------------
   local curl_exe=""
@@ -838,11 +924,29 @@ verify_lab() {
       if [[ "$rc" -ne 0 ]]; then echo "error:${rc}"; else echo "$output"; fi
     }
 
-    windows_tcp() {
-      local rc=0
-      "$curl_exe" -s -o NUL --connect-timeout 3 --max-time 5 "http://$1/" >/dev/null 2>&1 || rc=$?
-      classify_connection "$rc"
+    windows_tcp_detail() {
+      local rc=0 connects
+      connects="$("$curl_exe" -s -o NUL --connect-timeout 3 --max-time 5 -w '%{num_connects}' \
+        "http://$1/" 2>/dev/null | tr -d '\r')" || rc=$?
+      echo "$(classify_connection "$rc" "$connects") connects=${connects:-none} exit=${rc}"
     }
+
+    windows_tcp() {
+      local detail
+      detail="$(windows_tcp_detail "$1")"
+      echo "${detail%% *}"
+    }
+
+    # Classifier control from Windows: a WSL listener that accepts but never
+    # responds, reachable from Windows through the WSL NAT address.
+    if [[ -n "$wsl_address" ]] && command -v python3 >/dev/null 2>&1; then
+      local listener_pid listener_port
+      read -r listener_pid listener_port < <(start_silent_host_listener "$wsl_address")
+      expect "probe control" "windows: listener that never responds" "connected connects=1 exit=28" \
+        "$(windows_tcp_detail "${wsl_address}:${listener_port}")"
+      kill "$listener_pid" 2>/dev/null || true
+      wait "$listener_pid" 2>/dev/null || true
+    fi
 
     # Schannel cannot check revocation for a private CA without a CRL; only
     # revocation checking is relaxed, chain and name verification are not.
@@ -850,11 +954,28 @@ verify_lab() {
       "$(windows_https --cacert "$windows_ca" --ssl-revoke-best-effort "${base}/")"
     expect "windows-curl" "HTTPS API via ingress with lab CA" "200" \
       "$(windows_https --cacert "$windows_ca" --ssl-revoke-best-effort "${base}/api/items")"
-    expect "windows-curl" "HTTPS without lab CA (control)" "error:60" \
-      "$(windows_https --ssl-revoke-best-effort "${base}/")"
+    # The negative control is only meaningful while Windows does not trust
+    # the lab CA itself, for example after the manual browser check.
+    local thumbprint windows_trust
+    thumbprint="$(openssl x509 -noout -fingerprint -sha1 -in "$ca" | cut -d= -f2 | tr -d ':')"
+    windows_trust="$(
+      powershell.exe -NoProfile -Command \
+        "@(Get-ChildItem Cert:\\CurrentUser\\Root, Cert:\\LocalMachine\\Root | Where-Object Thumbprint -eq '${thumbprint}').Count" \
+        2>/dev/null | tr -d '\r\n'
+    )"
+
+    if [[ "$windows_trust" == 0 ]]; then
+      record "windows" "lab CA in Windows trust stores" "observe" "not trusted" info
+      expect "windows-curl" "HTTPS without lab CA (control)" "error:60" \
+        "$(windows_https --ssl-revoke-best-effort "${base}/")"
+    else
+      record "windows" "lab CA in Windows trust stores" "observe" "trusted (${windows_trust:-unknown})" info
+      record "windows-curl" "HTTPS without lab CA (control)" "run" \
+        "not meaningful: Windows trusts the lab CA" skip
+    fi
 
     for port in 8080 5432 55432 5672 15672; do
-      expect "windows-curl" "127.0.0.1:${port}" "refused" "$(windows_tcp "127.0.0.1:${port}")"
+      expect "windows-curl" "127.0.0.1:${port}" "refused connects=0 exit=7" "$(windows_tcp_detail "127.0.0.1:${port}")"
     done
 
     local windows_addresses address
@@ -864,7 +985,7 @@ verify_lab() {
         2>/dev/null | tr -d '\r'
     )"
     for address in $windows_addresses; do
-      expect_unreachable "windows-curl" "Windows ${address}:${HTTPS_PORT}" "$(windows_tcp "${address}:${HTTPS_PORT}")"
+      expect_unreachable "windows-curl" "Windows ${address}:${HTTPS_PORT}" "$(windows_tcp_detail "${address}:${HTTPS_PORT}")"
     done
 
     local listeners
@@ -882,6 +1003,8 @@ verify_lab() {
   docker network inspect "$PROBE_NETWORK" >/dev/null 2>&1 ||
     docker network create "$PROBE_NETWORK" >/dev/null
 
+  verify_probe_controls
+
   local edge="${PROJECT}_edge"
   local edge_https_status rc
   rc=0
@@ -896,16 +1019,16 @@ verify_lab() {
   expect "edge-network client" "HTTPS API via ingress with lab CA" "200 0" "$edge_https_status"
   expect "edge-network client" "resolve api" "unresolved" "$(probe_dns "$edge" api)"
   expect "edge-network client" "resolve postgres" "unresolved" "$(probe_dns "$edge" postgres)"
-  expect_unreachable "edge-network client" "api container IP :8080" "$(probe_tcp "$edge" "${api_ip}:8080")"
-  expect_unreachable "edge-network client" "postgres container IP :5432" "$(probe_tcp "$edge" "${postgres_ip}:5432")"
-  expect_unreachable "edge-network client" "rabbitmq container IP :5672" "$(probe_tcp "$edge" "${rabbitmq_ip}:5672")"
+  expect_unreachable "edge-network client" "api container IP :8080" "$(probe_tcp_detail "$edge" "${api_ip}:8080")"
+  expect_unreachable "edge-network client" "postgres container IP :5432" "$(probe_tcp_detail "$edge" "${postgres_ip}:5432")"
+  expect_unreachable "edge-network client" "rabbitmq container IP :5672" "$(probe_tcp_detail "$edge" "${rabbitmq_ip}:5672")"
 
   expect "unrelated container" "resolve api" "unresolved" "$(probe_dns "$PROBE_NETWORK" api)"
-  expect_unreachable "unrelated container" "api container IP :8080" "$(probe_tcp "$PROBE_NETWORK" "${api_ip}:8080")"
-  expect_unreachable "unrelated container" "postgres container IP :5432" "$(probe_tcp "$PROBE_NETWORK" "${postgres_ip}:5432")"
-  expect_unreachable "unrelated container" "rabbitmq container IP :5672" "$(probe_tcp "$PROBE_NETWORK" "${rabbitmq_ip}:5672")"
-  expect_unreachable "default-bridge container" "api container IP :8080" "$(probe_tcp bridge "${api_ip}:8080")"
-  expect_unreachable "default-bridge container" "postgres container IP :5432" "$(probe_tcp bridge "${postgres_ip}:5432")"
+  expect_unreachable "unrelated container" "api container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${api_ip}:8080")"
+  expect_unreachable "unrelated container" "postgres container IP :5432" "$(probe_tcp_detail "$PROBE_NETWORK" "${postgres_ip}:5432")"
+  expect_unreachable "unrelated container" "rabbitmq container IP :5672" "$(probe_tcp_detail "$PROBE_NETWORK" "${rabbitmq_ip}:5672")"
+  expect_unreachable "default-bridge container" "api container IP :8080" "$(probe_tcp_detail bridge "${api_ip}:8080")"
+  expect_unreachable "default-bridge container" "postgres container IP :5432" "$(probe_tcp_detail bridge "${postgres_ip}:5432")"
 
   # Observed, not asserted: Docker forwards a published port to the
   # container from any network on the same engine, even when the host
@@ -913,11 +1036,11 @@ verify_lab() {
   # publication through host.docker.internal. The ingress is the intended
   # entry point, so this widens who can reach it, not what is reachable.
   record "unrelated container" "ingress edge IP :8443" "observe" \
-    "$(probe_tcp "$PROBE_NETWORK" "${ingress_edge_ip}:8443")" info
+    "$(probe_tcp_detail "$PROBE_NETWORK" "${ingress_edge_ip}:8443")" info
   record "unrelated container" "ingress edge IP :8081 (health)" "observe" \
-    "$(probe_tcp "$PROBE_NETWORK" "${ingress_edge_ip}:8081")" info
+    "$(probe_tcp_detail "$PROBE_NETWORK" "${ingress_edge_ip}:8081")" info
   record "unrelated container" "host.docker.internal:${HTTPS_PORT}" "observe" \
-    "$(probe_tcp "$PROBE_NETWORK" "host.docker.internal:${HTTPS_PORT}")" info
+    "$(probe_tcp_detail "$PROBE_NETWORK" "host.docker.internal:${HTTPS_PORT}")" info
 
   # Positive controls: the same probe reaches each backend from its own
   # network, so the refusals above are not caused by stopped services.
