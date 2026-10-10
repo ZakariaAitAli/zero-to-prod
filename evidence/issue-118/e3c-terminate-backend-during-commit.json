@@ -1,0 +1,240 @@
+{
+  "id": "e3c-terminate-backend-during-commit",
+  "classification": "EXTERNAL database backend termination; worker process keeps running",
+  "question": "When the worker loses its COMMIT, is the observed outcome all-or-nothing and does redelivery recover safely?",
+  "environment": {
+    "amqp_port": "5673",
+    "classification": "LOCAL-FIRST",
+    "postgres_compose_project": "zero-to-prod-118",
+    "postgres_port": "55434",
+    "rabbitmq_compose_project": "zero-to-prod-118-rabbitmq",
+    "server_client_connection_check_interval": "0"
+  },
+  "synchronization": [
+    {
+      "step": "hold advisory lock",
+      "condition": "harness pid 388 holds advisory lock (118118, item 45)",
+      "elapsed_ms": 628
+    },
+    {
+      "step": "start e3c-terminate-backend-during-commit-a",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 1883,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 1,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "worker reaches COMMIT",
+      "condition": "worker backend executes COMMIT and waits on the harness-held commit gate",
+      "elapsed_ms": 1888,
+      "observation": {
+        "pid": 389,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "advisory",
+        "query": "commit",
+        "backend_xid": "1019",
+        "blocked_by": [
+          388
+        ]
+      }
+    },
+    {
+      "step": "worker observes uncertain commit",
+      "condition": "worker log reports commit outcome may be uncertain",
+      "elapsed_ms": 1902,
+      "observation": 1
+    },
+    {
+      "step": "terminated backend gone",
+      "condition": "backend pid 389 absent",
+      "elapsed_ms": 1903,
+      "observation": []
+    },
+    {
+      "step": "release advisory lock",
+      "condition": "harness pid 388 released (118118, item 45)",
+      "elapsed_ms": 1907
+    },
+    {
+      "step": "same worker process recovers",
+      "condition": "item done once",
+      "elapsed_ms": 2930,
+      "observation": {
+        "work_item_id": 45,
+        "title": "issue118 e3c-terminate-backend-during-commit",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 51,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 51,
+            "input_title": "issue118 e3c-terminate-backend-during-commit",
+            "analysis_version": 1,
+            "character_count": 44,
+            "word_count": 2
+          }
+        ]
+      }
+    },
+    {
+      "step": "delivery settled",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 3558,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "consumer removed without requeue",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 4175,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "precondition: isolated queue is quiet",
+      "expected": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "observed": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "all success writes executed before COMMIT",
+      "expected": "1 result, 1 item version, 1 job version",
+      "observed": {
+        "public.processing_jobs": 1,
+        "public.work_item_results": 1,
+        "public.work_items": 1
+      },
+      "passed": true
+    },
+    {
+      "name": "all-or-nothing state after interrupted COMMIT: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "all-or-nothing state after interrupted COMMIT",
+      "expected": "either untouched (rolled back) or completed once (committed)",
+      "observed": {
+        "work_item_id": 45,
+        "title": "issue118 e3c-terminate-backend-during-commit",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 51,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "worker process survived backend termination",
+      "expected": true,
+      "observed": true,
+      "passed": true
+    },
+    {
+      "name": "e3c-terminate-backend-during-commit-a graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "final state: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "final state",
+      "expected": "done once",
+      "observed": {
+        "work_item_id": 45,
+        "title": "issue118 e3c-terminate-backend-during-commit",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 51,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 51,
+            "input_title": "issue118 e3c-terminate-backend-during-commit",
+            "analysis_version": 1,
+            "character_count": 44,
+            "word_count": 2
+          }
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "observations": {
+    "e3c-terminate-backend-during-commit-a_graceful_exit": {
+      "elapsed_ms": 2,
+      "status": "exit_code=0"
+    },
+    "instrumentation": "test-only deferred constraint trigger blocks COMMIT on a harness-held advisory lock",
+    "interruption": "pg_terminate_backend on the worker backend during COMMIT",
+    "job_id": 51,
+    "observed_commit_outcome": "rolled_back",
+    "recovery_path": "redelivery reprocessed",
+    "work_item_id": 45
+  },
+  "processes": [
+    {
+      "name": "e3c-terminate-backend-during-commit-a",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 4,
+      "log_excerpt": [
+        "+2ms 2026/10/10 13:14:08 worker starting queue=work_item_processing",
+        "+630ms 2026/10/10 13:14:09 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+630ms processing job completion unavailable: commit business completion (outcome may be uncertain): FATAL: terminating connection due to administrator command (SQLSTATE 57P01)",
+        "+2297ms 2026/10/10 13:14:11 worker shutdown complete"
+      ]
+    }
+  ],
+  "passed": true,
+  "duration_ms": 4189,
+  "recorded_at": "2026-10-10T13:14:11Z"
+}

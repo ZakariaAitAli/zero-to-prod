@@ -67,6 +67,26 @@ Verify `GET /items` returns recovered results and matching done state, inspect
 job state, then resume API publication and worker consumption. Pending jobs and
 outbox responsibilities must resume from the restored recovery point.
 
+### Broker state after a database-only restore
+
+RabbitMQ is not restored with PostgreSQL. The
+[Issue #118 experiment](../experiments/issue-118-crash-consistency.md) observed
+two consequences:
+
+- A job whose outbox row was published before the backup, but whose message was
+  consumed after it, restores as `accepted` with no message. It stays blocked
+  and new requests return `409 processing_already_active`. No redrive exists.
+- Restore rewinds the identity sequences. A message for work accepted after
+  the backup can remain queued and alias new work that receives the same job
+  and Work Item IDs; the worker then processes the new job from the stale
+  message.
+
+Before accepting new requests or resuming consumption, record the restored
+sequence values and inspect queued messages. Treat messages whose `job_id`
+exceeds the restored `processing_jobs_id_seq` value as lost work, not as
+requests for future jobs. This guidance is untested; no mitigation is
+implemented.
+
 ## Scope and evidence
 
 `scripts/test-async-result-recovery.sh` uses temporary databases to check legacy
@@ -74,6 +94,9 @@ migration refusal without mutation, old-archive rejection, and restoration of
 all four tables with a completed result. CI runs it after integration tests.
 Historical recovery evidence remains in Sprint 03 and ADR 0001.
 
+The Issue #118 harness exercises destructive restore with live API and worker
+processes in an isolated lab; its evidence is in `evidence/issue-118/`.
+
 This is snapshot recovery. Writes after the backup point may be lost. No PITR,
 production RPO/RTO, broker disaster recovery, or sustained-operation claim is
-made. Broader result-processing crash experiments are scoped to #118.
+made.

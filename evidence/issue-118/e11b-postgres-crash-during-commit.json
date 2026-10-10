@@ -1,0 +1,241 @@
+{
+  "id": "e11b-postgres-crash-during-commit",
+  "classification": "EXTERNAL PostgreSQL crash (docker kill) during COMMIT; worker paused with SIGSTOP",
+  "question": "If PostgreSQL crashes while the worker's COMMIT is in progress, what is the durable outcome and does the worker recover?",
+  "environment": {
+    "amqp_port": "5673",
+    "classification": "LOCAL-FIRST",
+    "postgres_compose_project": "zero-to-prod-118",
+    "postgres_port": "55434",
+    "rabbitmq_compose_project": "zero-to-prod-118-rabbitmq",
+    "server_client_connection_check_interval": "0"
+  },
+  "synchronization": [
+    {
+      "step": "hold advisory lock",
+      "condition": "harness pid 47 holds advisory lock (118118, item 50)",
+      "elapsed_ms": 651
+    },
+    {
+      "step": "start e11b",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 1865,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 1,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "worker reaches COMMIT",
+      "condition": "waiting on commit gate",
+      "elapsed_ms": 1871,
+      "observation": {
+        "pid": 55,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "advisory",
+        "query": "commit",
+        "backend_xid": "1044",
+        "blocked_by": [
+          47
+        ]
+      }
+    },
+    {
+      "step": "worker stopped",
+      "condition": "/proc state T",
+      "elapsed_ms": 1875,
+      "observation": "T"
+    },
+    {
+      "step": "postgres kill",
+      "condition": "docker kill on validated container of project zero-to-prod-118",
+      "elapsed_ms": 2273
+    },
+    {
+      "step": "postgres start",
+      "condition": "docker start on validated container of project zero-to-prod-118",
+      "elapsed_ms": 2566
+    },
+    {
+      "step": "postgres healthy",
+      "condition": "container healthy and same cluster accepts queries",
+      "elapsed_ms": 7621,
+      "observation": "healthy"
+    },
+    {
+      "step": "worker recovers",
+      "condition": "item done once",
+      "elapsed_ms": 8666,
+      "observation": {
+        "work_item_id": 50,
+        "title": "issue118 E11 crash during commit",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 56,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 56,
+            "input_title": "issue118 E11 crash during commit",
+            "analysis_version": 1,
+            "character_count": 32,
+            "word_count": 5
+          }
+        ]
+      }
+    },
+    {
+      "step": "delivery acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 9247,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "consumer removed without requeue",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 9874,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "precondition: isolated queue is quiet",
+      "expected": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "observed": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "all-or-nothing state after interrupted COMMIT: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "all-or-nothing state after interrupted COMMIT",
+      "expected": "either untouched (rolled back) or completed once (committed)",
+      "observed": {
+        "work_item_id": 50,
+        "title": "issue118 E11 crash during commit",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 56,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "worker process survived the database crash",
+      "expected": true,
+      "observed": true,
+      "passed": true
+    },
+    {
+      "name": "e11b graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "final state: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "final state",
+      "expected": "done once",
+      "observed": {
+        "work_item_id": 50,
+        "title": "issue118 E11 crash during commit",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 56,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 56,
+            "input_title": "issue118 E11 crash during commit",
+            "analysis_version": 1,
+            "character_count": 32,
+            "word_count": 5
+          }
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "observations": {
+    "e11b_graceful_exit": {
+      "elapsed_ms": 1,
+      "status": "exit_code=0"
+    },
+    "instrumentation": "test-only deferred constraint trigger blocks COMMIT on a harness-held advisory lock",
+    "job_id": 56,
+    "observed_commit_outcome": "rolled_back",
+    "work_item_id": 50,
+    "worker_uncertain_commit_logs": 1,
+    "writes_before_commit": {
+      "public.processing_jobs": 1,
+      "public.work_item_results": 1,
+      "public.work_items": 1
+    }
+  },
+  "processes": [
+    {
+      "name": "e11b",
+      "signals": [
+        "stopped (signal)",
+        "continued",
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 4,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:14:50 worker starting queue=work_item_processing",
+        "+6368ms 2026/10/10 13:14:56 worker session ended; retrying: run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure",
+        "+6368ms processing job completion unavailable: commit business completion (outcome may be uncertain): conn closed",
+        "+7990ms 2026/10/10 13:14:58 worker shutdown complete"
+      ]
+    }
+  ],
+  "passed": true,
+  "duration_ms": 9888,
+  "recorded_at": "2026-10-10T13:14:58Z"
+}

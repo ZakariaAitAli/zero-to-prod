@@ -1,0 +1,268 @@
+{
+  "id": "e2-crash-after-writes-before-commit",
+  "classification": "ACTUAL worker process crash (SIGKILL)",
+  "question": "After the result insert and Work Item update have executed, does a crash at the guarded job update roll every write back?",
+  "environment": {
+    "amqp_port": "5673",
+    "classification": "LOCAL-FIRST",
+    "postgres_compose_project": "zero-to-prod-118",
+    "postgres_port": "55434",
+    "rabbitmq_compose_project": "zero-to-prod-118-rabbitmq",
+    "server_client_connection_check_interval": "0"
+  },
+  "synchronization": [
+    {
+      "step": "hold job row lock",
+      "condition": "harness pid 316 holds FOR NO KEY UPDATE on job 48",
+      "elapsed_ms": 691
+    },
+    {
+      "step": "start e2-a",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 1935,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 1,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "worker reaches guarded job update",
+      "condition": "worker backend has a transaction ID and waits on the job row lock in the guarded processing_jobs UPDATE",
+      "elapsed_ms": 1940,
+      "observation": {
+        "pid": 317,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "transactionid",
+        "query": "UPDATE public.processing_jobs SET state='succeeded', attempt_count=attempt_count+1, last_error_code=NULL, finished_at=CURRENT_TIMESTAMP WHERE id=$1 AND work_ite",
+        "backend_xid": "989",
+        "blocked_by": [
+          316
+        ]
+      }
+    },
+    {
+      "step": "broker requeues unacknowledged delivery",
+      "condition": "queue ready=1 unacknowledged=0 consumers=0",
+      "elapsed_ms": 2542,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "release job row lock",
+      "condition": "harness transaction rolled back",
+      "elapsed_ms": 2543
+    },
+    {
+      "step": "orphaned backend exits and aborts",
+      "condition": "no PostgreSQL backend for issue118-e2-a",
+      "elapsed_ms": 2543,
+      "observation": []
+    },
+    {
+      "step": "start e2-b",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 3824,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "e2-b completes item",
+      "condition": "item done with exactly one result from the job",
+      "elapsed_ms": 3826,
+      "observation": {
+        "work_item_id": 42,
+        "title": "issue118 E2 crash before commit",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 48,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 48,
+            "input_title": "issue118 E2 crash before commit",
+            "analysis_version": 1,
+            "character_count": 31,
+            "word_count": 5
+          }
+        ]
+      }
+    },
+    {
+      "step": "e2-b settles delivery",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 4464,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "e2-b consumer removed without requeue",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 5027,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "precondition: isolated queue is quiet",
+      "expected": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "observed": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "preceding writes executed by the blocked transaction (heap tuples with its xmin)",
+      "expected": {
+        "public.processing_jobs": 0,
+        "public.work_item_results": 1,
+        "public.work_items": 1
+      },
+      "observed": {
+        "public.processing_jobs": 0,
+        "public.work_item_results": 1,
+        "public.work_items": 1
+      },
+      "passed": true
+    },
+    {
+      "name": "e2-a exit status after SIGKILL",
+      "expected": "signal=killed",
+      "observed": "signal=killed",
+      "passed": true
+    },
+    {
+      "name": "durable state after crash: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "durable state after crash",
+      "expected": "pending; accepted; attempt_count=0; no result",
+      "observed": {
+        "work_item_id": 42,
+        "title": "issue118 E2 crash before commit",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 48,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "e2-b graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "final state after recovery: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "final state after recovery",
+      "expected": "done; one result; succeeded job attempt_count=1",
+      "observed": {
+        "work_item_id": 42,
+        "title": "issue118 E2 crash before commit",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 48,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 48,
+            "input_title": "issue118 E2 crash before commit",
+            "analysis_version": 1,
+            "character_count": 31,
+            "word_count": 5
+          }
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "observations": {
+    "e2-b_graceful_exit": {
+      "elapsed_ms": 2,
+      "status": "exit_code=0"
+    },
+    "job_id": 48,
+    "tuples_physically_written_by_aborted_transaction": {
+      "public.processing_jobs": 1,
+      "public.work_item_results": 1,
+      "public.work_items": 1
+    },
+    "work_item_id": 42
+  },
+  "processes": [
+    {
+      "name": "e2-b",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:13:53 worker starting queue=work_item_processing",
+        "+1311ms 2026/10/10 13:13:55 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "e2-a",
+      "signals": [
+        "killed"
+      ],
+      "exit_status": "signal=killed",
+      "log_lines": 1,
+      "log_excerpt": [
+        "+2ms 2026/10/10 13:13:51 worker starting queue=work_item_processing"
+      ]
+    }
+  ],
+  "passed": true,
+  "duration_ms": 5028,
+  "recorded_at": "2026-10-10T13:13:55Z"
+}

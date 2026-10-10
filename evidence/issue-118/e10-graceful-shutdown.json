@@ -1,0 +1,290 @@
+{
+  "id": "e10-graceful-shutdown",
+  "classification": "ACTUAL worker process signal (SIGTERM)",
+  "question": "How does the worker behave on SIGTERM when idle and while a completion transaction is in flight?",
+  "environment": {
+    "amqp_port": "5673",
+    "classification": "LOCAL-FIRST",
+    "postgres_compose_project": "zero-to-prod-118",
+    "postgres_port": "55434",
+    "rabbitmq_compose_project": "zero-to-prod-118-rabbitmq",
+    "server_client_connection_check_interval": "0"
+  },
+  "synchronization": [
+    {
+      "step": "start e10-idle",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 1877,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "idle consumer removed",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 2523,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "hold advisory lock",
+      "condition": "harness pid 460 holds advisory lock (1464423501, item 48)",
+      "elapsed_ms": 2542
+    },
+    {
+      "step": "start e10-a",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 3818,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 1,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "worker in completion transaction",
+      "condition": "waiting on item lock",
+      "elapsed_ms": 3822,
+      "observation": {
+        "pid": 461,
+        "state": "active",
+        "wait_event_type": "Lock",
+        "wait_event": "advisory",
+        "query": "SELECT pg_advisory_xact_lock(1464423501, hashint8($1::bigint))",
+        "backend_xid": "",
+        "blocked_by": [
+          460
+        ]
+      }
+    },
+    {
+      "step": "in-flight delivery retained by broker",
+      "condition": "queue ready=1 unacknowledged=0 consumers=0",
+      "elapsed_ms": 5058,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "release advisory lock",
+      "condition": "harness pid 460 released (1464423501, item 48)",
+      "elapsed_ms": 5059
+    },
+    {
+      "step": "backend gone",
+      "condition": "no PostgreSQL backend for issue118-e10-a",
+      "elapsed_ms": 5060,
+      "observation": []
+    },
+    {
+      "step": "start e10-b",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 6310,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "e10-b completes item",
+      "condition": "item done with exactly one result from the job",
+      "elapsed_ms": 6311,
+      "observation": {
+        "work_item_id": 48,
+        "title": "issue118 E10 graceful in flight",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 54,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 54,
+            "input_title": "issue118 E10 graceful in flight",
+            "analysis_version": 1,
+            "character_count": 31,
+            "word_count": 5
+          }
+        ]
+      }
+    },
+    {
+      "step": "e10-b settles delivery",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 6890,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "e10-b consumer removed without requeue",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 7501,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "precondition: isolated queue is quiet",
+      "expected": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "observed": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "durable state after shutdown: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "durable state after shutdown",
+      "expected": "pending; accepted; attempt_count=0; no result",
+      "observed": {
+        "work_item_id": 48,
+        "title": "issue118 E10 graceful in flight",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 54,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "e10-b graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "final state after recovery: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "final state after recovery",
+      "expected": "done; one result; succeeded job attempt_count=1",
+      "observed": {
+        "work_item_id": 48,
+        "title": "issue118 E10 graceful in flight",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 54,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 54,
+            "input_title": "issue118 E10 graceful in flight",
+            "analysis_version": 1,
+            "character_count": 31,
+            "word_count": 5
+          }
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "observations": {
+    "e10-b_graceful_exit": {
+      "elapsed_ms": 2,
+      "status": "exit_code=0"
+    },
+    "idle_shutdown": {
+      "elapsed_ms": 2,
+      "exit_status": "exit_code=0"
+    },
+    "in_flight_shutdown": {
+      "backends_after_exit": [],
+      "elapsed_ms": 5,
+      "exit_status": "exit_code=0",
+      "queue_after_exit": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    "job_id": 54,
+    "work_item_id": 48
+  },
+  "processes": [
+    {
+      "name": "e10-b",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:14:28 worker starting queue=work_item_processing",
+        "+1189ms 2026/10/10 13:14:29 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "e10-a",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:14:25 worker starting queue=work_item_processing",
+        "+648ms 2026/10/10 13:14:26 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "e10-idle",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+1ms 2026/10/10 13:14:23 worker starting queue=work_item_processing",
+        "+610ms 2026/10/10 13:14:24 worker shutdown complete"
+      ]
+    }
+  ],
+  "passed": true,
+  "duration_ms": 7503,
+  "recorded_at": "2026-10-10T13:14:30Z"
+}

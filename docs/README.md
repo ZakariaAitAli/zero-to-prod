@@ -69,6 +69,7 @@ ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
 Experiment records answer **what did we test and what happened?** Focused experiments since the documentation reorganization live in [`experiments/`](experiments/). Earlier experiments are in the Sprint records below.
 
 - [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
+- [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
 
 Experiment records describe what was true when the experiment ran. They are not rewritten when the system changes later.
 

@@ -73,6 +73,64 @@ for backup/restore commands too. The default project and its data are retained;
 no reset or truncation is part of migration. See the
 [current recovery runbook](../runbooks/work-items-recovery.md).
 
+### Isolated crash-consistency lab
+
+Destructive experiments use their own PostgreSQL and RabbitMQ Compose projects
+so existing lab volumes and backups are never touched.
+`ZTP_RABBITMQ_COMPOSE_PROJECT_NAME` selects the RabbitMQ project (default
+`zero-to-prod-rabbitmq`); bootstrapping a second queue on the shared broker is
+not an alternative, because it rewrites the worker user's single-queue
+permission.
+
+```bash
+export ZTP_COMPOSE_PROJECT_NAME=zero-to-prod-118 ZTP_POSTGRES_PORT=55434
+export ZTP_RABBITMQ_COMPOSE_PROJECT_NAME=zero-to-prod-118-rabbitmq ZTP_RABBITMQ_AMQP_PORT=5673 ZTP_RABBITMQ_MANAGEMENT_PORT=15673
+./tools/postgres-local start
+./tools/postgres-local build-migrate
+./tools/postgres-local migrate-up
+./tools/rabbitmq-local start
+```
+
+Run `go test ./...` before exporting integration URLs: with them set, the API
+and worker packages run in parallel against the same queue and the worker
+suite's isolation guard fails. Then export the role-specific URLs:
+
+```bash
+pg=127.0.0.1:55434/zero_to_prod?sslmode=disable; mq=127.0.0.1:5673/zero_to_prod
+export OUTBOX_INTEGRATION_DATABASE_URL="postgres://zero_to_prod_app:zero-to-prod-local-app@$pg" \
+  ACCEPTANCE_FAILURE_MIGRATOR_DATABASE_URL="postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@$pg" \
+  WORKER_DATABASE_URL="postgres://zero_to_prod_worker:zero-to-prod-local-worker@$pg" \
+  WORKER_FIXTURE_DATABASE_URL="postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@$pg" \
+  ISSUE118_ADMIN_DATABASE_URL="postgres://zero_to_prod_admin:zero-to-prod-local-admin@$pg" \
+  RABBITMQ_PUBLISHER_URL="amqp://zero_to_prod_publisher:zero-to-prod-local-rabbitmq-publisher@$mq" \
+  RABBITMQ_WORKER_URL="amqp://zero_to_prod_worker:zero-to-prod-local-rabbitmq-worker@$mq" \
+  RABBITMQ_FIXTURE_URL="amqp://zero_to_prod:zero-to-prod-local-rabbitmq@$mq" \
+  RABBITMQ_QUEUE=work_item_processing ISSUE118_EVIDENCE_DIR="$PWD/evidence/issue-118"
+```
+
+Run the API integration tests, purge the isolated queue, then the worker
+integration tests; the `crashexperiment` build tag adds the process-crash
+harness. The snapshot experiment destroys the isolated PostgreSQL volume and
+runs only when `ISSUE118_ALLOW_DESTROY` names that project. The harness refuses
+non-`zero-to-prod-118*` projects, protected ports, and endpoints that do not
+match the validated containers. See the
+[Issue #118 experiment](../experiments/issue-118-crash-consistency.md).
+
+```bash
+(cd apps/work-items && go test ./api -count=1 -v)
+docker compose --project-name "$ZTP_RABBITMQ_COMPOSE_PROJECT_NAME" --file infra/local/rabbitmq/compose.yaml exec -T rabbitmq rabbitmqctl -p zero_to_prod purge_queue work_item_processing
+(cd apps/work-items && go test ./worker -count=1 -v)
+(cd apps/work-items && go test -tags crashexperiment ./worker -count=1 -v -timeout 15m -run TestIssue118)
+(cd apps/work-items && ISSUE118_ALLOW_DESTROY=zero-to-prod-118 go test -tags crashexperiment ./worker -count=1 -v -timeout 15m -run TestIssue118E12)
+```
+
+With the same project overrides still exported, tear down only the isolated lab:
+
+```bash
+./tools/rabbitmq-local destroy
+./tools/postgres-local destroy
+```
+
 ### Run
 
 Start PostgreSQL, apply migrations explicitly, and start RabbitMQ before starting the API:
