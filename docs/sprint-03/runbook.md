@@ -1,13 +1,16 @@
 # Sprint 03 — PostgreSQL Backup and Recovery Runbook
 
-> This is the retained Issue #99 recovery record. For migration 5 and title-analysis
-> results, use the [current recovery runbook](../runbooks/work-items-recovery.md).
+> **Historical.** This is the Issue #99/#111 recovery procedure for migration
+> version 4. It is superseded by the
+> [current recovery runbook](../runbooks/work-items-recovery.md), which covers
+> migration 5 and title-analysis results. Current tools reject the three-table
+> archives described here.
 
 ## Purpose
 
-This runbook covers the current local recovery path for the persisted Work Items accepted-work state after destructive PostgreSQL data-volume loss.
+This runbook records the local recovery path for the persisted Work Items accepted-work state after destructive PostgreSQL data-volume loss, as it stood after Issue #111 at migration version 4.
 
-It is the current PostgreSQL backup and recovery runbook. It lives under `sprint-03/` because the capability was introduced in Sprint 03.
+It is retained under `sprint-03/` as the record of that procedure. Where it says "current", it means that migration-4 state, not the system today.
 
 The recovery boundary is:
 
@@ -40,7 +43,7 @@ Expected additional AWS infrastructure cost:
 
 ## Create a backup
 
-PostgreSQL must be running and migrations must already be applied (current version: 4).
+PostgreSQL must be running and migrations must already be applied (version 4 at the time).
 
 From the repository root:
 
@@ -107,7 +110,7 @@ Verify migration state:
 
     ./tools/postgres-local migrate-version
 
-For the current migration set, the expected version is:
+For the migration set at the time, the expected version is:
 
     4
 

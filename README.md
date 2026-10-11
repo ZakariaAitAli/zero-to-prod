@@ -247,6 +247,13 @@ The helper also provides:
 ./tools/work-items-worker-local build
 ```
 
+### Security lab (opt-in)
+
+Issue #121 adds a separate security lab: Work Items behind one HTTPS ingress on
+host loopback, with private backend services, a private lab CA, and its own
+runtime secrets. It is intermediate and has no authentication yet. See the
+[security lab guide](docs/guides/local-security-lab.md).
+
 ### Backup and recovery
 
 The persisted accepted-work state can be backed up using repository-owned tooling:
@@ -277,22 +284,29 @@ ADR 0003 adds the result to that boundary. See the [current recovery runbook](do
 
 ## CI
 
-GitHub Actions currently provides change-aware validation of the local-first system.
+GitHub Actions (`.github/workflows/work-items-ci.yml`) provides change-aware validation of the local-first system. A `Detect changes` job classifies the changed paths, three validation jobs run when their paths change, and `CI required` fails unless every required job succeeded.
 
-Application validation includes:
+**Validate Work Items backend**
 
-- Go formatting;
-- `go vet`, including a compile check of the opt-in crash-experiment harness;
-- Go tests;
-- PostgreSQL integration setup and migrations;
-- API integration tests;
-- RabbitMQ integration setup;
-- worker integration tests;
-- PostgreSQL archive scope/payload validation and result backup/restore regression;
-- API container image build validation;
-- frontend lint and production build.
+- Go formatting, `go vet` (including a compile check of the opt-in crash-experiment harness), and dependency-free Go tests;
+- PostgreSQL and RabbitMQ integration setup with explicit migrations;
+- PostgreSQL archive scope and payload validation;
+- API and worker integration tests, failing on any skipped test;
+- result migration and backup/restore compatibility (`scripts/test-async-result-recovery.sh`);
+- API and worker container image builds, requiring the worker image to run as its unprivileged user.
 
-The current CI path requires no AWS credentials and performs no cloud deployment.
+**Validate Work Items frontend**
+
+- `pnpm install --frozen-lockfile`, lint, and production build.
+
+**Validate CI workflows**
+
+- shell syntax checks for the CI scripts, local tools, and security lab tooling;
+- Compose model validation for the development lab and the security lab;
+- CI path-classifier, required-gate, workflow, backup-validation, and security lab state-safety regression tests;
+- `actionlint`.
+
+CI does not start the security lab or build its ingress image. It requires no AWS credentials and performs no cloud deployment.
 
 ## Historical capability layers
 
@@ -383,7 +397,8 @@ zero-to-prod/
 ├── apps/
 │   └── work-items/     current Work Items implementation
 ├── infra/
-│   └── local/          local PostgreSQL and RabbitMQ infrastructure
+│   ├── local/          local PostgreSQL and RabbitMQ infrastructure
+│   └── security-lab/   opt-in HTTPS ingress security lab (Issue #121)
 ├── docs/
 │   ├── README.md       documentation entry point and learning map
 │   ├── concepts/       reusable engineering knowledge

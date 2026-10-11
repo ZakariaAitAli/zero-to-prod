@@ -63,11 +63,12 @@ This role:
 - has USAGE on the public schema
 - cannot create schema objects
 - can SELECT the `id`, `title`, `status`, and `created_at` columns from `work_items`
-- can INSERT `title` into `work_items`; migration 5 revokes client-owned status insertion
-- has USAGE on the `work_items` identity sequence
+- can INSERT only `title` into `work_items`; migration 5 revokes the `status` insertion granted by migration 3, so new items always start `pending`
 - cannot UPDATE or DELETE `work_items`
-- can SELECT and INSERT the columns it needs in `processing_jobs` and `outbox_messages`
-- can UPDATE only the outbox publication columns (`publish_attempts`, `last_error_code`, `published_at`)
+- can SELECT the job columns of `processing_jobs` and INSERT only `work_item_id`
+- can SELECT `outbox_messages`, INSERT `processing_job_id`, `event_type`, and `payload`, and UPDATE only the publication columns (`publish_attempts`, `last_error_code`, `published_at`)
+- can SELECT `work_item_results` but not write it
+- has USAGE on the `work_items`, `processing_jobs`, and `outbox_messages` identity sequences
 - cannot create, alter, or drop application schema objects
 
 The API uses this identity for normal runtime access, including the API-embedded outbox publisher.
@@ -78,15 +79,19 @@ The API uses this identity for normal runtime access, including the API-embedded
 
 This role:
 
-- can SELECT `work_items` and `processing_jobs`
-- can INSERT title-analysis results and UPDATE Work Item `status`
-- can UPDATE only the processing-outcome columns of `processing_jobs` (`state`, `attempt_count`, `last_error_code`, `finished_at`)
-- has no access to `outbox_messages`
+- can SELECT the `id`, `title`, `status`, and `created_at` columns from `work_items` and UPDATE only `status`
+- can SELECT the job columns of `processing_jobs` and UPDATE only the processing-outcome columns (`state`, `attempt_count`, `last_error_code`, `finished_at`)
+- can SELECT and INSERT `work_item_results`
+- cannot insert Work Items or processing jobs, and has no access to `outbox_messages`
 - cannot create, alter, or drop application schema objects
 
 The worker uses this identity for normal runtime access.
 
-The exact column grants are defined in `apps/work-items/migrations/000004_add_async_processing.up.sql`.
+The grants are cumulative across migrations: `000002` (original `work_items`
+access), `000003` (`status`), `000004` (`processing_jobs`, `outbox_messages`,
+and the worker identity), and `000005` (result access, worker `status` update,
+and revocation of API `status` insertion). Inspect a running database with
+`./tools/postgres-local roles` and `\dp` in `psql`.
 
 The API and worker must not use the administrator or migration identity for normal runtime access.
 
@@ -195,8 +200,9 @@ The current migration set is:
 - `000002_grant_work_items_runtime_privileges` — grants the minimum original runtime privileges required by `zero_to_prod_app`
 - `000003_add_work_item_status` — expands Schema A to Schema AB and grants only the additional `status` access required by the evolved application
 - `000004_add_async_processing` — creates `processing_jobs` and `outbox_messages` and grants the API and worker identities only the columns they need
+- `000005_add_title_analysis` — adds `work_item_results`, completion constraints, and system-owned status privileges
 
-Migration 000005 adds `work_item_results`, completion constraints, and system-owned status privileges. It requires empty application tables; preserve legacy data in its original database. See the [result recovery runbook](../runbooks/work-items-recovery.md), including expected dirty-version recovery.
+Migration 000005 requires empty application tables; preserve legacy data in its original database. See the [result recovery runbook](../runbooks/work-items-recovery.md), including expected dirty-version recovery.
 
 After all current migrations are applied, the current migration version is 5.
 
@@ -377,6 +383,12 @@ Validation is not recovery. A readable, correctly scoped archive can still fail 
 
 Recovery is deliberately migration-first.
 
+Stop the Work Items API, the worker, and all client requests before recovery,
+and keep them stopped until the restored state has been verified and assessed
+(see [Verify recovered state](#verify-recovered-state)). The API embeds the
+outbox publisher, so starting it resumes publication; the worker resumes
+consumption.
+
 Destroying PostgreSQL removes the active local database volume:
 
     ./tools/postgres-local destroy
@@ -425,6 +437,9 @@ Restore uses PostgreSQL:
 
 ## Verify recovered state
 
+Keep the API, the worker, and client requests stopped throughout this section.
+Verify with SQL, not through the API.
+
 After recovery, verify migration state:
 
     ./tools/postgres-local migrate-version
@@ -432,6 +447,7 @@ After recovery, verify migration state:
 Inspect the restored rows directly in PostgreSQL:
 
     docker compose \
+      --project-name "${ZTP_COMPOSE_PROJECT_NAME:-zero-to-prod-local}" \
       -f infra/local/compose.yaml \
       exec -T postgres \
       psql \
@@ -439,16 +455,32 @@ Inspect the restored rows directly in PostgreSQL:
         -d zero_to_prod \
         -c 'SELECT id, title, status, created_at FROM public.work_items ORDER BY id;' \
         -c 'SELECT id, work_item_id, state, attempt_count FROM public.processing_jobs ORDER BY id;' \
-        -c 'SELECT id, processing_job_id, publish_attempts, published_at FROM public.outbox_messages ORDER BY id;'
+        -c 'SELECT id, processing_job_id, publish_attempts, published_at FROM public.outbox_messages ORDER BY id;' \
+        -c 'SELECT work_item_id, processing_job_id, character_count, word_count FROM public.work_item_results ORDER BY work_item_id;'
 
-Then start or verify the Work Items API using the normal application workflow and confirm:
+A successful restore establishes PostgreSQL state only. RabbitMQ is not
+restored with it and can hold messages that disagree with the restored rows.
+Before restarting anything, follow the current recovery runbook's
+[assessment before resuming](../runbooks/work-items-recovery.md#assess-before-resuming),
+including its stop condition: record restored sequence values, accepted jobs
+and their publication state, and queued and unacknowledged message counts.
+
+Resume only after any stale-message or missing-delivery discrepancy found by
+that assessment has been addressed. No automated reconciliation exists
+([#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130),
+[#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131)); while a
+discrepancy remains unresolved, keep the affected processing and new client
+requests stopped.
+
+Then resume in the runbook's order: API publication, worker consumption, and
+finally client requests. After the API is running, confirm that:
 
     GET /items
     GET /processing-jobs/{id}
 
-return the same recovered state.
-
-If unpublished outbox rows were restored, start RabbitMQ, the API, and the worker, then confirm that the outbox publisher records `published_at` and the processing job reaches a terminal state.
+return the recovered state. If unpublished outbox rows were restored, confirm
+that the outbox publisher records `published_at` and the processing job
+reaches a terminal state.
 
 Recovery verification should use both datastore evidence and application behavior.
 
@@ -488,7 +520,7 @@ If an outbox message was already marked `published_at` before the backup and the
 
 The outbox publisher will not republish it, and nothing currently reconciles that state.
 
-Recovering broker-held delivery responsibility needs a separate recovery or reconciliation design. This backup does not provide one.
+Recovering broker-held delivery responsibility needs a separate recovery or reconciliation design. This backup does not provide one. The crash-consistency experiment reproduced this blocked state and a second divergence, stale queued messages targeting reused IDs; both remain open as [#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130) and [#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131). See the [current recovery runbook](../runbooks/work-items-recovery.md).
 
 ## Recovery responsibility boundary
 
@@ -501,8 +533,8 @@ The local recovery model separates responsibilities:
         -> schema + runtime privileges
 
     tools/postgres-backup-local
-        -> accepted-work data + sequence backup/restore
-           (work_items, processing_jobs, outbox_messages)
+        -> accepted-work and result data + sequence backup/restore
+           (work_items, processing_jobs, outbox_messages, work_item_results)
 
     zero_to_prod_app / zero_to_prod_worker
         -> normal runtime access

@@ -7,12 +7,14 @@ remain the factual source for what each issue did and observed.
 
 ## Status
 
-Status as of the Issue #119 verification on 2026-10-10: the engineering work
-was complete; the Issue #119 reconciliation was awaiting review, final CI, and
-merge; and the milestone was still open. Final baseline CI remains an
-outstanding #119 acceptance criterion until it passes. The reference-workload
-decision takes effect on merge. Check the milestone and the #119 pull request
-for later status.
+Complete. The Issue #119 reconciliation merged on 2026-10-10 in
+[PR #132](https://github.com/ZakariaAitAli/zero-to-prod/pull/132) as merge
+commit `2b28df5`, and CI passed on that commit on `main`. Issue #119 and the
+Sprint 03 milestone were closed the same day, and `2b28df5` carries the signed
+`sprint-03` tag. The reference-workload decision below is in effect.
+
+The [Issue #119 verification](#issue-119-verification) section records the
+state before that merge.
 
 ## Outcome
 

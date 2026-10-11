@@ -1,0 +1,5 @@
+*
+!apps/work-items/web/
+apps/work-items/web/node_modules/
+apps/work-items/web/dist/
+!infra/security-lab/ingress/nginx.conf
