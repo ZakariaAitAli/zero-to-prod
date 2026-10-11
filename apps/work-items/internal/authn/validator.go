@@ -27,6 +27,12 @@ const (
 // authentication failure.
 var ErrUnavailable = errors.New("signing keys unavailable")
 
+// unavailable keeps the fetch failure for logs; callers match ErrUnavailable
+// with errors.Is.
+func unavailable(cause error) error {
+	return fmt.Errorf("%w: %v", ErrUnavailable, cause)
+}
+
 // Failure is a token that was examined and rejected. Category names the
 // reason for logs; it never contains token material.
 type Failure struct {
@@ -101,7 +107,7 @@ func httpClient(caFile string) (*http.Client, error) {
 }
 
 // Validate verifies a compact JWS access token and returns its principal.
-// Errors are *Failure (rejected token) or ErrUnavailable (cannot judge).
+// Errors are *Failure (rejected token) or wrap ErrUnavailable (cannot judge).
 func (v *Validator) Validate(ctx context.Context, raw string) (Principal, error) {
 	message, err := jws.ParseString(raw)
 	if err != nil || len(message.Signatures()) != 1 {
@@ -116,7 +122,7 @@ func (v *Validator) Validate(ctx context.Context, raw string) (Principal, error)
 
 	keys, err := v.keys(ctx)
 	if err != nil {
-		return Principal{}, ErrUnavailable
+		return Principal{}, unavailable(err)
 	}
 
 	keyID, _ := headers.KeyID()
@@ -126,7 +132,7 @@ func (v *Validator) Validate(ctx context.Context, raw string) (Principal, error)
 		// leaves the token undecided.
 		refreshed, err := v.refreshForUnknownKey(ctx)
 		if err != nil {
-			return Principal{}, ErrUnavailable
+			return Principal{}, unavailable(err)
 		}
 		if _, found := refreshed.LookupKeyID(keyID); !found {
 			return Principal{}, &Failure{Category: "unknown_key"}
