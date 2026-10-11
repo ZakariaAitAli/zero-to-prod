@@ -3,7 +3,8 @@
 # An overlay on infra/security-lab/compose.yaml, used only through
 # tools/security-lab-auth-experiment. Candidates run under profiles so each
 # configuration can be measured alone and removed after the evidence is
-# recorded. Nothing here publishes a host port.
+# recorded. Nothing here publishes a host port. The cookie-store control and
+# the Pomerium arm were removed after their evidence was recorded (ADR 0004).
 
 services:
   ingress:
@@ -17,8 +18,6 @@ services:
         aliases:
           - work-items.localhost
           - auth.work-items.localhost
-          - authn.work-items.localhost
-          - pomerium-app.work-items.localhost
       idp: {}
 
   keycloak-postgres:
@@ -106,21 +105,6 @@ services:
       keycloak:
         condition: service_healthy
 
-  pomerium:
-    profiles: [pomerium]
-    image: pomerium/pomerium:v0.33.4@sha256:dc0a59dc2709f64463f970bf66484a00e91f9af0d6468b493cc4c89ee83c70fd
-    command: ["--config=/run/secrets/pomerium.yaml"]
-    environment:
-      SSL_CERT_FILE: /lab-ca/ca.crt
-    secrets:
-      - pomerium.yaml
-    volumes:
-      - ${ZTP_AUTH_EXPERIMENT_CA_FILE:?set by tools/security-lab-auth-experiment}:/lab-ca/ca.crt:ro
-    networks:
-      - app
-    depends_on:
-      keycloak:
-        condition: service_healthy
 
   # One-off probes and administrative calls on the identity network.
   idp-probe:
@@ -147,5 +131,3 @@ secrets:
     file: ${ZTP_AUTH_EXPERIMENT_SECRETS_DIR:?set by tools/security-lab-auth-experiment}/valkey.conf
   oauth2-proxy-server-side.cfg:
     file: ${ZTP_AUTH_EXPERIMENT_SECRETS_DIR:?set by tools/security-lab-auth-experiment}/oauth2-proxy-server-side.cfg
-  pomerium.yaml:
-    file: ${ZTP_AUTH_EXPERIMENT_SECRETS_DIR:?set by tools/security-lab-auth-experiment}/pomerium.yaml

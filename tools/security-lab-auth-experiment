@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Issue #121 authentication comparison experiment (scaffolding).
 #
-# Runs Keycloak with oauth2-proxy (server-side session store) and
-# Pomerium as an overlay on the security lab, checks the critical assumptions,
+# Runs Keycloak with oauth2-proxy (server-side session store) as an
+# overlay on the security lab, checks the critical assumptions,
 # and records measured behavior. It is removed or generalized when the
 # experiment concludes (ADR 0004).
 set -euo pipefail
@@ -27,7 +27,6 @@ HTTPS_PORT=9443
 APP="https://work-items.localhost:${HTTPS_PORT}"
 AUTH_HOST="auth.work-items.localhost"
 ISSUER="https://${AUTH_HOST}:${HTTPS_PORT}/realms/work-items"
-POMERIUM_APP="https://pomerium-app.work-items.localhost:${HTTPS_PORT}"
 API_AUDIENCE="work-items-api"
 # Experiment lifetimes: short so expiry and refresh are observable.
 ACCESS_TOKEN_SECONDS=120
@@ -77,13 +76,10 @@ init_state() {
   printf 'project=%s-auth-experiment\n' "$PROJECT" > "$EXP_MARKER"
 
   local name
-  for name in keycloak-db-password gateway-client-secret pomerium-client-secret \
+  for name in keycloak-db-password gateway-client-secret \
               automation-client-secret experiment-admin-secret lab-user-password \
               valkey-password oauth2-proxy-cookie-secret; do
     [[ -s "${EXP_SECRETS}/${name}" ]] || openssl rand -hex 16 | write_secret "$name"
-  done
-  for name in pomerium-shared-secret pomerium-cookie-secret; do
-    [[ -s "${EXP_SECRETS}/${name}" ]] || openssl rand -base64 32 | write_secret "$name"
   done
 
   issue_certificate
@@ -98,7 +94,7 @@ issue_certificate() {
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:work-items.localhost,DNS:${AUTH_HOST},DNS:authn.work-items.localhost,DNS:pomerium-app.work-items.localhost
+subjectAltName=DNS:work-items.localhost,DNS:${AUTH_HOST}
 subjectKeyIdentifier=hash
 authorityKeyIdentifier=keyid
 EOF_EXT
@@ -161,7 +157,6 @@ EOF_CONF
   "bruteForceProtected": true, "registrationAllowed": false,
   "clients": [
     $(browser_client work-items-gateway "$(secret gateway-client-secret)" "${APP}/oauth2/callback" "${APP}"),
-    $(browser_client pomerium-gateway "$(secret pomerium-client-secret)" "https://authn.work-items.localhost:${HTTPS_PORT}/oauth2/callback" "${POMERIUM_APP}" "https://authn.work-items.localhost:${HTTPS_PORT}"),
     { "clientId": "work-items-automation", "enabled": true, "publicClient": false,
       "clientAuthenticatorType": "client-secret", "secret": "$(secret automation-client-secret)",
       "standardFlowEnabled": false, "directAccessGrantsEnabled": false,
@@ -225,26 +220,6 @@ save ""
 appendonly no
 EOF_VALKEY
 
-  cat <<EOF_POMERIUM | write_secret pomerium.yaml
-insecure_server: true
-address: ":80"
-authenticate_service_url: https://authn.work-items.localhost:${HTTPS_PORT}
-idp_provider: oidc
-idp_provider_url: ${ISSUER}
-idp_client_id: pomerium-gateway
-idp_client_secret: $(secret pomerium-client-secret)
-# Pomerium requests offline_access by default; this realm does not grant
-# offline tokens, so request the same scopes as oauth2-proxy.
-idp_scopes: [openid, profile, email]
-shared_secret: $(secret pomerium-shared-secret)
-cookie_secret: $(secret pomerium-cookie-secret)
-routes:
-  - from: ${POMERIUM_APP}
-    to: http://ingress:8090
-    allow_any_authenticated_user: true
-    set_request_headers:
-      Authorization: "Bearer \${pomerium.access_token}"
-EOF_POMERIUM
 }
 
 # ---------------------------------------------------------------------------
@@ -567,117 +542,6 @@ outages() {
 }
 
 # ---------------------------------------------------------------------------
-# Pomerium arm (trust path first)
-# ---------------------------------------------------------------------------
-
-pomerium_view() {
-  curl -sS --cacert "$CA" -b "$1" -c "$1" -o "${1}.body" -w '%{http_code}' --max-time 15 \
-    "${POMERIUM_APP}/" || echo error
-}
-
-run_pomerium() {
-  local work token status area="pomerium in-memory"
-  work="$(mktemp -d)"
-  RESULTS=(); FAILED=0
-
-  wait_for_issuer
-  gate_issuer_gateway pomerium
-  keycloak_form_login "${work}/jar" "${POMERIUM_APP}/" > "${work}/jar.body"
-  token="$(cat "${work}/jar.body")"
-  local iss_claim
-  iss_claim="$(claims iss <<< "$token")"
-  expect "G3 forwarding" "pomerium: upstream receives the IdP access token" "iss=${ISSUER}" "$iss_claim"
-
-  if [[ "$iss_claim" != "iss=${ISSUER}" ]]; then
-    record "$area" "trust path" "IdP token" "mismatch: arm stopped" info
-    write_results "${EVIDENCE_DIR}/pomerium.json"
-    rm -rf -- "$work"
-    return 0
-  fi
-
-  expect "G2 audience" "pomerium: access token aud includes ${API_AUDIENCE}" "yes" "$(has_audience <<< "$token")"
-  record "G2 audience" "pomerium: token summary" "observe" "$(claims aud,azp,typ,lifetime <<< "$token")" info
-
-  # Captured access token: control while the session is active.
-  local captured="$token"
-  status="$(kc_curl -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${captured#Bearer }" \
-    "${ISSUER}/protocol/openid-connect/userinfo")"
-  record "$area" "captured token at IdP userinfo before sign_out" "observe" "http=${status}" info
-
-  cp "${work}/jar" "${work}/jar.copy"
-  # Run 1 did not follow sign_out's redirect: the route host only redirects
-  # to the authenticate host, which ends the session and then redirects to
-  # the IdP's end-session endpoint.
-  status="$(curl -sS -L --cacert "$CA" -b "${work}/jar" -c "${work}/jar" -o /dev/null \
-    -w '%{http_code} %{num_redirects}' "${POMERIUM_APP}/.pomerium/sign_out")"
-  record "$area" "sign_out followed to the IdP (final status, redirects)" "observe" "$status" info
-  status="$(curl -sS --cacert "$CA" -b "${work}/jar" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
-  expect "$area" "after sign_out, same browser" "302" "$status"
-  status="$(curl -sS --cacert "$CA" -b "${work}/jar.copy" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
-  expect "$area" "after sign_out, replayed copied cookie" "302" "$status"
-
-  # Captured access token after gateway sign-out (which also redirects to the
-  # IdP's end-session endpoint).
-  record "$area" "captured access token after sign_out" "observe" "$(claims expires_in <<< "$captured")" info
-  status="$(kc_curl -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${captured#Bearer }" \
-    "${ISSUER}/protocol/openid-connect/userinfo")"
-  record "$area" "captured token at IdP userinfo after sign_out" "observe" "http=${status}" info
-
-  # IdP-side session termination: time until the gateway rejects.
-  keycloak_form_login "${work}/jar3" "${POMERIUM_APP}/" >/dev/null
-  idp_logout_user
-  local start elapsed=0
-  start="$(date +%s)"
-  status="$(pomerium_view "${work}/jar3")"
-  record "$area" "immediately after IdP-side logout" "observe" "http=${status}" info
-  while [[ "$status" == 200 && "$elapsed" -lt 240 ]]; do
-    sleep 10
-    status="$(pomerium_view "${work}/jar3")"
-    elapsed=$(( $(date +%s) - start ))
-  done
-  expect "$area" "after IdP-side logout, within 240 s" "302" "$status"
-  record "$area" "seconds until gateway rejected" "observe" "${elapsed}" info
-
-  # Identity provider down: same timings as the oauth2-proxy arm.
-  keycloak_form_login "${work}/jar4" "${POMERIUM_APP}/" >/dev/null
-  local login_time
-  login_time="$(date +%s)"
-  must compose stop keycloak
-  expect "$area" "IdP down: existing session before refresh" "200" "$(pomerium_view "${work}/jar4")"
-  sleep_until $(( login_time + 75 ))
-  status="$(pomerium_view "${work}/jar4")"
-  record "$area" "IdP down: existing session at 75 s, token unexpired" "observe" \
-    "http=${status} $(claims expires_in < "${work}/jar4.body" 2>/dev/null || echo)" info
-  sleep_until $(( login_time + ACCESS_TOKEN_SECONDS + 10 ))
-  status="$(pomerium_view "${work}/jar4")"
-  expect "$area" "IdP down: existing session after the access token expired" "302" "$status"
-  if [[ "$status" == 200 ]]; then
-    record "$area" "IdP down: token forwarded after expiry" "observe" "$(claims expires_in < "${work}/jar4.body")" info
-  fi
-  status="$(curl -sS -L --cacert "$CA" -o /dev/null -w '%{http_code}' --max-time 20 "${POMERIUM_APP}/")"
-  expect "$area" "IdP down: new login" "503" "$status"
-  must compose up -d --wait keycloak
-  wait_for_issuer
-  keycloak_form_login "${work}/jar5" "${POMERIUM_APP}/" > "${work}/jar5.body"
-  expect "$area" "IdP restored: new login works" "iss=${ISSUER}" "$(claims iss < "${work}/jar5.body")"
-
-  keycloak_form_login "${work}/jar2" "${POMERIUM_APP}/" >/dev/null
-  must compose restart pomerium
-  sleep 8
-  status="$(curl -sS --cacert "$CA" -b "${work}/jar2" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
-  expect "$area" "gateway restart: existing session" "302" "$status"
-
-  must compose stop pomerium
-  status="$(curl -sS --cacert "$CA" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
-  expect "$area" "gateway down" "503" "$status"
-  must compose --profile pomerium up -d pomerium
-
-  write_results "${EVIDENCE_DIR}/pomerium.json"
-  rm -rf -- "$work"
-  [[ "$FAILED" -eq 0 ]]
-}
-
-# ---------------------------------------------------------------------------
 # Footprint
 # ---------------------------------------------------------------------------
 
@@ -748,11 +612,10 @@ measure() {
 # Lifecycle
 # ---------------------------------------------------------------------------
 
-EXPERIMENT_SERVICES=(keycloak keycloak-postgres oauth2-proxy-server-side valkey pomerium)
+EXPERIMENT_SERVICES=(keycloak keycloak-postgres oauth2-proxy-server-side valkey)
 
 down_candidates() {
-  compose --profile keycloak --profile oauth2-proxy-server-side \
-    --profile pomerium rm -sf "${EXPERIMENT_SERVICES[@]}" >/dev/null 2>&1 || true
+  compose --profile keycloak --profile oauth2-proxy-server-side rm -sf "${EXPERIMENT_SERVICES[@]}" >/dev/null 2>&1 || true
 }
 
 restore_base_ingress() {
@@ -785,12 +648,11 @@ case "${1:-}" in
   gate-issuer) RESULTS=(); gate_issuer; write_results "${EVIDENCE_DIR}/gate-issuer.json" ;;
   gate-audience) RESULTS=(); gate_machine_audience; write_results "${EVIDENCE_DIR}/gate-audience.json" ;;
   run-oauth2) shift; run_oauth2 "$1" ;;
-  run-pomerium) run_pomerium ;;
   measure) shift; measure "$@" ;;
   reload-ingress) compose up -d --force-recreate --wait ingress ;;
   stop-candidates) down_candidates ;;
   remove) remove_experiment ;;
   purge-state) purge_state ;;
   compose) shift; compose "$@" ;;
-  *) echo "usage: $0 init|up-keycloak|up <profile>|gate-issuer|gate-audience|run-oauth2 server-side|run-pomerium|measure ...|stop-candidates|remove|purge-state" >&2; exit 2 ;;
+  *) echo "usage: $0 init|up-keycloak|up <profile>|gate-issuer|gate-audience|run-oauth2 server-side|measure ...|stop-candidates|remove|purge-state" >&2; exit 2 ;;
 esac
