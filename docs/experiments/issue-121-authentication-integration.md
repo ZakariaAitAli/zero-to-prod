@@ -37,7 +37,9 @@ Lifetimes: access token 300 s; oauth2-proxy refreshes a session older than
 ## Methods and their limits
 
 - **Browser sign-in is scripted**: curl follows the gateway's redirects and
-  submits Keycloak's login form. No browser exercised the flows in this run.
+  submits Keycloak's login form. No browser exercised the automated runs;
+  manual browser checks are recorded separately under
+  [manual browser verification](#manual-browser-verification).
 - **Captured browser token**: the harness reads the token a session forwards
   from oauth2-proxy's `/oauth2/auth`, using a probe container on the internal
   `app` network. This stands in for a token captured downstream of the gateway;
@@ -342,10 +344,13 @@ default).
 
 ## Manual browser verification
 
-**Date:** 2026-10-11. **Environment:** Brave on Windows 11 (Brave version not
-recorded), the lab CA trusted in the Windows user store, DevTools device
-(mobile) emulation enabled. Steps from the guide's manual browser check, run
-against the lab before the sign-out fix below.
+Two runs of the guide's manual browser check, both on 2026-10-11, in Brave on
+Windows 11 (Brave version not recorded) with the lab CA trusted in the Windows
+user store.
+
+### First run, before the sign-out fix
+
+DevTools device (mobile) emulation was enabled.
 
 | Step | Result |
 | --- | --- |
@@ -370,8 +375,8 @@ site, so `null` was refused.
 
 **Cause, confirmed in Chromium.** A local probe served pages with a given
 `Referrer-Policy` and echoed the headers of a same-origin form POST and a
-same-origin `fetch()` POST. It ran in the Claude desktop app's built-in
-browser (Chromium 152, desktop, no emulation):
+same-origin `fetch()` POST. It ran in a Chromium 152 browser on Windows
+(desktop, no emulation):
 
 | Page policy | Request | `Origin` | `Sec-Fetch-Mode` | `Sec-Fetch-Site` |
 | --- | --- | --- | --- | --- |
@@ -391,11 +396,33 @@ refused, also with the header (see [CSRF](#csrf-session-cookie-present)). The
 scripted checks replay the exact failing headers (refused) and the UI's fetch
 headers (accepted, session and Keycloak session ended).
 
-**Limitations.** The Brave version was not recorded. Device emulation was on,
-so the check reflects Brave's behavior under emulation. The probe shows the
-same `null` Origin without emulation, but in Chromium 152, not Brave. Sign-out
-after the fix has **not yet been verified in a browser**. The manual check
-(guide steps 8 and 9) remains outstanding for it.
+### Retest, after the sign-out fix
+
+The sign-out steps (guide steps 8 and 9) were repeated after the fix was
+deployed to the lab:
+
+| Step | Result |
+| --- | --- |
+| Sign out | Passed: the application returned to **Sign in required** |
+| Session cookie | Passed: `__Host-wi-session` disappeared from browser storage |
+| Sign in again | Passed: Keycloak's login page opened and required credentials |
+
+The first run's 403 is kept above; the retest shows the fix, not a different
+first result.
+
+### Limitations and outstanding checks
+
+- The Brave version was not recorded for either run.
+- The first run had device emulation enabled; whether it was enabled during
+  the retest was not recorded. The probe shows the `null` Origin without
+  emulation, but in Chromium 152, not Brave.
+- The retest covered the sign-out steps only. Sign-in, Work Item processing,
+  and session refresh were observed in the first run, before the fix, and
+  were not repeated.
+- The sign-out request's headers in the browser (a `fetch` with the site's
+  `Origin` and `X-Requested-With`) were not inspected during the retest.
+  They are covered only by the scripted checks and the Chromium probe.
+- One browser and one session per run; no other browsers.
 
 ## Pending cleanup
 

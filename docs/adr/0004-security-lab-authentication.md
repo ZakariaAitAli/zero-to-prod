@@ -223,7 +223,9 @@ The candidate was integrated into the base security lab and verified with
   Brave check then found browser sign-out failing with 403: under
   `Referrer-Policy: no-referrer` a form post sends `Origin: null`. Sign-out
   now uses a same-origin `fetch()` with the CSRF header; `null` origins stay
-  refused.
+  refused. A Brave retest of the sign-out steps after the fix passed: the
+  application returned to "Sign in required", the session cookie was
+  removed, and signing in again required Keycloak credentials.
 - **Captured access-token replay:** accepted by the API after sign-out until
   expiry, as expected under local validation, and rejected by the API
   (`expired`) after expiry plus the 30 s skew.
@@ -260,8 +262,9 @@ configured CA) was fixed with a regression test. The test for concurrent
 key refreshes detects a non-atomic refresh only probabilistically (17 of 20
 runs against the previous shape).
 
-**Unresolved:** browser sign-out after the fix is not yet verified (a manual
-Brave check passed sign-in, processing, and refresh, and failed the earlier
-sign-out); no authorization; single runs.
+**Unresolved:** manual browser checks cover one browser (Brave, version not
+recorded); the retest after the sign-out fix repeated only the sign-out
+steps, and the browser's sign-out request headers were not inspected; no
+authorization; single runs.
 
 The decision stays Proposed pending review.
