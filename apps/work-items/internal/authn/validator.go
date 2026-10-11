@@ -76,12 +76,17 @@ func NewValidator(ctx context.Context, config Config) (*Validator, error) {
 		return nil, err
 	}
 
-	cache, err := jwk.NewCache(ctx, httprc.NewClient(httprc.WithHTTPClient(client)))
+	cache, err := jwk.NewCache(ctx, httprc.NewClient())
 	if err != nil {
 		return nil, fmt.Errorf("create JWKS cache: %w", err)
 	}
 
-	if err := cache.Register(ctx, config.JWKSURL, jwk.WithWaitReady(false)); err != nil {
+	// The HTTP client is set per resource: Register otherwise substitutes
+	// jwx's default fetch client, which does not trust OIDC_CA_FILE.
+	if err := cache.Register(ctx, config.JWKSURL,
+		jwk.WithHTTPClient(client),
+		jwk.WithWaitReady(false),
+	); err != nil {
 		return nil, fmt.Errorf("register JWKS URL: %w", err)
 	}
 

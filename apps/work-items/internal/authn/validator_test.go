@@ -6,10 +6,14 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -245,6 +249,52 @@ func unsignedToken(t *testing.T) string {
 		strconv.FormatInt(time.Now().Add(5*time.Minute).Unix(), 10) + `}`
 	encode := base64.RawURLEncoding.EncodeToString
 	return encode([]byte(header)) + "." + encode([]byte(payload)) + "."
+}
+
+// The issuer's certificate is signed by a private CA, as in the security lab:
+// keys are fetched only when OIDC_CA_FILE is trusted.
+func TestValidateFetchesKeysOverTLSWithConfiguredCA(t *testing.T) {
+	key := newSigningKey(t, "k1")
+	set := jwk.NewSet()
+	_ = set.AddKey(key.public)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(set)
+	}))
+	t.Cleanup(server.Close)
+
+	caFile := filepath.Join(t.TempDir(), "ca.crt")
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := os.WriteFile(caFile, certificate, 0o600); err != nil {
+		t.Fatalf("write CA file: %v", err)
+	}
+
+	newValidator := func(caFile string) *Validator {
+		validator, err := NewValidator(context.Background(), Config{
+			Mode:       ModeOIDC,
+			Issuer:     testIssuer,
+			Audience:   testAudience,
+			JWKSURL:    server.URL,
+			Algorithms: []jwa.SignatureAlgorithm{jwa.RS256()},
+			CAFile:     caFile,
+			ClockSkew:  30 * time.Second,
+		})
+		if err != nil {
+			t.Fatalf("new validator: %v", err)
+		}
+		return validator
+	}
+	token := sign(t, key.private, jwa.RS256(), validClaims())
+
+	if _, err := newValidator(caFile).Validate(context.Background(), token); err != nil {
+		t.Fatalf("validate with configured CA: %v", err)
+	}
+
+	// Control: without the CA the same server is not trusted.
+	_, err := newValidator("").Validate(context.Background(), token)
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("expected an untrusted-certificate ErrUnavailable, got %v", err)
+	}
 }
 
 func TestValidateReportsUnavailableKeys(t *testing.T) {
