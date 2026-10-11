@@ -83,22 +83,8 @@ services:
       timeout: 3s
       retries: 15
 
-  oauth2-proxy-cookie:
-    profiles: [oauth2-proxy-cookie]
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916
-    command: ["--config=/run/secrets/oauth2-proxy-cookie.cfg"]
-    secrets:
-      - oauth2-proxy-cookie.cfg
-    volumes:
-      - ${ZTP_AUTH_EXPERIMENT_CA_FILE:?set by tools/security-lab-auth-experiment}:/lab-ca/ca.crt:ro
-    networks:
-      app:
-        aliases: [oauth2-proxy]
-    read_only: true
-    # OIDC discovery runs at startup and the process exits if it fails.
-    depends_on:
-      keycloak:
-        condition: service_healthy
+  # The cookie-store control (A1) was removed after its evidence was recorded:
+  # it does not meet the server-side-session requirement.
 
   oauth2-proxy-server-side:
     profiles: [oauth2-proxy-server-side]
@@ -113,6 +99,7 @@ services:
         aliases: [oauth2-proxy]
       session: {}
     read_only: true
+    # OIDC discovery runs at startup and the process exits if it fails.
     depends_on:
       valkey:
         condition: service_healthy
@@ -158,8 +145,6 @@ secrets:
     file: ${ZTP_AUTH_EXPERIMENT_SECRETS_DIR:?set by tools/security-lab-auth-experiment}/keycloak-db-password
   valkey.conf:
     file: ${ZTP_AUTH_EXPERIMENT_SECRETS_DIR:?set by tools/security-lab-auth-experiment}/valkey.conf
-  oauth2-proxy-cookie.cfg:
-    file: ${ZTP_AUTH_EXPERIMENT_SECRETS_DIR:?set by tools/security-lab-auth-experiment}/oauth2-proxy-cookie.cfg
   oauth2-proxy-server-side.cfg:
     file: ${ZTP_AUTH_EXPERIMENT_SECRETS_DIR:?set by tools/security-lab-auth-experiment}/oauth2-proxy-server-side.cfg
   pomerium.yaml:

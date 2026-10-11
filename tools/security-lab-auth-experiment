@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Issue #121 authentication comparison experiment (scaffolding).
 #
-# Runs Keycloak with oauth2-proxy (cookie and server-side session stores) and
+# Runs Keycloak with oauth2-proxy (server-side session store) and
 # Pomerium as an overlay on the security lab, checks the critical assumptions,
 # and records measured behavior. It is removed or generalized when the
 # experiment concludes (ADR 0004).
@@ -175,10 +175,10 @@ EOF_CONF
 }
 EOF_REALM
 
-  local store
-  for store in cookie server-side; do
-    {
-      cat <<EOF_OAUTH2
+  # The cookie-store control (A1) was removed after its evidence was
+  # recorded; only the server-side store configuration remains.
+  {
+    cat <<EOF_OAUTH2
 provider = "keycloak-oidc"
 oidc_issuer_url = "${ISSUER}"
 client_id = "work-items-gateway"
@@ -202,17 +202,12 @@ cookie_expire = "8h"
 cookie_refresh = "${COOKIE_REFRESH}"
 whitelist_domains = ["${AUTH_HOST}:${HTTPS_PORT}"]
 EOF_OAUTH2
-      if [[ "$store" == server-side ]]; then
-        cat <<EOF_STORE
+    cat <<EOF_STORE
 session_store_type = "redis"
 redis_connection_url = "redis://valkey:6379"
 redis_password = "$(secret valkey-password)"
 EOF_STORE
-      else
-        echo 'session_store_type = "cookie"'
-      fi
-    } | write_secret "oauth2-proxy-${store}.cfg"
-  done
+  } | write_secret oauth2-proxy-server-side.cfg
 
   cat <<EOF_VALKEY | write_secret valkey.conf
 bind 0.0.0.0
@@ -441,11 +436,7 @@ run_oauth2() {
   status="$(upstream_view "${work}/jar")"
   expect "$area" "after sign_out, same browser" "401" "$status"
   status="$(upstream_view "${work}/jar.copy")"
-  if [[ "$store" == cookie ]]; then
-    expect "$area" "after sign_out, replayed copied cookie" "200" "$status"
-  else
-    expect "$area" "after sign_out, replayed copied cookie" "401" "$status"
-  fi
+  expect "$area" "after sign_out, replayed copied cookie" "401" "$status"
 
   # Access-token replay after gateway logout.
   record "$area" "captured access token after sign_out" "observe" "$(claims expires_in <<< "$captured")" info
@@ -688,10 +679,10 @@ measure() {
 # Lifecycle
 # ---------------------------------------------------------------------------
 
-EXPERIMENT_SERVICES=(keycloak keycloak-postgres oauth2-proxy-cookie oauth2-proxy-server-side valkey pomerium)
+EXPERIMENT_SERVICES=(keycloak keycloak-postgres oauth2-proxy-server-side valkey pomerium)
 
 down_candidates() {
-  compose --profile keycloak --profile oauth2-proxy-cookie --profile oauth2-proxy-server-side \
+  compose --profile keycloak --profile oauth2-proxy-server-side \
     --profile pomerium rm -sf "${EXPERIMENT_SERVICES[@]}" >/dev/null 2>&1 || true
 }
 
@@ -732,5 +723,5 @@ case "${1:-}" in
   remove) remove_experiment ;;
   purge-state) purge_state ;;
   compose) shift; compose "$@" ;;
-  *) echo "usage: $0 init|up-keycloak|up <profile>|gate-issuer|gate-audience|run-oauth2 <cookie|server-side>|run-pomerium|measure ...|stop-candidates|remove|purge-state" >&2; exit 2 ;;
+  *) echo "usage: $0 init|up-keycloak|up <profile>|gate-issuer|gate-audience|run-oauth2 server-side|run-pomerium|measure ...|stop-candidates|remove|purge-state" >&2; exit 2 ;;
 esac
