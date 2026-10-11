@@ -41,7 +41,14 @@ compose() {
   ZTP_AUTH_EXPERIMENT_SECRETS_DIR="$EXP_SECRETS" \
   ZTP_AUTH_EXPERIMENT_TLS_DIR="$EXP_TLS" \
   ZTP_AUTH_EXPERIMENT_CA_FILE="$CA" \
-    docker compose --project-name "$PROJECT" -f "$BASE_COMPOSE" -f "$OVERLAY_COMPOSE" "$@"
+    docker compose --project-name "$PROJECT" -f "$BASE_COMPOSE" -f "$OVERLAY_COMPOSE" \
+      --profile keycloak "$@"
+}
+
+# The gateways depend on Keycloak, so every command enables the shared
+# keycloak profile; restore steps must not fail silently.
+must() {
+  "$@" >/dev/null 2>&1 || die "command failed: $*"
 }
 
 secret() { tr -d '\r\n' < "${EXP_SECRETS}/$1"; }
@@ -510,7 +517,7 @@ outages() {
   login_oauth2 "${work}/jar3"
   local login_time
   login_time="$(date +%s)"
-  compose stop keycloak >/dev/null 2>&1
+  must compose stop keycloak
   status="$(upstream_view "${work}/jar3")"
   expect "$area" "IdP down: existing session before refresh" "200" "$status"
   sleep_until $(( login_time + 75 ))
@@ -525,22 +532,33 @@ outages() {
   fi
   status="$(curl -sS -L --cacert "$CA" -o /dev/null -w '%{http_code}' --max-time 20 "${APP}/oauth2/start?rd=%2F")"
   expect "$area" "IdP down: new login" "503" "$status"
-  compose --profile keycloak up -d --wait keycloak >/dev/null 2>&1
+  must compose up -d --wait keycloak
   wait_for_issuer
   login_oauth2 "${work}/jar4"
   expect "$area" "IdP restored: new login works" "200" "$(upstream_view "${work}/jar4")"
 
   # Gateway down.
-  compose stop "$service" >/dev/null 2>&1
+  must compose stop "$service"
   expect "$area" "gateway down: existing session" "503" "$(upstream_view "${work}/jar4")"
-  compose --profile "$service" up -d "$service" >/dev/null 2>&1
+  must compose --profile "$service" up -d --wait "$service"
   sleep 5
   expect "$area" "gateway restored: existing session without re-login" "200" "$(upstream_view "${work}/jar4")"
 
   if [[ "$store" == server-side ]]; then
-    compose stop valkey >/dev/null 2>&1
+    # nginx classifies oauth2-proxy's 401 using the session cookie and
+    # oauth2-proxy's /ready endpoint (see the experiment nginx.conf).
+    local forged="${work}/forged" empty="${work}/empty-jar"
+    : > "$empty"
+    printf '%s\tFALSE\t/\tTRUE\t0\t__Host-wi-session\t%s\n' "work-items.localhost" \
+      "__Host-wi-session-$(openssl rand -hex 16).$(openssl rand -hex 16)" > "$forged"
+    expect "$area" "store up: no session cookie" "401" "$(upstream_view "$empty")"
+    expect "$area" "store up: invalid session cookie" "401" "$(upstream_view "$forged")"
+
+    must compose stop valkey
     expect "$area" "store down: existing session" "503" "$(upstream_view "${work}/jar4")"
-    compose --profile oauth2-proxy-server-side up -d --wait valkey >/dev/null 2>&1
+    expect "$area" "store down: invalid session cookie (cannot be checked)" "503" "$(upstream_view "$forged")"
+    expect "$area" "store down: no session cookie" "401" "$(upstream_view "$empty")"
+    must compose --profile oauth2-proxy-server-side up -d --wait valkey
     sleep 3
     expect "$area" "store restored (no persistence): existing session" "401" "$(upstream_view "${work}/jar4")"
     login_oauth2 "${work}/jar5"
@@ -580,6 +598,12 @@ run_pomerium() {
   expect "G2 audience" "pomerium: access token aud includes ${API_AUDIENCE}" "yes" "$(has_audience <<< "$token")"
   record "G2 audience" "pomerium: token summary" "observe" "$(claims aud,azp,typ,lifetime <<< "$token")" info
 
+  # Captured access token: control while the session is active.
+  local captured="$token"
+  status="$(kc_curl -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${captured#Bearer }" \
+    "${ISSUER}/protocol/openid-connect/userinfo")"
+  record "$area" "captured token at IdP userinfo before sign_out" "observe" "http=${status}" info
+
   cp "${work}/jar" "${work}/jar.copy"
   # Run 1 did not follow sign_out's redirect: the route host only redirects
   # to the authenticate host, which ends the session and then redirects to
@@ -592,16 +616,61 @@ run_pomerium() {
   status="$(curl -sS --cacert "$CA" -b "${work}/jar.copy" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
   expect "$area" "after sign_out, replayed copied cookie" "302" "$status"
 
+  # Captured access token after gateway sign-out (which also redirects to the
+  # IdP's end-session endpoint).
+  record "$area" "captured access token after sign_out" "observe" "$(claims expires_in <<< "$captured")" info
+  status="$(kc_curl -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${captured#Bearer }" \
+    "${ISSUER}/protocol/openid-connect/userinfo")"
+  record "$area" "captured token at IdP userinfo after sign_out" "observe" "http=${status}" info
+
+  # IdP-side session termination: time until the gateway rejects.
+  keycloak_form_login "${work}/jar3" "${POMERIUM_APP}/" >/dev/null
+  idp_logout_user
+  local start elapsed=0
+  start="$(date +%s)"
+  status="$(pomerium_view "${work}/jar3")"
+  record "$area" "immediately after IdP-side logout" "observe" "http=${status}" info
+  while [[ "$status" == 200 && "$elapsed" -lt 240 ]]; do
+    sleep 10
+    status="$(pomerium_view "${work}/jar3")"
+    elapsed=$(( $(date +%s) - start ))
+  done
+  expect "$area" "after IdP-side logout, within 240 s" "302" "$status"
+  record "$area" "seconds until gateway rejected" "observe" "${elapsed}" info
+
+  # Identity provider down: same timings as the oauth2-proxy arm.
+  keycloak_form_login "${work}/jar4" "${POMERIUM_APP}/" >/dev/null
+  local login_time
+  login_time="$(date +%s)"
+  must compose stop keycloak
+  expect "$area" "IdP down: existing session before refresh" "200" "$(pomerium_view "${work}/jar4")"
+  sleep_until $(( login_time + 75 ))
+  status="$(pomerium_view "${work}/jar4")"
+  record "$area" "IdP down: existing session at 75 s, token unexpired" "observe" \
+    "http=${status} $(claims expires_in < "${work}/jar4.body" 2>/dev/null || echo)" info
+  sleep_until $(( login_time + ACCESS_TOKEN_SECONDS + 10 ))
+  status="$(pomerium_view "${work}/jar4")"
+  expect "$area" "IdP down: existing session after the access token expired" "302" "$status"
+  if [[ "$status" == 200 ]]; then
+    record "$area" "IdP down: token forwarded after expiry" "observe" "$(claims expires_in < "${work}/jar4.body")" info
+  fi
+  status="$(curl -sS -L --cacert "$CA" -o /dev/null -w '%{http_code}' --max-time 20 "${POMERIUM_APP}/")"
+  expect "$area" "IdP down: new login" "503" "$status"
+  must compose up -d --wait keycloak
+  wait_for_issuer
+  keycloak_form_login "${work}/jar5" "${POMERIUM_APP}/" > "${work}/jar5.body"
+  expect "$area" "IdP restored: new login works" "iss=${ISSUER}" "$(claims iss < "${work}/jar5.body")"
+
   keycloak_form_login "${work}/jar2" "${POMERIUM_APP}/" >/dev/null
-  compose restart pomerium >/dev/null 2>&1
+  must compose restart pomerium
   sleep 8
   status="$(curl -sS --cacert "$CA" -b "${work}/jar2" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
   expect "$area" "gateway restart: existing session" "302" "$status"
 
-  compose stop pomerium >/dev/null 2>&1
+  must compose stop pomerium
   status="$(curl -sS --cacert "$CA" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
   expect "$area" "gateway down" "503" "$status"
-  compose --profile pomerium up -d pomerium >/dev/null 2>&1
+  must compose --profile pomerium up -d pomerium
 
   write_results "${EVIDENCE_DIR}/pomerium.json"
   rm -rf -- "$work"
@@ -711,8 +780,8 @@ purge_state() {
 
 case "${1:-}" in
   init) init_state ;;
-  up-keycloak) compose --profile keycloak up -d --wait ingress keycloak-postgres keycloak ;;
-  up) shift; compose --profile keycloak --profile "$1" up -d --wait ;;
+  up-keycloak) compose up -d --wait ingress keycloak-postgres keycloak ;;
+  up) shift; compose --profile "$1" up -d --wait ;;
   gate-issuer) RESULTS=(); gate_issuer; write_results "${EVIDENCE_DIR}/gate-issuer.json" ;;
   gate-audience) RESULTS=(); gate_machine_audience; write_results "${EVIDENCE_DIR}/gate-audience.json" ;;
   run-oauth2) shift; run_oauth2 "$1" ;;
