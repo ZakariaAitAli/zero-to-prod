@@ -5,10 +5,13 @@ The security lab is an opt-in, local-first environment for Issue #121
 single HTTPS ingress on host loopback, with private backend services and its
 own runtime secrets.
 
-**Status: intermediate.** This first slice provides the ingress, private
-networks, a private lab CA, and file-based runtime secrets. It has **no
-authentication or authorization**: anyone who can reach the ingress can use
-the API. Datastore TLS, rate limiting, and secret rotation are also not
+**Status: intermediate.** The lab provides the ingress, private networks, a
+private lab CA, file-based runtime secrets, and **authentication**: browsers
+sign in through oauth2-proxy and Keycloak with server-side sessions, machine
+clients use the client-credentials grant, and the API validates every access
+token itself ([ADR 0004](../adr/0004-security-lab-authentication.md),
+Proposed). There is **no authorization**: every authenticated caller can do
+everything. Datastore TLS, rate limiting, and secret rotation are not
 implemented yet. It does not complete Issue #121.
 
 The development lab ([local Work Items guide](local-work-items.md)) is
@@ -19,38 +22,54 @@ start without its own secret files.
 ## Layout
 
 ```text
-Windows browser / WSL client
-        │ https://work-items.localhost:9443   (127.0.0.1 only; lab CA)
+Windows browser / WSL client / machine client
+        │ https://work-items.localhost:9443        (127.0.0.1 only; lab CA)
+        │ https://auth.work-items.localhost:9443   (Keycloak, same ingress)
         ▼
   ingress (nginx) ── edge network
         │  serves the Web UI; forwards /api/items, /api/items/{id}/process,
         │  /api/processing-jobs/{id}; everything else under /api is 404
-        │  plain HTTP on the internal app network
-        ▼
-  API ───────────── app network (internal)
         │
-        ├── data network (internal) ── PostgreSQL, RabbitMQ, worker
+        ├── app network (internal) ── API; oauth2-proxy (auth_request)
+        │                               │
+        │                               └── session network ── Valkey
+        └── idp network (internal) ─── Keycloak ── idp-data network ── Keycloak PostgreSQL
+
+  API ── data network (internal) ── PostgreSQL, RabbitMQ, worker
 ```
 
 | Component | Networks | Published | Runtime secrets (files) |
 | --- | --- | --- | --- |
-| ingress | edge, app | `127.0.0.1:9443 → 8443` | TLS key and certificate (one file in a mounted directory) |
-| api | app, data | none | database URL, RabbitMQ publisher URL |
+| ingress | edge, app, idp | `127.0.0.1:9443 → 8443` | TLS key and certificate (one file in a mounted directory) |
+| api | app, data | none | database URL, RabbitMQ publisher URL; lab CA certificate (public) |
 | worker | data | none | database URL, RabbitMQ worker URL |
 | postgres | data | none | admin, migrator, app, worker passwords |
 | rabbitmq | data | none | definitions (users with password hashes, permissions, queue) |
 | migrate (on demand) | data | none | migrator URL |
+| keycloak | idp, idp-data | none | `keycloak.conf` (database password), realm file (client secrets, lab-user password) |
+| keycloak-postgres | idp-data | none | Keycloak database password |
+| oauth2-proxy | app, session | none | `oauth2-proxy.cfg` (client secret, cookie secret, Valkey password); lab CA certificate |
+| valkey | session | none | `valkey.conf` (password) |
 
-`app` and `data` are Docker `internal` networks. RabbitMQ runs without the
-management plugin and without a default or administrative user; operators use
-`rabbitmqctl` through `docker compose exec`.
+All networks except `edge` are Docker `internal` networks. The ingress has the
+aliases `work-items.localhost` and `auth.work-items.localhost` on the `app`
+network, so the API and oauth2-proxy reach the issuer URL through the ingress
+with verified TLS. The API's network cannot reach Keycloak, its database, or
+Valkey directly. RabbitMQ runs without the management plugin and without a
+default or administrative user; operators use `rabbitmqctl` through
+`docker compose exec`. Keycloak has no administrative user, and the ingress
+does not route its administration console or master realm.
 
 ### Connections in this slice
 
 | Connection | Encryption | Verification |
 | --- | --- | --- |
-| Client → ingress | TLS 1.2/1.3 | Lab CA; certificate name `work-items.localhost`; other names and IP addresses fail the handshake |
-| Ingress → API | none (internal `app` network) | — |
+| Client → ingress | TLS 1.2/1.3 | Lab CA; certificate names `work-items.localhost` and `auth.work-items.localhost`; other names and IP addresses fail the handshake |
+| API, oauth2-proxy → issuer (through the ingress) | TLS 1.2/1.3 | Lab CA, mounted as a public certificate file |
+| Ingress → API, ingress → oauth2-proxy | none (internal `app` network) | — |
+| Ingress → Keycloak | none (internal `idp` network) | — |
+| oauth2-proxy → Valkey | none (internal `session` network) | Valkey password |
+| Keycloak → its PostgreSQL | none (internal `idp-data` network) | Database password |
 | API/worker/migrator → PostgreSQL | none (`sslmode=disable`, internal `data` network) | — |
 | API/worker → RabbitMQ | none (internal `data` network) | — |
 
@@ -65,8 +84,10 @@ under [limitations](#limitations).
 - network access for the first image build (Go modules, pnpm packages, pinned
   base images).
 
-Port 9443 on host loopback must be free; override it with
-`ZTP_SECURITY_LAB_HTTPS_PORT`.
+Port 9443 on host loopback must be free. The port is fixed: the issuer URL,
+the client registrations, and the ingress's internal listener all carry it,
+so `ZTP_SECURITY_LAB_HTTPS_PORT` is no longer supported and the tool refuses
+any other value.
 
 ## Create the lab CA and secrets
 
@@ -88,7 +109,10 @@ Rerunning `init` keeps the existing lab CA and generated passwords, and leaves
 derived files whose content would not change in place. It does replace or
 remove:
 
-- the ingress certificate and key, when missing or within two days of expiry;
+- the ingress certificate and key, when missing, within two days of expiry, or
+  lacking the name `auth.work-items.localhost`;
+- the Keycloak, oauth2-proxy, and Valkey configuration files, if their content
+  would change;
 - the RabbitMQ definitions, when missing or when a RabbitMQ password was just
   generated (its password hashes are salted randomly);
 - derived connection-URL files, if their content would change;
@@ -111,14 +135,18 @@ refuses an existing directory that is not this lab's state.
   addresses excluded.
 - The ingress certificate is valid for 14 days. `init` reissues it when fewer
   than two days remain.
-- Passwords are random per lab. Connection URLs and the RabbitMQ definitions
-  are derived from them.
+- Passwords and client secrets are random per lab. Connection URLs, the
+  RabbitMQ definitions, and the Keycloak, oauth2-proxy, and Valkey
+  configuration files are derived from them.
+- Keycloak imports the realm file only when the realm does not exist yet. A
+  realm created earlier keeps its client secrets and lab-user password even if
+  the files change; `destroy` removes it with the Keycloak database volume.
 
 ### Secret file permissions
 
 With Docker Desktop on WSL 2 (as verified), bind mounts keep the host owner
 and mode, and each image runs as its own unprivileged user (PostgreSQL 70, RabbitMQ 999, ingress 101, API
-and worker `app`). A mode-600 file owned by your WSL user is therefore not
+and worker `app`, Keycloak 1000, oauth2-proxy 65532, Valkey 999). A mode-600 file owned by your WSL user is therefore not
 readable inside those containers. Mounted secret files are mode 644 inside the
 mode-700 `secrets/` directory:
 
@@ -132,8 +160,9 @@ on the host it is protected by the mode-700 state directory.
 
 The files are **not** on tmpfs, **not** encrypted at rest, and **not** managed
 by a secret manager. Compose `secrets:` outside Swarm are plain read-only bind
-mounts. The CA key and the two RabbitMQ source passwords are never mounted and
-stay mode 600.
+mounts. The CA key and the source passwords and client secrets (RabbitMQ,
+client secrets, lab-user password, Valkey password, cookie secret) are never
+mounted and stay mode 600; the mounted configuration files embed them.
 
 ## Start
 
@@ -146,10 +175,13 @@ stay mode 600.
 1. checks every required secret file (exists, is a regular non-empty file;
    certificate verifies against the lab CA, is unexpired, and matches its key);
 2. builds the API, worker, ingress, and migration images;
-3. recreates and starts PostgreSQL and RabbitMQ and waits until healthy;
+3. recreates and starts PostgreSQL, RabbitMQ, Keycloak with its database, and
+   Valkey, and waits until healthy;
 4. re-applies the PostgreSQL identities from the secret files;
 5. applies migrations with the migrator identity;
-6. recreates and starts the API, worker, and ingress and waits until healthy.
+6. recreates and starts the API, worker, and ingress and waits until healthy;
+7. recreates and starts oauth2-proxy last, because it discovers the issuer
+   through the ingress at startup and exits if that fails.
 
 Containers are recreated on every start (volumes are kept) so their file
 mounts always refer to the current secret files: a container created before a
@@ -160,11 +192,127 @@ file was replaced keeps the old file, or fails to start if it is gone.
 > checks first. If you see a directory where a secret file should be, remove it
 > and run `init`.
 
+## Authentication
+
+The API requires an access token on every Work Items route
+(`AUTHENTICATION=oidc`); `/health`, `/ready`, and `/version` stay public and
+are not routed by the ingress anyway. Local development keeps authentication
+explicitly disabled (`AUTHENTICATION=disabled`, set by
+`tools/work-items-api-local`); the API refuses to start without one of the two.
+
+The API validates each token locally against Keycloak's published signing
+keys: exactly one signature, an allowed asymmetric algorithm (RS256), a known
+key, issuer `https://auth.work-items.localhost:9443/realms/work-items`,
+audience `work-items-api`, and an unexpired `exp` (30 s clock skew). It does
+not call Keycloak per request. Missing or rejected tokens get 401; a token
+that cannot be judged because the signing keys are unavailable gets 503
+`authentication_unavailable`.
+
+### Browser sign-in
+
+Open `https://work-items.localhost:9443/` and choose **Sign in**. Keycloak's
+login page is served by the same ingress at `auth.work-items.localhost`. The
+lab user is `lab-user`; its password is in the state directory:
+
+```bash
+./tools/security-lab-local lab-user
+```
+
+oauth2-proxy keeps the session in Valkey and gives the browser only a ticket
+cookie (`__Host-wi-session`: Secure, HttpOnly, SameSite=Lax, path `/`).
+For each API request nginx asks oauth2-proxy (`auth_request`), replaces the
+request's credentials with the session's access token, and drops the cookie
+before the API. Tokens are never readable by browser JavaScript.
+
+**Sign out** (a same-origin POST) deletes the Valkey session and calls
+Keycloak's end-session endpoint with the session's ID token, so the next
+sign-in asks for the password again.
+
+### CSRF protection
+
+For requests that carry the session cookie, the ingress refuses state changes
+(any method but GET and HEAD) unless the request has the header
+`X-Requested-With: work-items-web`, an `Origin` that is absent or equal to the
+site, and `Sec-Fetch-Site` absent or `same-origin`. The Web UI sends the
+header. Sign-out is POST-only and requires a same-origin `Origin`.
+
+### Machine clients
+
+The `work-items-automation` client uses the client-credentials grant and
+sends its token as a bearer token. The ingress passes such requests to the API
+unchanged; the gateway is not involved. A request with both a session cookie
+and a bearer token is refused (400 `ambiguous_credentials`).
+
+```bash
+state="$(./tools/security-lab-local state-dir)"
+token="$(curl -sS --cacert "$state/pki/ca.crt" \
+  -u "work-items-automation:$(cat "$state/secrets/automation-client-secret")" \
+  -d grant_type=client_credentials \
+  https://auth.work-items.localhost:9443/realms/work-items/protocol/openid-connect/token \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
+curl -sS --cacert "$state/pki/ca.crt" -H "Authorization: Bearer $token" \
+  https://work-items.localhost:9443/api/items
+```
+
+### Lifetimes and revocation
+
+| Setting | Value |
+| --- | --- |
+| Access token lifetime | 300 s |
+| Gateway session refresh | after 1 min, on the next request |
+| Gateway session cookie | 8 h |
+| Keycloak SSO session | 30 min idle, 8 h maximum |
+
+Sign-out ends the gateway session (a copied cookie stops working) and the
+Keycloak session. An access token captured before sign-out stays valid at the
+API until it expires, because validation is local.
+
+### Dependency outages
+
+| Unavailable | Browser session | Machine client | New sign-in |
+| --- | --- | --- | --- |
+| Keycloak | Continues until its access token expires, then 401 | Continues while the API has cached keys; a restarted API answers 503 | 503 |
+| oauth2-proxy | 503 | Unaffected | 503 |
+| Valkey | 503 (sessions are lost when it restarts) | Unaffected | 503 |
+
+The Valkey row relies on a separate classification in nginx: oauth2-proxy
+answers 401 both for an invalid session and when Valkey is unreachable, so for
+requests with a session cookie nginx asks oauth2-proxy's `/ready` endpoint and
+answers 503 when it reports the store unreachable. `/ready` describes the
+store when asked, not the cause of the original 401, so a request that races a
+store failure or recovery can be misclassified; during an outage an invalid
+or forged cookie also gets 503.
+
+### Logging of authentication material
+
+The aim is to keep authorization codes, state, tokens, and session-cookie
+values out of the ingress and gateway logs:
+
+- the ingress access log records the path without the query string and no
+  headers or cookies. It keeps the status, upstream status, upstream address,
+  upstream connect time, total request time, and a request ID;
+- nginx's error log writes the full request line and referrer and cannot be
+  reformatted. In the two public servers, error-log entries below `crit` from
+  request processing are suppressed. This includes the `error`-level entries
+  for upstream connection failures and timeouts, so their reason (for
+  example refused versus timed out) is no longer logged; the access-log
+  fields above remain. Startup and configuration errors are logged as before;
+- oauth2-proxy's request log omits the request URI; its auth and error logs
+  are unchanged and still name the user;
+- the request ID (`rid=` in the access log, `X-Request-Id` in the response) is
+  also logged by oauth2-proxy, so a gateway line can be matched to its path.
+
+`verify-log-hygiene` checks this for the flows it drives (a sign-in and the
+failed callbacks described under [verify](#verify)) with the actual values of
+a run. It does not cover other flows or debug-level logging.
+
 ## Verify
 
 ```bash
 ./tools/security-lab-local verify
 ./tools/security-lab-local verify-failures
+./tools/security-lab-local verify-authentication
+./tools/security-lab-local verify-log-hygiene
 ```
 
 `verify` checks, with positive controls:
@@ -175,9 +323,11 @@ file was replaced keeps the old file, or fails to start if it is gone.
   established connections, because exit 28 also follows a successful
   connection whose response times out;
 - container health and that only the ingress publishes a port, on 127.0.0.1;
-- HTTPS from WSL with the lab CA (UI and API), failure without the lab CA, and
-  handshake rejection for other names;
-- that `/api/health` and `/api/version` are not routed;
+- HTTPS from WSL with the lab CA (UI, issuer discovery, and the API answering
+  401 without credentials), failure without the lab CA, and handshake
+  rejection for other names;
+- that `/api/health`, `/api/version`, the gateway's `/oauth2/auth`, and
+  Keycloak's administration console and master realm are not routed;
 - no listener on common backend ports on WSL or Windows loopback;
 - HTTPS from Windows with `curl.exe` and the lab CA (through WSL interop), and
   no connection to the ingress port on Windows' non-loopback addresses. The
@@ -185,19 +335,40 @@ file was replaced keeps the old file, or fails to start if it is gone.
   Windows itself trusts the lab CA;
 - that a container on the ingress's client network, a container on an
   unrelated network, and a container on the default bridge cannot resolve or
-  connect to the API, PostgreSQL, or RabbitMQ;
+  connect to the API, PostgreSQL, RabbitMQ, Keycloak, oauth2-proxy, or Valkey,
+  and that the API's network cannot reach Keycloak, its database, or Valkey;
 - that the same probes **do** reach each backend from its own network, and the
   ingress reaches the API.
 
 `verify-failures` checks that each service fails clearly, without printing
-secret values, when a required secret is missing.
+secret values, when a required secret or setting is missing, including an
+unset `AUTHENTICATION` and a missing `OIDC_CA_FILE`.
+
+`verify-authentication` signs in with a scripted browser (curl following
+Keycloak's form), uses the machine client, and checks token rejection
+(changed payload, `alg: none`, malformed, an issuer-signed ID token for
+another audience), Work Items behavior on both paths, CSRF refusals, sign-out,
+cookie replay, captured-token replay, and Keycloak, gateway, and store
+outages. It **stops and restarts lab services**, and without `--skip-slow` it
+waits for access tokens to expire (about 12 minutes in total). To compare a
+captured browser token, it reads the session's token from oauth2-proxy with a
+probe on the internal `app` network; no public route exposes it.
+
+`verify-log-hygiene` drives a successful sign-in and three failed callbacks
+(a reused code, Keycloak down during redemption, oauth2-proxy down when the
+browser returns), plus an authorization request to a stopped Keycloak. It then
+searches the logs written during the run for the authorization codes, state
+values, session cookie, access tokens, and long-lived secrets it used, as
+fixed strings and in their percent-encoded forms. Positive controls show that
+the scanner finds each string and that each log was captured. It stops and
+restarts Keycloak and oauth2-proxy, and never prints or records the values.
 
 `verify-renewal` renews the ingress certificate on the running lab and
 records the served and file serials before and after, whether the container
 sees the host's file, and a control showing that a single-file bind mount
 would have kept the old file.
 
-All three accept `--evidence <file>` to write machine-readable results.
+All five accept `--evidence <file>` to write machine-readable results.
 
 ## Use it from the Windows browser (manual)
 
@@ -236,8 +407,9 @@ expires after 90 days. Remove it when you are done.
    Authorities → Import, and allow it to identify websites.
 
 3. Open `https://work-items.localhost:9443/`. Check that the certificate is
-   issued by "Zero-to-Prod security lab CA", then list, create, and process a
-   Work Item and wait for `succeeded` and its result.
+   issued by "Zero-to-Prod security lab CA", sign in as `lab-user`, then
+   list, create, and process a Work Item and wait for `succeeded` and its
+   result. Sign out and check that signing in again asks for the password.
 
 ### Removing the lab CA
 
@@ -286,12 +458,23 @@ checks above, carries this lab's ownership marker, belongs to your user, and
 contains nothing but the lab's own entries; otherwise it refuses and deletes
 nothing. Remove any browser trust first.
 
+**Pending cleanup from the authentication comparison.** The comparison left
+the Docker volume `zero-to-prod-security-lab_keycloak_postgres_data` and the
+state directory
+`~/.local/state/zero-to-prod/zero-to-prod-security-lab-auth-experiment/`.
+Neither `destroy` nor `purge-state` removes them. They hold that experiment's
+realm and generated secrets and are not used by the lab; remove them
+manually when no longer needed.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `secret file missing` or `is a directory` from `check-secrets` | `init` not run, or Docker created a directory for a missing file | Remove the directory; run `init` |
-| `port is already allocated` | Something else uses host port 9443 | Set `ZTP_SECURITY_LAB_HTTPS_PORT` |
+| `port is already allocated` | Something else uses host port 9443 | Stop it; the lab's port is fixed |
+| Sign-in fails with an invalid client or the lab-user password is refused | The Keycloak realm was imported with earlier secrets (for example after `purge-state` without `destroy`) | `destroy`, then `start` (re-imports the realm) |
+| API answers 503 `authentication_unavailable` | The API cannot fetch Keycloak's signing keys; the log names the cause | Check Keycloak's health and `logs api` |
+| oauth2-proxy exits at startup | Issuer discovery through the ingress failed | Check that Keycloak and the ingress are healthy; `start` again |
 | Browser certificate error after trusting | Certificate expired, or the browser does not use the Windows store | `issue-certificate`; check which store the browser uses |
 | API or worker exits with `read DATABASE_URL_FILE` | A secret file is missing in the container | `check-secrets`; recreate with `init` |
 | `refusing to use a directory that is not security lab state` or `no security lab marker` | `ZTP_SECURITY_LAB_STATE_DIR` points at a directory the lab did not create | Choose an empty or new path below an allowed base |
@@ -299,9 +482,26 @@ nothing. Remove any browser trust first.
 
 ## Limitations
 
-- No authentication, authorization, CSRF protection, or rate limiting.
-- Ingress → API, and API/worker → PostgreSQL and RabbitMQ, are unencrypted on
-  internal networks.
+- No authorization (any authenticated user or machine client can do
+  everything) and no rate limiting.
+- An access token captured before sign-out is accepted until it expires (up
+  to 300 s plus 30 s skew). With Keycloak down, sessions continue until their
+  access token expires.
+- Sessions are not persisted: a Valkey restart signs everyone out.
+- The store-outage classification is racy (see
+  [dependency outages](#dependency-outages)).
+- In the public servers, nginx error-log entries below `crit` from request
+  processing are suppressed, so upstream failure reasons are not logged; the
+  access log keeps status, upstream status and address, upstream connect time,
+  request time, and request IDs.
+- Log hygiene is verified only for the tested sign-in and failed-callback
+  flows.
+- One lab user and one machine client, defined in the realm file; no
+  self-service, MFA, or Keycloak administration access.
+- The HTTPS port is fixed at 9443.
+- Ingress → API, ingress → Keycloak and oauth2-proxy, oauth2-proxy → Valkey,
+  Keycloak → its database, and API/worker → PostgreSQL and RabbitMQ are
+  unencrypted on internal networks.
 - In the verified environment, Docker forwarded the published ingress port to
   the ingress container from any network on the same Docker engine, and
   Docker Desktop also exposed it through `host.docker.internal`. "Host
