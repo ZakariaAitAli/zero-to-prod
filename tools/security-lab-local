@@ -85,6 +85,8 @@ Usage:
   ./tools/security-lab-local start
   ./tools/security-lab-local verify [--evidence <file>]
   ./tools/security-lab-local verify-failures [--evidence <file>]
+  ./tools/security-lab-local verify-authentication [--evidence <file>] [--skip-slow]
+  ./tools/security-lab-local verify-log-hygiene [--evidence <file>]
   ./tools/security-lab-local lab-user
   ./tools/security-lab-local status
   ./tools/security-lab-local logs [service]
@@ -113,6 +115,15 @@ Commands:
   verify             Check HTTPS access and backend reachability from the
                      host, Windows (through WSL interop), and test containers.
   verify-failures    Check that missing secrets make each service fail.
+  verify-authentication
+                     Exercise sign-in, sessions, machine clients, token
+                     validation, logout, replay, CSRF, and dependency
+                     outages. Stops and restarts lab services; without
+                     --skip-slow it waits for access-token expiry.
+  verify-log-hygiene Drive a sign-in and failed callbacks (reused code,
+                     Keycloak down, gateway down) and search the logs for
+                     the codes, state, cookie, tokens, and secrets used.
+                     Stops and restarts Keycloak and oauth2-proxy.
   lab-user           Show the lab user's name and the path of its password.
   status             Show lab containers.
   logs               Show lab logs.
@@ -1471,6 +1482,723 @@ verify_failures() {
   echo "Missing-secret verification passed."
 }
 
+# ---------------------------------------------------------------------------
+# Authentication verification
+# ---------------------------------------------------------------------------
+
+AUTH_WORK=""
+
+lab_curl() {
+  curl -sS --cacert "${PKI_DIR}/ca.crt" --max-time 20 "$@"
+}
+
+# HTTP status of a request, or error:<curl exit>.
+http_status() {
+  local rc=0 output
+  output="$(lab_curl -o /dev/null -w '%{http_code}' "$@" 2>/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then echo "error:${rc}"; else echo "$output"; fi
+}
+
+# "<status> <body without newlines>" for a request.
+http_status_body() {
+  local rc=0 output
+  output="$(lab_curl -w '\n%{http_code}' "$@" 2>/dev/null)" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then echo "error:${rc}"; return 0; fi
+  echo "$(tail -n 1 <<< "$output") $(sed '$d' <<< "$output" | tr -d '\n')"
+}
+
+json_field() {
+  python3 -I -c '
+import json, sys
+try:
+    value = json.load(sys.stdin)
+    for key in sys.argv[1].split("."):
+        value = value[int(key)] if isinstance(value, list) else value.get(key, "")
+    print(value)
+except Exception:
+    print("")
+' "$1"
+}
+
+# Claims of a JWT, summarized without the token or personal identifiers.
+token_claims() {
+  python3 -I -c '
+import base64, json, sys, time
+token = sys.stdin.read().strip()
+parts = token.split(".")
+if len(parts) != 3:
+    print("not-a-jwt"); sys.exit(0)
+c = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+h = json.loads(base64.urlsafe_b64decode(parts[0] + "=" * (-len(parts[0]) % 4)))
+aud = c.get("aud")
+aud = sorted(aud) if isinstance(aud, list) else ([aud] if aud else [])
+out = {"alg": h.get("alg"), "iss": c.get("iss"), "aud": ",".join(aud), "azp": c.get("azp"),
+       "typ": c.get("typ"), "lifetime": c.get("exp", 0) - c.get("iat", 0),
+       "exp": c.get("exp", 0), "expires_in": int(c.get("exp", 0) - time.time())}
+print(" ".join(f"{k}={out[k]}" for k in sys.argv[1].split(",")))
+' "$1"
+}
+
+token_exp() {
+  token_claims exp <<< "$1" | cut -d= -f2
+}
+
+# Variants of a token for negative tests: a changed payload under the
+# original signature, and an unsigned ("alg":"none") token.
+token_variant() {
+  python3 -I -c '
+import base64, json, sys
+kind, token = sys.argv[1], sys.stdin.read().strip()
+h64, p64, s64 = token.split(".")
+def dec(s): return json.loads(base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)))
+def enc(o): return base64.urlsafe_b64encode(json.dumps(o, separators=(",", ":")).encode()).rstrip(b"=").decode()
+payload = dec(p64)
+if kind == "tampered":
+    payload["sub"] = "someone-else"
+    print(h64 + "." + enc(payload) + "." + s64)
+elif kind == "none":
+    header = dec(h64); header["alg"] = "none"
+    print(enc(header) + "." + p64 + ".")
+' "$1"
+}
+
+client_credentials() {
+  local field="${1:-access_token}" scope="${2:-}"
+  local args=(-u "work-items-automation:$(secret automation-client-secret)" -d grant_type=client_credentials)
+  [[ -n "$scope" ]] && args+=(-d "scope=${scope}")
+  { lab_curl "${args[@]}" "${ISSUER}/protocol/openid-connect/token" 2>/dev/null || true; } | json_field "$field"
+}
+
+bearer_status() {
+  local token="$1"; shift
+  http_status -H "Authorization: Bearer ${token}" "$@"
+}
+
+# Scripted browser sign-in: follow the gateway to Keycloak's login form and
+# submit it. Prints the final page.
+browser_login() {
+  local jar="$1" page action
+  page="$(lab_curl -L -c "$jar" -b "$jar" "${APP_URL}/oauth2/start?rd=%2F" 2>/dev/null || true)"
+  action="$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' <<< "$page" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g' || true)"
+  if [[ -z "$action" ]]; then
+    echo "no-login-form"
+    return 0
+  fi
+  lab_curl -L -c "$jar" -b "$jar" \
+    --data-urlencode "username=lab-user" \
+    --data-urlencode "password=$(secret lab-user-password)" \
+    --data "credentialId=" "$action" 2>/dev/null || true
+}
+
+# Whether starting a new sign-in with this browser's cookies shows Keycloak's
+# login form (no identity-provider session) or completes silently (an active
+# identity-provider session).
+idp_session_state() {
+  local jar="$1" probe page
+  probe="${jar}.probe"
+  cp "$jar" "$probe"
+  page="$(lab_curl -L -c "$probe" -b "$probe" "${APP_URL}/oauth2/start?rd=%2F" 2>/dev/null || true)"
+  rm -f "$probe"
+  if grep -q 'id="kc-form-login"' <<< "$page"; then echo "login-form"; else echo "silent-sign-in"; fi
+}
+
+session_cookie() {
+  awk '$6 == "__Host-wi-session" {print $7}' "$1" | tail -n 1
+}
+
+# The access token a session forwards, read from oauth2-proxy by a probe on
+# the internal app network. This is test instrumentation standing in for an
+# access token captured downstream of the gateway; no public route exposes it.
+session_access_token() {
+  local cookie
+  cookie="$(session_cookie "$1")"
+  [[ -n "$cookie" ]] || { echo ""; return 0; }
+  docker run --rm --network "${PROJECT}_app" --entrypoint curl "$PROBE_IMAGE" \
+    -sS -o /dev/null -D - --max-time 10 \
+    -H "Cookie: __Host-wi-session=${cookie}" -H "X-Forwarded-Proto: https" \
+    -H "X-Forwarded-Host: ${LAB_HOSTNAME}:${HTTPS_PORT}" \
+    http://oauth2-proxy:4180/oauth2/auth 2>/dev/null \
+    | tr -d '\r' | awk 'tolower($1) == "x-auth-request-access-token:" {print $2}' || true
+}
+
+# Requests a browser session would make. The UI sends the CSRF header and,
+# being same-origin, an Origin header and Sec-Fetch-Site: same-origin.
+ui_headers=()
+set_ui_headers() {
+  ui_headers=(-H "X-Requested-With: work-items-web" -H "Origin: ${APP_URL}" -H "Sec-Fetch-Site: same-origin")
+}
+
+session_status() {
+  local jar="$1"; shift
+  http_status -b "$jar" "$@"
+}
+
+wait_for_issuer() {
+  local _
+  for _ in $(seq 1 60); do
+    [[ "$(http_status "${ISSUER}/.well-known/openid-configuration")" == 200 ]] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+sleep_until() {
+  local remaining=$(( $1 - $(date +%s) ))
+  if [[ "$remaining" -gt 0 ]]; then
+    echo "  waiting ${remaining}s..."
+    sleep "$remaining"
+  fi
+}
+
+# Rejection categories the API logged since a timestamp.
+api_categories_since() {
+  compose logs --no-color --since "$1" api 2>/dev/null \
+    | grep -o 'authentication rejected: category=[a-z_]*' | sed 's/.*=//' | sort | uniq -c \
+    | awk '{printf "%s%s=%s", (n++ ? " " : ""), $2, $1}'
+}
+
+# Start a stopped service's existing container. Recreating it would discard
+# the log output that the checks read back.
+restore_service() {
+  compose up -d --wait --no-recreate "$1" >/dev/null 2>&1 || die "could not restore ${1}"
+}
+
+auth_work_items() {
+  local area="$1" mode="$2" credential="$3" created item_id job job_id state status
+
+  if [[ "$mode" == bearer ]]; then
+    created="$(http_status_body -H "Authorization: Bearer ${credential}" -H "Content-Type: application/json" \
+      -d "{\"title\":\"${area} item\"}" "${APP_URL}/api/items")"
+  else
+    created="$(http_status_body -b "$credential" "${ui_headers[@]}" -H "Content-Type: application/json" \
+      -d "{\"title\":\"${area} item\"}" "${APP_URL}/api/items")"
+  fi
+  expect "$area" "POST /api/items creates a Work Item" "201" "${created%% *}"
+  item_id="$(json_field id <<< "${created#* }")"
+
+  if [[ "$mode" == bearer ]]; then
+    job="$(http_status_body -X POST -H "Authorization: Bearer ${credential}" "${APP_URL}/api/items/${item_id}/process")"
+  else
+    job="$(http_status_body -X POST -b "$credential" "${ui_headers[@]}" "${APP_URL}/api/items/${item_id}/process")"
+  fi
+  expect "$area" "POST /api/items/{id}/process accepts a job" "202" "${job%% *}"
+  job_id="$(json_field id <<< "${job#* }")"
+
+  local _
+  state="accepted"
+  for _ in $(seq 1 40); do
+    if [[ "$mode" == bearer ]]; then
+      status="$(http_status_body -H "Authorization: Bearer ${credential}" "${APP_URL}/api/processing-jobs/${job_id}")"
+    else
+      status="$(http_status_body -b "$credential" "${APP_URL}/api/processing-jobs/${job_id}")"
+    fi
+    state="$(json_field state <<< "${status#* }")"
+    [[ "$state" != accepted ]] && break
+    sleep 0.5
+  done
+  expect "$area" "polled processing job reaches succeeded" "succeeded" "$state"
+
+  if [[ "$mode" == bearer ]]; then
+    status="$(http_status_body -X POST -H "Authorization: Bearer ${credential}" "${APP_URL}/api/items/${item_id}/process")"
+  else
+    status="$(http_status_body -X POST -b "$credential" "${ui_headers[@]}" "${APP_URL}/api/items/${item_id}/process")"
+  fi
+  expect "$area" "processing a done Work Item again" "409 work_item_already_done" \
+    "${status%% *} $(json_field error <<< "${status#* }")"
+}
+
+verify_authentication() {
+  local evidence_file="" slow=true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --evidence) evidence_file="${2:?--evidence requires a file}"; shift 2 ;;
+      --skip-slow) slow=false; shift ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+
+  require_command curl
+  require_command python3
+  [[ -n "$(compose ps -q --status running oauth2-proxy 2>/dev/null)" ]] ||
+    die "the lab is not running; run: $0 start"
+
+  RESULTS=()
+  FAILED=0
+  # Cookie jars hold live sessions; remove them however the run ends.
+  AUTH_WORK="$(mktemp -d)"
+  trap 'rm -rf -- "$AUTH_WORK"' EXIT
+  set_ui_headers
+  local started
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  wait_for_issuer || die "the issuer is not reachable: ${ISSUER}"
+
+  local area status body token
+
+  # --- Unauthenticated ------------------------------------------------------
+  area="unauthenticated"
+  expect "$area" "GET /api/items without credentials" "401" "$(http_status "${APP_URL}/api/items")"
+  expect "$area" "static UI without a session" "200" "$(http_status "${APP_URL}/")"
+  expect "$area" "Basic credentials are not accepted" "401" \
+    "$(http_status -H 'Authorization: Basic bGFiLXVzZXI6eA==' "${APP_URL}/api/items")"
+
+  # --- Machine client (bearer path) -----------------------------------------
+  area="machine client"
+  local machine_token
+  machine_token="$(client_credentials access_token)"
+  expect "$area" "client-credentials token issued" "yes" "$([[ -n "$machine_token" ]] && echo yes || echo no)"
+  record "$area" "token summary" "observe" "$(token_claims alg,iss,aud,azp,typ,lifetime <<< "$machine_token")" info
+  expect "$area" "GET /api/items with bearer token" "200" "$(bearer_status "$machine_token" "${APP_URL}/api/items")"
+  auth_work_items "$area" bearer "$machine_token"
+  expect "$area" "state change without CSRF header (no ambient credential)" "201" \
+    "$(bearer_status "$machine_token" -H 'Content-Type: application/json' -d '{"title":"no csrf header"}' "${APP_URL}/api/items")"
+
+  # --- Token validation through the ingress ---------------------------------
+  area="token validation"
+  local since
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  status="$(lab_curl -o /dev/null -D - -H "Authorization: Bearer $(token_variant tampered <<< "$machine_token")" \
+    "${APP_URL}/api/items" 2>/dev/null | tr -d '\r')"
+  expect "$area" "payload changed under the original signature" "401" "$(awk 'NR==1{print $2}' <<< "$status")"
+  expect "$area" "rejection challenge names invalid_token" "yes" \
+    "$(grep -qi '^www-authenticate: Bearer realm="work-items", error="invalid_token"' <<< "$status" && echo yes || echo no)"
+  expect "$area" "unsigned token (alg none)" "401" \
+    "$(bearer_status "$(token_variant none <<< "$machine_token")" "${APP_URL}/api/items")"
+  expect "$area" "malformed token" "401" "$(bearer_status "not-a-token" "${APP_URL}/api/items")"
+  local id_token
+  id_token="$(client_credentials id_token openid)"
+  if [[ -n "$id_token" ]]; then
+    record "$area" "ID token summary (issuer-signed, other audience)" "observe" \
+      "$(token_claims alg,iss,aud,typ <<< "$id_token")" info
+    expect "$area" "issuer-signed ID token (audience is the client)" "401" \
+      "$(bearer_status "$id_token" "${APP_URL}/api/items")"
+  else
+    record "$area" "issuer-signed token for another audience" "run" "no ID token from client credentials" skip
+  fi
+  sleep 1
+  record "$area" "API rejection categories logged" "observe" "$(api_categories_since "$since")" info
+
+  # --- Browser session (session path) ---------------------------------------
+  area="browser session"
+  local jar="${AUTH_WORK}/browser"
+  body="$(browser_login "$jar")"
+  expect "$area" "sign-in through Keycloak's form returns to the UI" "yes" \
+    "$([[ -n "$(session_cookie "$jar")" ]] && grep -q '<div id="root">' <<< "$body" && echo yes || echo no)"
+  record "$area" "session cookie attributes" "observe" \
+    "$(awk '$6 == "__Host-wi-session" {print "httponly=" ($1 ~ /^#HttpOnly_/ ? "yes" : "no") " path=" $3 " secure=" $4 " bytes=" length($7)}' "$jar" | tail -n 1)" info
+  expect "$area" "GET /api/items with the session" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  auth_work_items "$area" session "$jar"
+  token="$(session_access_token "$jar")"
+  record "$area" "forwarded access token summary" "observe" "$(token_claims alg,iss,aud,azp,typ,lifetime <<< "$token")" info
+  expect "$area" "session with a bearer token is ambiguous" "400" \
+    "$(session_status "$jar" -H "Authorization: Bearer ${machine_token}" "${APP_URL}/api/items")"
+  expect "$area" "Keycloak session active (silent sign-in)" "silent-sign-in" "$(idp_session_state "$jar")"
+
+  # --- CSRF ----------------------------------------------------------------
+  area="csrf"
+  local post=(-H "Content-Type: application/json" -d '{"title":"csrf probe"}' "${APP_URL}/api/items")
+  expect "$area" "session POST without the UI header" "403" \
+    "$(session_status "$jar" -H "Origin: ${APP_URL}" -H "Sec-Fetch-Site: same-origin" "${post[@]}")"
+  expect "$area" "session POST from another origin" "403" \
+    "$(session_status "$jar" -H "X-Requested-With: work-items-web" -H "Origin: https://attacker.example" -H "Sec-Fetch-Site: cross-site" "${post[@]}")"
+  expect "$area" "session POST with Sec-Fetch-Site: cross-site" "403" \
+    "$(session_status "$jar" -H "X-Requested-With: work-items-web" -H "Sec-Fetch-Site: cross-site" "${post[@]}")"
+  expect "$area" "session POST with Sec-Fetch-Site: same-site" "403" \
+    "$(session_status "$jar" -H "X-Requested-With: work-items-web" -H "Origin: ${APP_URL}" -H "Sec-Fetch-Site: same-site" "${post[@]}")"
+  expect "$area" "session POST with header, Origin, and fetch metadata (control)" "201" \
+    "$(session_status "$jar" "${ui_headers[@]}" "${post[@]}")"
+  expect "$area" "session GET needs no header" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  expect "$area" "sign-out by GET" "405" "$(session_status "$jar" "${APP_URL}/oauth2/sign_out")"
+  expect "$area" "sign-out POST without Origin" "403" "$(session_status "$jar" -X POST "${APP_URL}/oauth2/sign_out")"
+  expect "$area" "sign-out POST from another origin" "403" \
+    "$(session_status "$jar" -X POST -H "Origin: https://attacker.example" "${APP_URL}/oauth2/sign_out")"
+  expect "$area" "session still valid after refused sign-outs" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+
+  # --- Logout, cookie replay, and captured-token replay ----------------------
+  # Three distinct questions: does sign-out end the gateway session (and a
+  # copied cookie), does it end the Keycloak session, and what happens to an
+  # access token captured before it.
+  area="logout"
+  local captured captured_exp
+  captured="$(session_access_token "$jar")"
+  captured_exp="$(token_exp "$captured")"
+  cp "$jar" "${jar}.copy"
+  expect "$area" "captured session token at the API before sign-out" "200" \
+    "$(bearer_status "$captured" "${APP_URL}/api/items")"
+  status="$(lab_curl -o /dev/null -D - -b "$jar" -c "$jar" -X POST -H "Origin: ${APP_URL}" -H "Sec-Fetch-Site: same-origin" \
+    "${APP_URL}/oauth2/sign_out" 2>/dev/null | tr -d '\r')"
+  expect "$area" "same-origin POST sign-out redirects" "302" "$(awk 'NR==1{print $2}' <<< "$status")"
+  record "$area" "sign-out redirect target" "observe" "$(awk 'tolower($1)=="location:"{print $2}' <<< "$status")" info
+  expect "$area" "same browser after sign-out" "401" "$(session_status "$jar" "${APP_URL}/api/items")"
+  expect "$area" "replayed copy of the session cookie" "401" "$(session_status "${jar}.copy" "${APP_URL}/api/items")"
+  expect "$area" "Keycloak session ended (login form on next sign-in)" "login-form" "$(idp_session_state "${jar}.copy")"
+  status="$(http_status -H "Authorization: Bearer ${captured}" "${ISSUER}/protocol/openid-connect/userinfo")"
+  expect "$area" "captured token at Keycloak userinfo (session-bound)" "401" "$status"
+  # Local validation does not consult Keycloak per request, so the expected
+  # behavior is acceptance until expiry.
+  expect "replay" "captured token at the API after sign-out, before expiry" "200" \
+    "$(bearer_status "$captured" "${APP_URL}/api/items")"
+  record "replay" "captured token remaining lifetime at sign-out" "observe" "$(token_claims expires_in <<< "$captured")" info
+
+  # --- Outages -------------------------------------------------------------
+  # Identity provider down.
+  area="idp outage"
+  local idp_jar="${AUTH_WORK}/idp" idp_login cold_token
+  browser_login "$idp_jar" >/dev/null
+  idp_login="$(date +%s)"
+  local idp_token_exp
+  idp_token_exp="$(token_exp "$(session_access_token "$idp_jar")")"
+  cold_token="$(client_credentials access_token)"
+  compose stop keycloak >/dev/null 2>&1
+  expect "$area" "existing session, refresh not yet due" "200" "$(session_status "$idp_jar" "${APP_URL}/api/items")"
+  expect "$area" "machine token with cached signing keys" "200" "$(bearer_status "$machine_token" "${APP_URL}/api/items")"
+  expect "$area" "new sign-in reaches an explicit 503" "503" \
+    "$(http_status -L -c "${AUTH_WORK}/new" -b "${AUTH_WORK}/new" "${APP_URL}/oauth2/start?rd=%2F")"
+  expect "$area" "client-credentials token endpoint" "503" \
+    "$(http_status -u x:y -d grant_type=client_credentials "${ISSUER}/protocol/openid-connect/token")"
+
+  # API cold start without the identity provider: no cached keys, so a
+  # well-formed token cannot be judged.
+  compose restart api >/dev/null 2>&1
+  compose up -d --wait api >/dev/null 2>&1
+  expect "$area" "API cold start: unexpired token cannot be judged" "503 authentication_unavailable" \
+    "$(body="$(http_status_body -H "Authorization: Bearer ${cold_token}" "${APP_URL}/api/items")"; echo "${body%% *} $(json_field error <<< "${body#* }")")"
+  expect "$area" "API cold start: no token is still 401" "401" "$(http_status "${APP_URL}/api/items")"
+
+  sleep_until $(( idp_login + 75 ))
+  record "$area" "existing session after a refresh is due (API keys not cached)" "observe" \
+    "http=$(session_status "$idp_jar" "${APP_URL}/api/items")" info
+
+  restore_service keycloak
+  wait_for_issuer || die "Keycloak did not return"
+  expect "$area" "API recovers signing keys after Keycloak returns" "200" \
+    "$(bearer_status "$(client_credentials access_token)" "${APP_URL}/api/items")"
+
+  if [[ "$slow" == true ]]; then
+    # The restarted API now holds the keys. Stop Keycloak again, without
+    # touching the session in between, so oauth2-proxy cannot refresh it:
+    # the forwarded token is then bounded only by the API's exp check.
+    compose stop keycloak >/dev/null 2>&1
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    sleep_until $(( captured_exp + 35 ))
+    expect "replay" "captured token after expiry plus skew" "401" "$(bearer_status "$captured" "${APP_URL}/api/items")"
+
+    sleep_until $(( idp_token_exp + 35 ))
+    expect "$area" "IdP down: session whose token expired" "401" "$(session_status "$idp_jar" "${APP_URL}/api/items")"
+    sleep 1
+    record "$area" "API rejection categories logged during expiry checks" "observe" "$(api_categories_since "$since")" info
+
+    restore_service keycloak
+    wait_for_issuer || die "Keycloak did not return"
+  else
+    record "$area" "session whose token expired while the IdP is down" "run" "--skip-slow" skip
+    record "replay" "captured token after expiry" "run" "--skip-slow" skip
+  fi
+  local new_jar="${AUTH_WORK}/after-idp"
+  browser_login "$new_jar" >/dev/null
+  expect "$area" "sign-in works after Keycloak returns" "200" "$(session_status "$new_jar" "${APP_URL}/api/items")"
+
+  # Gateway down: session requests fail explicitly; machine clients do not
+  # depend on the gateway.
+  area="gateway outage"
+  compose stop oauth2-proxy >/dev/null 2>&1
+  expect "$area" "existing session" "503" "$(session_status "$new_jar" "${APP_URL}/api/items")"
+  expect "$area" "machine client (bearer path)" "200" \
+    "$(bearer_status "$(client_credentials access_token)" "${APP_URL}/api/items")"
+  expect "$area" "no credentials" "503" "$(http_status "${APP_URL}/api/items")"
+  restore_service oauth2-proxy
+  expect "$area" "existing session after restore, without sign-in" "200" "$(session_status "$new_jar" "${APP_URL}/api/items")"
+
+  # Session store down. The 401/503 split uses the readiness classification,
+  # a separate observation with a race: /ready reports the store's state when
+  # asked, not the cause of the original 401.
+  area="store outage"
+  local forged="${AUTH_WORK}/forged" empty="${AUTH_WORK}/empty"
+  : > "$empty"
+  printf '%s\tFALSE\t/\tTRUE\t0\t__Host-wi-session\t%s\n' "$LAB_HOSTNAME" \
+    "__Host-wi-session-$(openssl rand -hex 16).$(openssl rand -hex 16)" > "$forged"
+  expect "readiness classification" "store up: invalid session cookie" "401" "$(session_status "$forged" "${APP_URL}/api/items")"
+  compose stop valkey >/dev/null 2>&1
+  expect "readiness classification" "store down: existing session" "503" "$(session_status "$new_jar" "${APP_URL}/api/items")"
+  expect "readiness classification" "store down: invalid session cookie (cannot be checked)" "503" \
+    "$(session_status "$forged" "${APP_URL}/api/items")"
+  expect "readiness classification" "store down: no session cookie" "401" "$(session_status "$empty" "${APP_URL}/api/items")"
+  expect "$area" "machine client (bearer path)" "200" \
+    "$(bearer_status "$(client_credentials access_token)" "${APP_URL}/api/items")"
+  restore_service valkey
+  sleep 3
+  expect "$area" "existing session after restore (sessions not persisted)" "401" \
+    "$(session_status "$new_jar" "${APP_URL}/api/items")"
+  local final_jar="${AUTH_WORK}/final"
+  browser_login "$final_jar" >/dev/null
+  expect "$area" "sign-in works after the store returns" "200" "$(session_status "$final_jar" "${APP_URL}/api/items")"
+
+  if [[ -n "$evidence_file" ]]; then
+    {
+      printf '{\n  "project": "%s",\n  "started_at": "%s",\n  "recorded_at": "%s",\n' \
+        "$PROJECT" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf '  "conditions": {"access_token_seconds": %s, "session_refresh": "%s", "api_clock_skew_seconds": 30, "slow_checks": %s},\n' \
+        "$ACCESS_TOKEN_SECONDS" "$SESSION_REFRESH" "$slow"
+      printf '  "results": [\n'
+      local index
+      for index in "${!RESULTS[@]}"; do
+        printf '    %s' "${RESULTS[$index]}"
+        [[ "$index" -lt $(( ${#RESULTS[@]} - 1 )) ]] && printf ','
+        printf '\n'
+      done
+      printf '  ]\n}\n'
+    } > "$evidence_file"
+    echo "Evidence written: ${evidence_file}"
+  fi
+
+  echo
+  if [[ "$FAILED" -ne 0 ]]; then
+    echo "Authentication verification failed: ${FAILED} check(s)." >&2
+    return 1
+  fi
+  echo "Authentication verification passed (${#RESULTS[@]} checks)."
+}
+
+# ---------------------------------------------------------------------------
+# Log hygiene
+# ---------------------------------------------------------------------------
+
+# Sign in up to Keycloak's redirect back to the gateway, without following
+# it. Prints the callback URL (which carries the authorization code).
+authorize_until_callback() {
+  local jar="$1" page action
+  page="$(lab_curl -L -c "$jar" -b "$jar" "${APP_URL}/oauth2/start?rd=%2F" 2>/dev/null || true)"
+  action="$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' <<< "$page" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g' || true)"
+  [[ -n "$action" ]] || { echo ""; return 0; }
+  lab_curl -o /dev/null -D - -c "$jar" -b "$jar" \
+    --data-urlencode "username=lab-user" \
+    --data-urlencode "password=$(secret lab-user-password)" \
+    --data "credentialId=" "$action" 2>/dev/null \
+    | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}' || true
+}
+
+# The gateway's redirect to Keycloak's authorization endpoint (carries state).
+authorization_request() {
+  local jar="$1"
+  lab_curl -o /dev/null -D - -c "$jar" -b "$jar" "${APP_URL}/oauth2/start?rd=%2F" 2>/dev/null \
+    | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}' || true
+}
+
+query_param() {
+  python3 -I -c '
+import sys, urllib.parse
+q = urllib.parse.parse_qs(urllib.parse.urlsplit(sys.argv[1]).query)
+print(q.get(sys.argv[2], [""])[0])
+' "$1" "$2"
+}
+
+# "<status> <request id>" for a request, without following redirects.
+status_and_request_id() {
+  local headers
+  headers="$(lab_curl -o /dev/null -D - "$@" 2>/dev/null | tr -d '\r' || true)"
+  echo "$(awk 'NR==1{print $2}' <<< "$headers") $(awk 'tolower($1)=="x-request-id:"{print $2}' <<< "$headers")"
+}
+
+# Appends "<kind><TAB><value>" to the values file; an empty value is kept as
+# a gap so the per-kind counts expose it. Logs record URLs percent-encoded,
+# so each percent-encoded form that differs is added as "<kind>+encoded".
+add_value() {
+  local file="$1" kind="$2" value="$3" variant
+  printf '%s\t%s\n' "$kind" "$value" >> "$file"
+  [[ -n "$value" ]] || return 0
+  while IFS= read -r variant; do
+    printf '%s+encoded\t%s\n' "$kind" "$variant" >> "$file"
+  done < <(python3 -I -c '
+import sys, urllib.parse
+v = sys.argv[1]
+for form in sorted({urllib.parse.quote(v, safe=""), urllib.parse.quote(v), urllib.parse.quote_plus(v)} - {v}):
+    print(form)
+' "$value")
+}
+
+# Kinds of values found in a file with their occurrences ("code=2 state=1"),
+# or "none". Never prints the values.
+kinds_found() {
+  local file="$1" values_file="$2" kind value n
+  declare -A found=()
+  while IFS=$'\t' read -r kind value; do
+    [[ -n "$value" ]] || continue
+    n="$(grep -cF -- "$value" "$file" || true)"
+    [[ "$n" -gt 0 ]] && found[$kind]=$(( ${found[$kind]:-0} + n ))
+  done < "$values_file"
+  if [[ ${#found[@]} -eq 0 ]]; then echo none; return 0; fi
+  for kind in "${!found[@]}"; do echo "${kind}=${found[$kind]}"; done | sort | tr '\n' ' ' | sed 's/ $//'
+}
+
+# Occurrences of each listed value in a file; prints "<total> <values found>".
+count_values() {
+  local file="$1" values_file="$2" total=0 found=0 value n
+  while IFS=$'\t' read -r _ value; do
+    [[ -n "$value" ]] || continue
+    n="$(grep -cF -- "$value" "$file" || true)"
+    total=$(( total + n ))
+    [[ "$n" -gt 0 ]] && found=$(( found + 1 ))
+  done < "$values_file"
+  echo "$total $found"
+}
+
+# Checks that, for the flows it drives (a sign-in and failed callbacks),
+# authentication material does not reach the gateway's or the ingress's logs.
+# It says nothing about flows it does not drive. It uses real values: it records the
+# authorization codes, state values, session cookie, and access tokens of the
+# flows it drives, plus the long-lived secrets, and searches the logs written
+# during the run for each of them. Values are never printed or recorded.
+verify_log_hygiene() {
+  local evidence_file=""
+  if [[ "${1:-}" == "--evidence" ]]; then
+    evidence_file="${2:?--evidence requires a file}"
+  fi
+
+  require_command curl
+  require_command python3
+  [[ -n "$(compose ps -q --status running oauth2-proxy 2>/dev/null)" ]] ||
+    die "the lab is not running; run: $0 start"
+
+  RESULTS=()
+  FAILED=0
+  AUTH_WORK="$(mktemp -d)"
+  trap 'rm -rf -- "$AUTH_WORK"' EXIT
+  wait_for_issuer || die "the issuer is not reachable: ${ISSUER}"
+
+  local values="${AUTH_WORK}/values" since started area="log hygiene"
+  : > "$values"
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  since="$(date -u -d '-2 seconds' +%Y-%m-%dT%H:%M:%SZ)"
+
+  # Capture control for the ingress: a unique, non-secret path segment.
+  local marker
+  marker="log-hygiene-$(openssl rand -hex 12)"
+  expect "$area" "ingress: control request with a unique path" "404" "$(http_status "${APP_URL}/api/${marker}")"
+
+  # Successful sign-in. The callback is requested separately so its request
+  # ID can be matched in both logs.
+  local jar="${AUTH_WORK}/ok" callback code state result callback_rid
+  callback="$(authorize_until_callback "$jar")"
+  code="$(query_param "$callback" code)"
+  state="$(query_param "$callback" state)"
+  expect "$area" "successful flow: authorization code obtained" "yes" "$([[ -n "$code" ]] && echo yes || echo no)"
+  add_value "$values" code "$code"
+  add_value "$values" state "$state"
+  result="$(status_and_request_id -c "$jar" -b "$jar" "$callback")"
+  callback_rid="${result#* }"
+  expect "$area" "successful flow: callback redirects to the UI" "302" "${result%% *}"
+  expect "$area" "successful flow: session works" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  add_value "$values" session-cookie "$(session_cookie "$jar")"
+  add_value "$values" session-access-token "$(session_access_token "$jar")"
+  local machine_token
+  machine_token="$(client_credentials access_token)"
+  add_value "$values" machine-access-token "$machine_token"
+  expect "$area" "successful flow: machine token at the API" "200" "$(bearer_status "$machine_token" "${APP_URL}/api/items")"
+
+  # Failed callback 1: the same code again (already redeemed).
+  result="$(status_and_request_id -c "$jar" -b "$jar" "$callback")"
+  record "$area" "failed callback: reused authorization code" "observe" "http=${result%% *}" info
+
+  # Failed callback 2: Keycloak down while the gateway redeems a fresh code;
+  # and an authorization request reaching the stopped identity provider.
+  local jar2="${AUTH_WORK}/idp-down" callback2 code2 jar3="${AUTH_WORK}/authorize" authorize state3
+  callback2="$(authorize_until_callback "$jar2")"
+  code2="$(query_param "$callback2" code)"
+  add_value "$values" code "$code2"
+  add_value "$values" state "$(query_param "$callback2" state)"
+  authorize="$(authorization_request "$jar3")"
+  state3="$(query_param "$authorize" state)"
+  add_value "$values" state "$state3"
+  compose stop keycloak >/dev/null 2>&1
+  result="$(status_and_request_id -c "$jar2" -b "$jar2" "$callback2")"
+  record "$area" "failed callback: Keycloak down during code redemption" "observe" "http=${result%% *}" info
+  expect "$area" "authorization request to the stopped identity provider" "503" "$(http_status "$authorize")"
+  restore_service keycloak
+  wait_for_issuer || die "Keycloak did not return"
+
+  # Failed callback 3: the gateway is down when the browser returns.
+  local jar4="${AUTH_WORK}/gateway-down" callback4
+  callback4="$(authorize_until_callback "$jar4")"
+  add_value "$values" code "$(query_param "$callback4" code)"
+  add_value "$values" state "$(query_param "$callback4" state)"
+  compose stop oauth2-proxy >/dev/null 2>&1
+  expect "$area" "failed callback: gateway down" "503" "$(http_status -c "$jar4" -b "$jar4" "$callback4")"
+  restore_service oauth2-proxy
+
+  # Long-lived secrets the gateway and identity provider hold.
+  local name
+  for name in gateway-client-secret automation-client-secret oauth2-proxy-cookie-secret valkey-password lab-user-password; do
+    add_value "$values" secret "$(secret "$name")"
+  done
+
+  # Every value must be present and distinct, or the search proves nothing.
+  local kinds value_count
+  kinds="$(awk -F'\t' '$2 != "" && $1 !~ /\+encoded$/ {n[$1]++} END {for (k in n) printf "%s=%d ", k, n[k]}' "$values" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+  expect "$area" "values collected per kind" \
+    "code=3 machine-access-token=1 secret=5 session-access-token=1 session-cookie=1 state=4" "$kinds"
+  record "$area" "percent-encoded forms also searched" "observe" \
+    "$(awk -F'\t' '$1 ~ /\+encoded$/' "$values" | wc -l)" info
+  value_count="$(awk -F'\t' '$2 != ""' "$values" | wc -l)"
+  expect "$area" "searched strings are distinct" "${value_count}" "$(awk -F'\t' '$2 != "" {print $2}' "$values" | sort -u | wc -l)"
+
+  sleep 1
+  local service log counts
+  for service in ingress oauth2-proxy keycloak api valkey worker; do
+    log="${AUTH_WORK}/${service}.log"
+    compose logs --no-color --since "$since" "$service" > "$log" 2>&1 || true
+    counts="$(count_values "$log" "$values")"
+    case "$service" in
+      ingress | oauth2-proxy)
+        expect "$area" "${service}: occurrences of the ${value_count} searched strings" "0" "${counts%% *}" ;;
+      *)
+        record "$area" "${service}: occurrences of the ${value_count} searched strings" "observe" "${counts%% *}" info ;;
+    esac
+    record "$area" "${service}: kinds found" "observe" "$(kinds_found "$log" "$values")" info
+    record "$area" "${service}: log lines in the window" "observe" "$(wc -l < "$log")" info
+  done
+
+  # Positive controls. The scanner finds every value when it is present, and
+  # each asserted log was captured for this window.
+  local synthetic="${AUTH_WORK}/synthetic.log"
+  awk -F'\t' '$2 != "" {print "request: \"GET /oauth2/callback?code=" $2 " HTTP/1.1\""}' "$values" > "$synthetic"
+  counts="$(count_values "$synthetic" "$values")"
+  expect "positive control" "scanner finds each searched string in a synthetic log" "${value_count}" "${counts#* }"
+  expect "positive control" "ingress log captured (unique control path)" "yes" \
+    "$(grep -qF -- "$marker" "${AUTH_WORK}/ingress.log" && echo yes || echo no)"
+  expect "positive control" "callback request ID in the ingress log" "yes" \
+    "$([[ -n "$callback_rid" ]] && grep -qF -- "rid=${callback_rid}" "${AUTH_WORK}/ingress.log" && echo yes || echo no)"
+  expect "positive control" "callback request ID in the oauth2-proxy log" "yes" \
+    "$([[ -n "$callback_rid" ]] && grep -qF -- "$callback_rid" "${AUTH_WORK}/oauth2-proxy.log" && echo yes || echo no)"
+  record "positive control" "oauth2-proxy error lines in the window (diagnostics kept)" "observe" \
+    "$(grep -ciE 'error' "${AUTH_WORK}/oauth2-proxy.log" || true)" info
+  record "positive control" "ingress 503 lines with upstream status in the window" "observe" \
+    "$(grep -c '" 503 .*upstream=50[24]' "${AUTH_WORK}/ingress.log" || true)" info
+
+  if [[ -n "$evidence_file" ]]; then
+    {
+      printf '{\n  "project": "%s",\n  "started_at": "%s",\n  "recorded_at": "%s",\n' \
+        "$PROJECT" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf '  "values": "authorization codes from three flows and state values from four, one session cookie, one session access token, one machine access token, and five long-lived secrets; searched as fixed strings, never recorded",\n'
+      printf '  "results": [\n'
+      local index
+      for index in "${!RESULTS[@]}"; do
+        printf '    %s' "${RESULTS[$index]}"
+        [[ "$index" -lt $(( ${#RESULTS[@]} - 1 )) ]] && printf ','
+        printf '\n'
+      done
+      printf '  ]\n}\n'
+    } > "$evidence_file"
+    echo "Evidence written: ${evidence_file}"
+  fi
+
+  echo
+  if [[ "$FAILED" -ne 0 ]]; then
+    echo "Log hygiene verification failed: ${FAILED} check(s)." >&2
+    return 1
+  fi
+  echo "Log hygiene verification passed (${#RESULTS[@]} checks)."
+}
+
 check_configuration
 
 case "${1:-}" in
@@ -1496,6 +2224,16 @@ case "${1:-}" in
     require_command docker
     shift
     verify_failures "$@"
+    ;;
+  verify-authentication)
+    require_command docker
+    shift
+    verify_authentication "$@"
+    ;;
+  verify-log-hygiene)
+    require_command docker
+    shift
+    verify_log_hygiene "$@"
     ;;
   lab-user)
     show_lab_user
