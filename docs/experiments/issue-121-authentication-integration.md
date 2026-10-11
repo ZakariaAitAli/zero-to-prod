@@ -366,12 +366,10 @@ default).
 ## Manual browser verification
 
 Two runs of the guide's manual browser check, both on 2026-10-11, in Brave on
-Windows 11 (Brave version not recorded) with the lab CA trusted in the Windows
-user store.
+Windows 11 (Brave version unknown) with the lab CA trusted in the Windows user
+store. DevTools device (mobile) emulation was enabled in both runs.
 
 ### First run, before the sign-out fix
-
-DevTools device (mobile) emulation was enabled.
 
 | Step | Result |
 | --- | --- |
@@ -420,7 +418,8 @@ headers (accepted, session and Keycloak session ended).
 ### Retest, after the sign-out fix
 
 The sign-out steps (guide steps 8 and 9) were repeated after the fix was
-deployed to the lab:
+deployed to the lab, with device emulation enabled (visible in the retest's
+screenshots):
 
 | Step | Result |
 | --- | --- |
@@ -433,9 +432,9 @@ first result.
 
 ### Limitations and outstanding checks
 
-- The Brave version was not recorded for either run.
-- The first run had device emulation enabled; whether it was enabled during
-  the retest was not recorded. The probe shows the `null` Origin without
+- The Brave version is unknown for both runs.
+- Device emulation was enabled in both runs, so neither run shows Brave's
+  behavior without emulation. The probe shows the `null` Origin without
   emulation, but in Chromium 152, not Brave.
 - The retest covered the sign-out steps only. Sign-in, Work Item processing,
   and session refresh were observed in the first run, before the fix, and

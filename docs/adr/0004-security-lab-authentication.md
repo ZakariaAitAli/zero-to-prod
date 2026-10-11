@@ -266,8 +266,9 @@ Host-side test tooling still passes client secrets to curl as arguments. The tes
 key refreshes detects a non-atomic refresh only probabilistically (17 of 20
 runs against the previous shape).
 
-**Unresolved:** manual browser checks cover one browser (Brave, version not
-recorded); the retest after the sign-out fix repeated only the sign-out
+**Unresolved:** manual browser checks cover one browser (Brave, version
+unknown, with device emulation enabled in both runs); the retest after the
+sign-out fix repeated only the sign-out
 steps, and the browser's sign-out request headers were not inspected; no
 authorization; single runs.
 
