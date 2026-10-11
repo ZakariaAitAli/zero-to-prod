@@ -227,7 +227,7 @@ oauth2-proxy refreshes the session it issues a new session cookie on its auth
 response; nginx forwards that `Set-Cookie` to the browser unchanged, together
 with the usual security headers.
 
-**Sign out** (a same-origin POST) deletes the Valkey session and calls
+**Sign out** (a same-origin `fetch()` POST from the UI) deletes the Valkey session and calls
 Keycloak's end-session endpoint with the session's ID token, so the next
 sign-in asks for the password again.
 
@@ -237,7 +237,10 @@ For requests that carry the session cookie, the ingress refuses state changes
 (any method but GET and HEAD) unless the request has the header
 `X-Requested-With: work-items-web`, an `Origin` that is absent or equal to the
 site, and `Sec-Fetch-Site` absent or `same-origin`. The Web UI sends the
-header. Sign-out is POST-only and requires a same-origin `Origin`.
+header. Sign-out is POST-only and needs the same header, `Origin`, and fetch
+metadata. A plain HTML form cannot sign out: the site sends
+`Referrer-Policy: no-referrer`, under which browsers send a form post's
+`Origin` as `null`, and `null` is always refused.
 
 ### Machine clients
 
@@ -262,7 +265,7 @@ curl -sS --cacert "$state/pki/ca.crt" -H "Authorization: Bearer $token" \
 | Setting | Value |
 | --- | --- |
 | Access token lifetime | 300 s |
-| Gateway session refresh | after 1 min, on the next request; the ingress forwards the new session cookie (verified with a scripted cookie-jar client, not yet in a browser) |
+| Gateway session refresh | after 1 min, on the next request; the ingress forwards the new session cookie (verified with a scripted cookie-jar client and in a manual Brave check) |
 | Gateway session cookie | 8 h |
 | Keycloak SSO session | 30 min idle, 8 h maximum |
 
@@ -451,8 +454,12 @@ cookie values or tokens into notes or screenshots.
      step 5.
    - Create and process a second Work Item: it still works, so the browser
      stored and sent the refreshed cookie.
-8. Choose **Sign out**. Expect the page to return to **Sign in required**, and
-   `__Host-wi-session` to be gone from **Application → Cookies**.
+8. Choose **Sign out**. In **Network**, the `sign_out` request is a `fetch`
+   with `Origin: https://work-items.localhost:9443` and
+   `X-Requested-With: work-items-web`, answered with a redirect. Expect the
+   page to return to **Sign in required**, and `__Host-wi-session` to be gone
+   from **Application → Cookies**. A 403 `csrf_rejected` here is the defect
+   recorded in the integration record.
 9. Choose **Sign in** again. Expect Keycloak's login form asking for the
    password, not a silent sign-in, which shows that the Keycloak session
    ended. Close the window without signing in.

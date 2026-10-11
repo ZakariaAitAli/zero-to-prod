@@ -1833,9 +1833,24 @@ verify_authentication() {
     "$(session_status "$jar" "${ui_headers[@]}" "${post[@]}")"
   expect "$area" "session GET needs no header" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
   expect "$area" "sign-out by GET" "405" "$(session_status "$jar" "${APP_URL}/oauth2/sign_out")"
-  expect "$area" "sign-out POST without Origin" "403" "$(session_status "$jar" -X POST "${APP_URL}/oauth2/sign_out")"
-  expect "$area" "sign-out POST from another origin" "403" \
-    "$(session_status "$jar" -X POST -H "Origin: https://attacker.example" "${APP_URL}/oauth2/sign_out")"
+  # The headers a browser sends for a same-origin form post from a page
+  # served with Referrer-Policy: no-referrer, as observed in Brave and
+  # Chromium: Origin is "null". It must stay refused.
+  local form_post=(-X POST -H "Origin: null" -H "Sec-Fetch-Site: same-origin" -H "Sec-Fetch-Mode: navigate"
+    -H "Sec-Fetch-Dest: document" -H "Content-Type: application/x-www-form-urlencoded" --data "")
+  expect "$area" "sign-out as a no-referrer form post (Origin: null)" "403" \
+    "$(session_status "$jar" "${form_post[@]}" "${APP_URL}/oauth2/sign_out")"
+  expect "$area" "sign-out with Origin: null even with the UI header" "403" \
+    "$(session_status "$jar" "${form_post[@]}" -H "X-Requested-With: work-items-web" "${APP_URL}/oauth2/sign_out")"
+  # The UI's fetch headers, each with one condition broken.
+  expect "$area" "sign-out without the UI header" "403" \
+    "$(session_status "$jar" -X POST -H "Origin: ${APP_URL}" -H "Sec-Fetch-Site: same-origin" -H "Sec-Fetch-Mode: cors" "${APP_URL}/oauth2/sign_out")"
+  expect "$area" "sign-out without Origin" "403" \
+    "$(session_status "$jar" -X POST -H "X-Requested-With: work-items-web" -H "Sec-Fetch-Site: same-origin" "${APP_URL}/oauth2/sign_out")"
+  expect "$area" "sign-out from another origin" "403" \
+    "$(session_status "$jar" -X POST -H "X-Requested-With: work-items-web" -H "Origin: https://attacker.example" -H "Sec-Fetch-Site: cross-site" "${APP_URL}/oauth2/sign_out")"
+  expect "$area" "sign-out with Sec-Fetch-Site: cross-site" "403" \
+    "$(session_status "$jar" -X POST -H "X-Requested-With: work-items-web" -H "Origin: ${APP_URL}" -H "Sec-Fetch-Site: cross-site" "${APP_URL}/oauth2/sign_out")"
   expect "$area" "session still valid after refused sign-outs" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
 
   # --- Logout, cookie replay, and captured-token replay ----------------------
@@ -1849,9 +1864,14 @@ verify_authentication() {
   cp "$jar" "${jar}.copy"
   expect "$area" "captured session token at the API before sign-out" "200" \
     "$(bearer_status "$captured" "${APP_URL}/api/items")"
-  status="$(lab_curl -o /dev/null -D - -b "$jar" -c "$jar" -X POST -H "Origin: ${APP_URL}" -H "Sec-Fetch-Site: same-origin" \
-    "${APP_URL}/oauth2/sign_out" 2>/dev/null | tr -d '\r')"
-  expect "$area" "same-origin POST sign-out redirects" "302" "$(awk 'NR==1{print $2}' <<< "$status")"
+  # The headers the UI's sign-out fetch sends (observed in Chromium under
+  # no-referrer: the real Origin, Sec-Fetch-Mode: cors).
+  status="$(lab_curl -o /dev/null -D - -b "$jar" -c "$jar" -X POST -H "Origin: ${APP_URL}" \
+    -H "Sec-Fetch-Site: same-origin" -H "Sec-Fetch-Mode: cors" -H "Sec-Fetch-Dest: empty" \
+    -H "X-Requested-With: work-items-web" "${APP_URL}/oauth2/sign_out" 2>/dev/null | tr -d '\r')"
+  expect "$area" "sign-out as the UI's fetch sends it" "302" "$(awk 'NR==1{print $2}' <<< "$status")"
+  expect "$area" "sign-out response clears the session cookie" "yes" \
+    "$(grep -iE '^set-cookie: __Host-wi-session=' <<< "$status" | grep -qiE 'max-age=(0|-1)|expires=thu, 01 jan 1970' && echo yes || echo no)"
   record "$area" "sign-out redirect target" "observe" "$(awk 'tolower($1)=="location:"{print $2}' <<< "$status")" info
   expect "$area" "same browser after sign-out" "401" "$(session_status "$jar" "${APP_URL}/api/items")"
   expect "$area" "replayed copy of the session cookie" "401" "$(session_status "${jar}.copy" "${APP_URL}/api/items")"

@@ -25,9 +25,9 @@ workstation (Windows 11, WSL 2 in NAT mode, Docker Desktop with Docker Engine
 | --- | --- |
 | API | `internal/authn`: local validation against the issuer's JWKS (one signature, RS256 allow-list, known key ID with one rate-limited refresh, signature, issuer, audience, required `exp`, 30 s skew). Middleware on every Work Items route: 401 with a Bearer challenge for missing or rejected tokens, 503 `authentication_unavailable` when keys cannot be fetched. `AUTHENTICATION` must be `disabled` or `oidc` |
 | Lab services | Keycloak 26.8.0 with its own PostgreSQL, oauth2-proxy 7.15.5, Valkey 9.1.2 (no persistence), on new internal networks `idp`, `idp-data`, and `session` |
-| Ingress | Session path (`auth_request`, token replaces client credentials, cookie dropped), bearer path for machine clients, refusal of requests with both, CSRF checks, POST-only same-origin sign-out, Keycloak routes limited to the realm and resources, readiness-based store-outage classification |
+| Ingress | Session path (`auth_request`, token replaces client credentials, cookie dropped), bearer path for machine clients, refusal of requests with both, CSRF checks, POST-only sign-out with the same CSRF checks, Keycloak routes limited to the realm and resources, readiness-based store-outage classification |
 | Sign-out | oauth2-proxy deletes the Valkey session and calls Keycloak's end-session endpoint with the session's ID token (`backend_logout_url`) |
-| Web UI | Sends `X-Requested-With: work-items-web`; shows **Sign in** on `unauthenticated` and a POST **Sign out** form when the gateway reports a session |
+| Web UI | Sends `X-Requested-With: work-items-web`; shows **Sign in** on `unauthenticated` and a **Sign out** button (a same-origin `fetch()` POST with the CSRF header) when the gateway reports a session |
 | Logging | The ingress access log records the path without the query string and no headers or cookies, and keeps the status, upstream status, upstream address, upstream connect time, total request time, and a request ID. In the two public servers, nginx error-log entries below `crit` from request processing are suppressed, because nginx's error log writes the full request line and referrer; this includes the `error`-level entries for upstream connection failures and timeouts. oauth2-proxy's request log omits the request URI; its auth and error logs are unchanged. The request ID is passed to oauth2-proxy and returned to the client |
 | Tooling | `security-lab-local` generates the realm, gateway, and store configuration from per-lab secrets; `verify-authentication` exercises the behavior below; `verify-log-hygiene` searches the logs for authentication material; `verify` and `verify-failures` cover the new services and settings |
 
@@ -68,7 +68,7 @@ Evidence: `evidence/issue-121/auth-integration/` (`verify-authentication.json`,
 `verify.json`, `missing-secret-failures.json`, `log-hygiene.json`,
 `log-hygiene-previous-config.json`, `session-refresh-previous-ingress.json`).
 
-`verify-authentication` (with the slow expiry checks): 72 checks passed, 10
+`verify-authentication` (with the slow expiry checks): 77 checks passed, 10
 observations recorded, none failed. `verify`: 78 checks passed, 4
 observations, 1 skipped (the Windows "without lab CA" control, because Windows
 trusts the lab CA). `verify-failures`: 10 of 10 cases passed.
@@ -106,7 +106,9 @@ bearer token was refused with 400 `ambiguous_credentials`.
 | POST with the header, same `Origin`, `same-origin` (control) | 201 |
 | GET without the header | 200 |
 | Sign-out by GET | 405 |
-| Sign-out POST without `Origin`; from another origin | 403; 403 |
+| Sign-out with the headers of a form post under `no-referrer` (`Origin: null`, `Sec-Fetch-Site: same-origin`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`) | 403 |
+| The same with `X-Requested-With` added | 403 |
+| Sign-out with the UI's fetch headers but without `X-Requested-With`; without `Origin`; from another origin; with `Sec-Fetch-Site: cross-site` | 403; 403; 403; 403 |
 | Session after the refused sign-outs | still 200 |
 
 A machine client's POST without the header was accepted (201): the bearer
@@ -118,7 +120,7 @@ These are recorded separately because they answer different questions.
 
 | Question | Check | Result |
 | --- | --- | --- |
-| Gateway session | Same browser after a same-origin POST sign-out (302 to `/`) | 401 |
+| Gateway session | Same client after sign-out with the UI's fetch headers (`Origin` of the site, `Sec-Fetch-Mode: cors`, `X-Requested-With`; 302 to `/`, session cookie cleared) | 401 |
 | Cookie replay | Copy of the session cookie taken before sign-out | 401 |
 | Keycloak session | Next sign-in with the same browser's Keycloak cookies | Login form (before sign-out: silent sign-in) |
 | Keycloak session | Captured access token at Keycloak's userinfo | 401 |
@@ -196,9 +198,9 @@ location, because a location-level `add_header` replaces the inherited ones.
 **Method and limit.** These checks use a scripted client: curl with a cookie
 jar, which stores and resends cookies as instructed by `Set-Cookie`. A browser
 applies further rules (the `__Host-` prefix, SameSite, cookie storage
-policies) that curl does not enforce. Whether a real browser accepts, stores,
-and resends the refreshed cookie is **not yet verified**; it is part of the
-outstanding manual browser check.
+policies) that curl does not enforce. The manual Brave check later passed the
+refresh step; see [manual browser verification](#manual-browser-verification)
+for its conditions.
 
 | Check (session path, scripted cookie-jar client) | Fixed ingress | Previous ingress (control) |
 | --- | --- | --- |
@@ -318,6 +320,11 @@ default).
   cookie, and a scripted cookie-jar refresh test was added. Its control fails against
   the previous ingress.
 
+- The manual Brave check found that sign-out failed with 403
+  `csrf_rejected`. The scripted sign-out check had sent `Origin` explicitly,
+  which no browser sends for a form post from a `no-referrer` page; see
+  [manual browser verification](#manual-browser-verification).
+
 ## Findings for later slices
 
 - oauth2-proxy's auth log records the user's email and ID for each sign-in;
@@ -333,14 +340,62 @@ default).
 - oauth2-proxy trusts `X-Forwarded-*` from any client on the `app` network,
   which includes the API.
 
-## Outstanding verification
+## Manual browser verification
 
-A manual check in a real browser (Brave on Windows) is outstanding. All flows
-in this record were driven by scripted clients. It should cover sign-in
-through Keycloak, creating and processing a Work Item, the session continuing
-across a gateway refresh (the browser storing and resending the refreshed
-`__Host-wi-session` cookie), and sign-out ending both the gateway and the
-Keycloak session. The guide lists the steps.
+**Date:** 2026-10-11. **Environment:** Brave on Windows 11 (Brave version not
+recorded), the lab CA trusted in the Windows user store, DevTools device
+(mobile) emulation enabled. Steps from the guide's manual browser check, run
+against the lab before the sign-out fix below.
+
+| Step | Result |
+| --- | --- |
+| Sign-in through Keycloak | Passed |
+| Create and process a Work Item | Passed |
+| Session refresh (refreshed cookie stored and used) | Passed |
+| Sign-out | **Failed**: 403 `csrf_rejected`; the session remained active |
+
+The failing sign-out request, from DevTools:
+
+```text
+POST /oauth2/sign_out
+Origin: null
+Sec-Fetch-Site: same-origin
+Sec-Fetch-Mode: navigate
+Sec-Fetch-Dest: document
+```
+
+The page had been served with `Referrer-Policy: no-referrer`, and sign-out
+was a plain HTML form post. The ingress requires an `Origin` equal to the
+site, so `null` was refused.
+
+**Cause, confirmed in Chromium.** A local probe served pages with a given
+`Referrer-Policy` and echoed the headers of a same-origin form POST and a
+same-origin `fetch()` POST. It ran in the Claude desktop app's built-in
+browser (Chromium 152, desktop, no emulation):
+
+| Page policy | Request | `Origin` | `Sec-Fetch-Mode` | `Sec-Fetch-Site` |
+| --- | --- | --- | --- | --- |
+| `no-referrer` | form POST | `null` | `navigate` | `same-origin` |
+| `no-referrer` | `fetch()` POST | the page's origin | `cors` | `same-origin` |
+| `same-origin` | form POST | the page's origin | `navigate` | `same-origin` |
+
+`no-referrer` therefore causes the `null` Origin of a form post, independent of
+device emulation. The UI's API calls were unaffected because they are
+`fetch()` requests, which send the real Origin.
+
+**Fix.** `Referrer-Policy: no-referrer` and the strict check stay. The UI now
+signs out with a same-origin `fetch()` POST carrying `X-Requested-With`, and
+the ingress requires that header on sign-out as on other session state
+changes. It keeps requiring an `Origin` equal to the site, so `null` is still
+refused, also with the header (see [CSRF](#csrf-session-cookie-present)). The
+scripted checks replay the exact failing headers (refused) and the UI's fetch
+headers (accepted, session and Keycloak session ended).
+
+**Limitations.** The Brave version was not recorded. Device emulation was on,
+so the check reflects Brave's behavior under emulation. The probe shows the
+same `null` Origin without emulation, but in Chromium 152, not Brave. Sign-out
+after the fix has **not yet been verified in a browser**. The manual check
+(guide steps 8 and 9) remains outstanding for it.
 
 ## Pending cleanup
 

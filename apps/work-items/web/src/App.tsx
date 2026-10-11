@@ -7,7 +7,7 @@ import {
   listWorkItems,
   processWorkItem,
   signInURL,
-  signOutURL,
+  signOut,
   type Session,
 } from '@/api/work-items'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -68,6 +68,25 @@ export default function App() {
     useState<Record<number, ProcessingJob>>({})
 
   const [session, setSession] = useState<Session>({ kind: 'no-gateway' })
+  const [signingOut, setSigningOut] = useState(false)
+
+  async function handleSignOut() {
+    setSigningOut(true)
+    setError(null)
+
+    try {
+      await signOut()
+      // Reload so the page reflects the ended session.
+      window.location.assign('/')
+    } catch (signOutError) {
+      setError(
+        signOutError instanceof Error
+          ? `sign_out_failed: ${signOutError.message}`
+          : 'sign_out_failed',
+      )
+      setSigningOut(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -223,16 +242,18 @@ export default function App() {
 
           <div className="flex items-center gap-3">
             {session.kind === 'signed-in' && (
-              // A form post, so the browser sends Origin; the ingress accepts
-              // sign-out only as a same-origin POST.
-              <form method="post" action={signOutURL} className="flex items-center gap-3">
+              <div className="flex items-center gap-3">
                 <span className="text-sm text-muted-foreground">
                   {session.email}
                 </span>
-                <Button type="submit" variant="outline">
-                  Sign out
+                <Button
+                  variant="outline"
+                  disabled={signingOut}
+                  onClick={() => void handleSignOut()}
+                >
+                  {signingOut ? 'Signing out...' : 'Sign out'}
                 </Button>
-              </form>
+              </div>
             )}
 
             <Dialog

@@ -215,11 +215,15 @@ The candidate was integrated into the base security lab and verified with
   `auth_request` path; it is now forwarded with its Secure, HttpOnly, and
   SameSite attributes and the security headers. A scripted client test
   (curl with a cookie jar) shows it being received, stored, and used, and
-  fails against the previous ingress. Acceptance by a real browser is not
-  yet verified.
+  fails against the previous ingress. A manual Brave check passed the
+  refresh step.
 - **Sign-out (C5):** a copied session cookie was rejected after sign-out, and
   Keycloak's session ended (`backend_logout_url`): the next sign-in showed the
-  login form and Keycloak's userinfo rejected the captured token.
+  login form and Keycloak's userinfo rejected the captured token. A manual
+  Brave check then found browser sign-out failing with 403: under
+  `Referrer-Policy: no-referrer` a form post sends `Origin: null`. Sign-out
+  now uses a same-origin `fetch()` with the CSRF header; `null` origins stay
+  refused.
 - **Captured access-token replay:** accepted by the API after sign-out until
   expiry, as expected under local validation, and rejected by the API
   (`expired`) after expiry plus the 30 s skew.
@@ -256,8 +260,8 @@ configured CA) was fixed with a regression test. The test for concurrent
 key refreshes detects a non-atomic refresh only probabilistically (17 of 20
 runs against the previous shape).
 
-**Unresolved:** no browser exercised the integrated flows, including the
-refreshed session cookie (scripted
-sign-ins only); no authorization; single runs.
+**Unresolved:** browser sign-out after the fix is not yet verified (a manual
+Brave check passed sign-in, processing, and refresh, and failed the earlier
+sign-out); no authorization; single runs.
 
 The decision stays Proposed pending review.

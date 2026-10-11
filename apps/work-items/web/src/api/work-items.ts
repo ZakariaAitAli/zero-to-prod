@@ -55,7 +55,31 @@ async function request<T>(
 // Sign-in and sign-out go through the gateway, which exists only in the
 // security lab.
 export const signInURL = '/oauth2/start?rd=%2F'
-export const signOutURL = '/oauth2/sign_out'
+const signOutURL = '/oauth2/sign_out'
+
+// Sign out with a same-origin fetch, not a form post: the site sends
+// Referrer-Policy: no-referrer, under which browsers send a form post's
+// Origin as "null", which the ingress rejects. A fetch carries the real
+// Origin and the CSRF header. The gateway answers with a redirect to "/"
+// that clears the session cookie; the fetch follows it.
+export async function signOut(): Promise<void> {
+  const response = await fetch(signOutURL, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'X-Requested-With': 'work-items-web' },
+  })
+
+  if (!response.ok) {
+    let code = `http_${response.status}`
+    try {
+      const body = (await response.json()) as ApiErrorResponse
+      code = body.error || code
+    } catch {
+      // Keep the HTTP-derived code.
+    }
+    throw new ApiError(code)
+  }
+}
 
 export type Session =
   | { kind: 'signed-in'; email: string }
