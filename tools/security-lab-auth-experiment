@@ -1,0 +1,736 @@
+#!/usr/bin/env bash
+# Issue #121 authentication comparison experiment (scaffolding).
+#
+# Runs Keycloak with oauth2-proxy (cookie and server-side session stores) and
+# Pomerium as an overlay on the security lab, checks the critical assumptions,
+# and records measured behavior. It is removed or generalized when the
+# experiment concludes (ADR 0004).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+LAB_TOOL="${ROOT_DIR}/tools/security-lab-local"
+BASE_COMPOSE="${ROOT_DIR}/infra/security-lab/compose.yaml"
+OVERLAY_COMPOSE="${ROOT_DIR}/infra/security-lab/auth-experiment/compose.yaml"
+PROJECT="zero-to-prod-security-lab"
+
+LAB_STATE="$("$LAB_TOOL" state-dir)"
+EXP_STATE="$(realpath -m -- "${XDG_STATE_HOME:-${HOME}/.local/state}/zero-to-prod/zero-to-prod-security-lab-auth-experiment")"
+EXP_SECRETS="${EXP_STATE}/secrets"
+EXP_TLS="${EXP_STATE}/tls"
+EXP_MARKER="${EXP_STATE}/.zero-to-prod-security-lab-auth-experiment"
+CA="${LAB_STATE}/pki/ca.crt"
+CA_KEY="${LAB_STATE}/pki/ca.key"
+EVIDENCE_DIR="${ZTP_AUTH_EXPERIMENT_EVIDENCE_DIR:-/tmp/ztp-auth-experiment}"
+
+HTTPS_PORT=9443
+APP="https://work-items.localhost:${HTTPS_PORT}"
+AUTH_HOST="auth.work-items.localhost"
+ISSUER="https://${AUTH_HOST}:${HTTPS_PORT}/realms/work-items"
+POMERIUM_APP="https://pomerium-app.work-items.localhost:${HTTPS_PORT}"
+API_AUDIENCE="work-items-api"
+# Experiment lifetimes: short so expiry and refresh are observable.
+ACCESS_TOKEN_SECONDS=120
+COOKIE_REFRESH="60s"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+compose() {
+  ZTP_SECURITY_LAB_SECRETS_DIR="${LAB_STATE}/secrets" \
+  ZTP_SECURITY_LAB_INGRESS_TLS_DIR="${LAB_STATE}/ingress-tls" \
+  ZTP_AUTH_EXPERIMENT_SECRETS_DIR="$EXP_SECRETS" \
+  ZTP_AUTH_EXPERIMENT_TLS_DIR="$EXP_TLS" \
+  ZTP_AUTH_EXPERIMENT_CA_FILE="$CA" \
+    docker compose --project-name "$PROJECT" -f "$BASE_COMPOSE" -f "$OVERLAY_COMPOSE" "$@"
+}
+
+secret() { tr -d '\r\n' < "${EXP_SECRETS}/$1"; }
+
+write_secret() {
+  local path="${EXP_SECRETS}/$1"
+  cat > "${path}.tmp"
+  chmod 644 "${path}.tmp"
+  mv -f "${path}.tmp" "$path"
+}
+
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
+
+init_state() {
+  [[ -f "$CA_KEY" ]] || die "lab CA missing; run: tools/security-lab-local init"
+  case "$EXP_STATE" in
+    "$(realpath -m -- "${XDG_STATE_HOME:-${HOME}/.local/state}")"/*) ;;
+    *) die "unexpected experiment state path: $EXP_STATE" ;;
+  esac
+
+  (umask 077; mkdir -p "$EXP_SECRETS" "$EXP_TLS")
+  chmod 700 "$EXP_STATE" "$EXP_SECRETS"
+  chmod 711 "$EXP_TLS"
+  printf 'project=%s-auth-experiment\n' "$PROJECT" > "$EXP_MARKER"
+
+  local name
+  for name in keycloak-db-password gateway-client-secret pomerium-client-secret \
+              automation-client-secret experiment-admin-secret lab-user-password \
+              valkey-password oauth2-proxy-cookie-secret; do
+    [[ -s "${EXP_SECRETS}/${name}" ]] || openssl rand -hex 16 | write_secret "$name"
+  done
+  for name in pomerium-shared-secret pomerium-cookie-secret; do
+    [[ -s "${EXP_SECRETS}/${name}" ]] || openssl rand -base64 32 | write_secret "$name"
+  done
+
+  issue_certificate
+  write_configs
+  echo "Experiment state ready: ${EXP_STATE}"
+}
+
+issue_certificate() {
+  local work
+  work="$(mktemp -d)"
+  cat > "${work}/ext" <<EOF_EXT
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:work-items.localhost,DNS:${AUTH_HOST},DNS:authn.work-items.localhost,DNS:pomerium-app.work-items.localhost
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid
+EOF_EXT
+  openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+    -keyout "${work}/key" -out "${work}/csr" -subj "/CN=work-items.localhost" 2>/dev/null
+  openssl x509 -req -in "${work}/csr" -CA "$CA" -CAkey "$CA_KEY" \
+    -set_serial "0x$(openssl rand -hex 16)" -days 7 -extfile "${work}/ext" \
+    -out "${work}/crt" 2>/dev/null
+  cat "${work}/key" "${work}/crt" > "${EXP_TLS}/tls.pem.tmp"
+  chmod 644 "${EXP_TLS}/tls.pem.tmp"
+  mv -f "${EXP_TLS}/tls.pem.tmp" "${EXP_TLS}/tls.pem"
+  rm -rf -- "$work"
+}
+
+audience_mapper() {
+  cat <<EOF_MAPPER
+{ "name": "${API_AUDIENCE} audience", "protocol": "openid-connect",
+  "protocolMapper": "oidc-audience-mapper",
+  "config": { "included.custom.audience": "${API_AUDIENCE}",
+              "access.token.claim": "true", "id.token.claim": "false",
+              "introspection.token.claim": "true" } }
+EOF_MAPPER
+}
+
+browser_client() {
+  # $5: optional extra post-logout origin (Pomerium returns via its
+  # authenticate host).
+  local client_id="$1" secret="$2" redirect="$3" origin="$4" logout_origins="$4/*"
+  [[ -n "${5:-}" ]] && logout_origins="${logout_origins}##$5/*"
+  cat <<EOF_CLIENT
+{ "clientId": "${client_id}", "enabled": true, "protocol": "openid-connect",
+  "publicClient": false, "clientAuthenticatorType": "client-secret", "secret": "${secret}",
+  "standardFlowEnabled": true, "implicitFlowEnabled": false,
+  "directAccessGrantsEnabled": false, "serviceAccountsEnabled": false,
+  "redirectUris": ["${redirect}"], "webOrigins": ["${origin}"],
+  "attributes": { "pkce.code.challenge.method": "S256",
+                  "post.logout.redirect.uris": "${logout_origins}" },
+  "protocolMappers": [ $(audience_mapper) ] }
+EOF_CLIENT
+}
+
+write_configs() {
+  cat <<EOF_CONF | write_secret keycloak.conf
+db=postgres
+db-url-host=keycloak-postgres
+db-url-database=keycloak
+db-username=keycloak
+db-password=$(secret keycloak-db-password)
+hostname=https://${AUTH_HOST}:${HTTPS_PORT}
+http-enabled=true
+proxy-headers=xforwarded
+health-enabled=true
+EOF_CONF
+
+  cat <<EOF_REALM | write_secret realm-work-items.json
+{
+  "realm": "work-items", "enabled": true, "sslRequired": "external",
+  "accessTokenLifespan": ${ACCESS_TOKEN_SECONDS},
+  "ssoSessionIdleTimeout": 1800, "ssoSessionMaxLifespan": 28800,
+  "bruteForceProtected": true, "registrationAllowed": false,
+  "clients": [
+    $(browser_client work-items-gateway "$(secret gateway-client-secret)" "${APP}/oauth2/callback" "${APP}"),
+    $(browser_client pomerium-gateway "$(secret pomerium-client-secret)" "https://authn.work-items.localhost:${HTTPS_PORT}/oauth2/callback" "${POMERIUM_APP}" "https://authn.work-items.localhost:${HTTPS_PORT}"),
+    { "clientId": "work-items-automation", "enabled": true, "publicClient": false,
+      "clientAuthenticatorType": "client-secret", "secret": "$(secret automation-client-secret)",
+      "standardFlowEnabled": false, "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true, "protocolMappers": [ $(audience_mapper) ] },
+    { "clientId": "experiment-admin", "enabled": true, "publicClient": false,
+      "clientAuthenticatorType": "client-secret", "secret": "$(secret experiment-admin-secret)",
+      "standardFlowEnabled": false, "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true }
+  ],
+  "users": [
+    { "username": "lab-user", "enabled": true, "email": "lab-user@work-items.localhost",
+      "emailVerified": true, "firstName": "Lab", "lastName": "User",
+      "credentials": [ { "type": "password", "value": "$(secret lab-user-password)", "temporary": false } ] },
+    { "username": "service-account-experiment-admin", "enabled": true,
+      "serviceAccountClientId": "experiment-admin",
+      "clientRoles": { "realm-management": ["manage-users", "view-users"] } }
+  ]
+}
+EOF_REALM
+
+  local store
+  for store in cookie server-side; do
+    {
+      cat <<EOF_OAUTH2
+provider = "keycloak-oidc"
+oidc_issuer_url = "${ISSUER}"
+client_id = "work-items-gateway"
+client_secret = "$(secret gateway-client-secret)"
+redirect_url = "${APP}/oauth2/callback"
+code_challenge_method = "S256"
+email_domains = ["*"]
+provider_ca_files = ["/lab-ca/ca.crt"]
+http_address = "0.0.0.0:4180"
+reverse_proxy = true
+upstreams = ["static://202"]
+set_xauthrequest = true
+pass_access_token = true
+skip_provider_button = true
+cookie_name = "__Host-wi-session"
+cookie_secret = "$(secret oauth2-proxy-cookie-secret)"
+cookie_secure = true
+cookie_httponly = true
+cookie_samesite = "lax"
+cookie_expire = "8h"
+cookie_refresh = "${COOKIE_REFRESH}"
+whitelist_domains = ["${AUTH_HOST}:${HTTPS_PORT}"]
+EOF_OAUTH2
+      if [[ "$store" == server-side ]]; then
+        cat <<EOF_STORE
+session_store_type = "redis"
+redis_connection_url = "redis://valkey:6379"
+redis_password = "$(secret valkey-password)"
+EOF_STORE
+      else
+        echo 'session_store_type = "cookie"'
+      fi
+    } | write_secret "oauth2-proxy-${store}.cfg"
+  done
+
+  cat <<EOF_VALKEY | write_secret valkey.conf
+bind 0.0.0.0
+port 6379
+protected-mode yes
+requirepass $(secret valkey-password)
+save ""
+appendonly no
+EOF_VALKEY
+
+  cat <<EOF_POMERIUM | write_secret pomerium.yaml
+insecure_server: true
+address: ":80"
+authenticate_service_url: https://authn.work-items.localhost:${HTTPS_PORT}
+idp_provider: oidc
+idp_provider_url: ${ISSUER}
+idp_client_id: pomerium-gateway
+idp_client_secret: $(secret pomerium-client-secret)
+# Pomerium requests offline_access by default; this realm does not grant
+# offline tokens, so request the same scopes as oauth2-proxy.
+idp_scopes: [openid, profile, email]
+shared_secret: $(secret pomerium-shared-secret)
+cookie_secret: $(secret pomerium-cookie-secret)
+routes:
+  - from: ${POMERIUM_APP}
+    to: http://ingress:8090
+    allow_any_authenticated_user: true
+    set_request_headers:
+      Authorization: "Bearer \${pomerium.access_token}"
+EOF_POMERIUM
+}
+
+# ---------------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------------
+
+RESULTS=()
+FAILED=0
+
+json_string() {
+  local value="${1//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '"%s"' "$value"
+}
+
+record() {
+  local area="$1" check="$2" expected="$3" observed="$4" result="$5"
+  printf '%-5s %-22s %-56s expected=%s observed=%s\n' \
+    "$(tr '[:lower:]' '[:upper:]' <<< "$result")" "$area" "$check" "$expected" "$observed"
+  RESULTS+=("{\"area\":$(json_string "$area"),\"check\":$(json_string "$check"),\"expected\":$(json_string "$expected"),\"observed\":$(json_string "$observed"),\"result\":\"${result}\"}")
+  [[ "$result" == fail ]] && FAILED=$((FAILED + 1))
+  return 0
+}
+
+expect() {
+  if [[ "$4" == "$3" ]]; then record "$1" "$2" "$3" "$4" pass; else record "$1" "$2" "$3" "$4" fail; fi
+}
+
+write_results() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  {
+    printf '{\n  "recorded_at": "%s",\n  "results": [\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    local i
+    for i in "${!RESULTS[@]}"; do
+      printf '    %s' "${RESULTS[$i]}"
+      [[ "$i" -lt $(( ${#RESULTS[@]} - 1 )) ]] && printf ','
+      printf '\n'
+    done
+    printf '  ]\n}\n'
+  } > "$file"
+  echo "Results written: ${file}"
+}
+
+# Claims of a JWT, summarized without the token or personal identifiers.
+claims() {
+  python3 -I -c '
+import base64, json, sys
+token = sys.stdin.read().strip()
+if token.lower().startswith("bearer "):
+    token = token[7:].strip()
+parts = token.split(".")
+if len(parts) != 3:
+    print("not-a-jwt"); sys.exit(0)
+payload = parts[1] + "=" * (-len(parts[1]) % 4)
+c = json.loads(base64.urlsafe_b64decode(payload))
+aud = c.get("aud")
+aud = sorted(aud) if isinstance(aud, list) else ([aud] if aud else [])
+fields = sys.argv[1].split(",")
+out = {"iss": c.get("iss"), "aud": ",".join(aud), "azp": c.get("azp"),
+       "typ": c.get("typ"), "lifetime": (c.get("exp", 0) - c.get("iat", 0)),
+       "expires_in": c.get("exp", 0) - __import__("time").time() // 1}
+print(" ".join(f"{k}={out[k]}" for k in fields))
+' "$1"
+}
+
+has_audience() {
+  claims aud | grep -Eq "(^|[=,])${API_AUDIENCE}(,|$)" && echo yes || echo no
+}
+
+kc_curl() { curl -sS --cacert "$CA" --max-time 15 "$@"; }
+
+# ---------------------------------------------------------------------------
+# Gates
+# ---------------------------------------------------------------------------
+
+gate_issuer() {
+  local doc issuer rc=0
+  doc="$(kc_curl "${ISSUER}/.well-known/openid-configuration")" || rc=$?
+  issuer="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin)["issuer"])' <<< "$doc" 2>/dev/null || echo "error:${rc}")"
+  expect "G1 issuer" "WSL: discovery issuer with verified TLS" "$ISSUER" "$issuer"
+
+  local curl_exe=/mnt/c/Windows/System32/curl.exe
+  if [[ -x "$curl_exe" ]]; then
+    rc=0
+    doc="$("$curl_exe" -sS --cacert "$(wslpath -w "$CA")" --ssl-revoke-best-effort --max-time 15 \
+      "${ISSUER}/.well-known/openid-configuration" 2>/dev/null)" || rc=$?
+    issuer="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin)["issuer"])' <<< "$doc" 2>/dev/null || echo "error:${rc}")"
+    expect "G1 issuer" "Windows: discovery issuer with verified TLS" "$ISSUER" "$issuer"
+  fi
+
+  # curl resolves *.localhost to loopback itself (observation, not a gate).
+  rc=0
+  docker run --rm --network "${PROJECT}_app" -v "${CA}:/ca.crt:ro" \
+    --entrypoint curl curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 \
+    -sS -o /dev/null --cacert /ca.crt --max-time 10 "${ISSUER}/.well-known/openid-configuration" \
+    >/dev/null 2>&1 || rc=$?
+  record "G1 issuer" "container curl (special-cases .localhost)" "observe" "exit=${rc}" info
+}
+
+gate_issuer_gateway() {
+  local service="$1" state
+  state="$(docker inspect --format '{{.State.Status}} restarts={{.RestartCount}}' "${PROJECT}-${service}-1" 2>/dev/null || echo missing)"
+  expect "G1 issuer" "${service}: running after OIDC discovery (Go resolver, lab CA)" "running restarts=0" "$state"
+}
+
+gate_machine_audience() {
+  local response token
+  response="$(kc_curl -u "work-items-automation:$(secret automation-client-secret)" \
+    -d grant_type=client_credentials "${ISSUER}/protocol/openid-connect/token")"
+  token="$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))' <<< "$response")"
+  expect "G2 audience" "machine client: aud includes ${API_AUDIENCE}" "yes" "$(has_audience <<< "$token")"
+  expect "G2 audience" "machine client: issuer" "iss=${ISSUER}" "$(claims iss <<< "$token")"
+  record "G2 audience" "machine client: token summary" "observe" "$(claims aud,azp,typ,lifetime <<< "$token")" info
+}
+
+# ---------------------------------------------------------------------------
+# Scripted browser login (curl following Keycloak's form)
+# ---------------------------------------------------------------------------
+
+keycloak_form_login() {
+  local jar="$1" start_url="$2" page action
+  page="$(curl -sS -L --cacert "$CA" -c "$jar" -b "$jar" --max-time 20 "$start_url")"
+  action="$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' <<< "$page" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g' || true)"
+  [[ -n "$action" ]] || { echo "no-login-form"; return 0; }
+  curl -sS -L --cacert "$CA" -c "$jar" -b "$jar" --max-time 20 \
+    --data-urlencode "username=lab-user" \
+    --data-urlencode "password=$(secret lab-user-password)" \
+    --data "credentialId=" "$action"
+}
+
+upstream_view() {
+  local jar="$1"
+  curl -sS --cacert "$CA" -b "$jar" -o "${jar}.body" -w '%{http_code}' --max-time 15 \
+    "${APP}/_experiment/upstream-view" || echo "error"
+}
+
+login_oauth2() {
+  local jar="$1" headers="${1}.headers" body
+  rm -f "$jar" "$headers"
+  body="$(keycloak_form_login "$jar" "${APP}/oauth2/start?rd=%2F_experiment%2Fupstream-view")"
+  printf '%s' "$body" > "${jar}.body"
+}
+
+# ---------------------------------------------------------------------------
+# oauth2-proxy arm
+# ---------------------------------------------------------------------------
+
+run_oauth2() {
+  local store="$1"
+  local service="oauth2-proxy-${store}" work status token
+  work="$(mktemp -d)"
+  RESULTS=(); FAILED=0
+  local area="oauth2-proxy ${store}"
+
+  wait_for_issuer
+  gate_issuer
+  gate_issuer_gateway "$service"
+  gate_machine_audience
+
+  # Unauthenticated request: explicit 401, login and UI still reachable.
+  status="$(curl -sS --cacert "$CA" -o /dev/null -w '%{http_code}' "${APP}/api/items")"
+  expect "$area" "unauthenticated GET /api/items" "401" "$status"
+  status="$(curl -sS --cacert "$CA" -o /dev/null -w '%{http_code}' "${APP}/")"
+  expect "$area" "static UI without session" "200" "$status"
+
+  # G3: login and access-token forwarding through auth_request.
+  login_oauth2 "${work}/jar"
+  token="$(cat "${work}/jar.body")"
+  expect "G3 forwarding" "${store}: upstream receives a Bearer JWT" "yes" \
+    "$([[ "$(claims iss <<< "$token")" == "iss=${ISSUER}" ]] && echo yes || echo no)"
+  expect "G2 audience" "${store}: browser access token aud includes ${API_AUDIENCE}" "yes" "$(has_audience <<< "$token")"
+  record "G2 audience" "${store}: browser token summary" "observe" "$(claims aud,azp,typ,lifetime <<< "$token")" info
+  record "$area" "session cookie attributes" "observe" \
+    "$(grep -E '__Host-wi-session' "${work}/jar" | awk '{print "secure=" $4 " path=" $3 " httponly=" ($1 ~ /^#HttpOnly_/ ? "TRUE" : "FALSE")}' | sort -u | head -1)" info
+  record "$area" "session cookie count and size" "observe" \
+    "$(grep -E '__Host-wi-session' "${work}/jar" | awk '{n++; s+=length($7)} END {print "cookies=" n " bytes=" s}')" info
+  status="$(upstream_view "${work}/jar")"
+  expect "$area" "authenticated request through auth_request" "200" "$status"
+  status="$(curl -sS --cacert "$CA" -b "${work}/jar" -o /dev/null -w '%{http_code}' "${APP}/api/items")"
+  expect "$area" "authenticated GET /api/items (Work Items unchanged)" "200" "$status"
+
+  # Control for the token checks below: the same token while the session
+  # is active.
+  local captured="$token"
+  status="$(kc_curl -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${captured#Bearer }" \
+    "${ISSUER}/protocol/openid-connect/userinfo")"
+  record "$area" "captured token at IdP userinfo before sign_out" "observe" "http=${status}" info
+  status="$(introspect "$captured")"
+  record "$area" "captured token introspection before sign_out" "observe" "$status" info
+
+  # Gateway logout and cookie replay.
+  cp "${work}/jar" "${work}/jar.copy"
+  status="$(curl -sS --cacert "$CA" -b "${work}/jar" -c "${work}/jar" -o /dev/null -w '%{http_code}' "${APP}/oauth2/sign_out")"
+  record "$area" "gateway sign_out" "observe" "http=${status}" info
+  status="$(upstream_view "${work}/jar")"
+  expect "$area" "after sign_out, same browser" "401" "$status"
+  status="$(upstream_view "${work}/jar.copy")"
+  if [[ "$store" == cookie ]]; then
+    expect "$area" "after sign_out, replayed copied cookie" "200" "$status"
+  else
+    expect "$area" "after sign_out, replayed copied cookie" "401" "$status"
+  fi
+
+  # Access-token replay after gateway logout.
+  record "$area" "captured access token after sign_out" "observe" "$(claims expires_in <<< "$captured")" info
+  status="$(kc_curl -o /dev/null -w '%{http_code}' -H "Authorization: Bearer ${captured#Bearer }" \
+    "${ISSUER}/protocol/openid-connect/userinfo")"
+  record "$area" "captured token at IdP userinfo after sign_out" "observe" "http=${status}" info
+  status="$(introspect "$captured")"
+  record "$area" "captured token introspection after sign_out" "observe" "$status" info
+
+  # IdP-side session termination: time until the gateway rejects.
+  login_oauth2 "${work}/jar2"
+  idp_logout_user
+  local start elapsed=0
+  start="$(date +%s)"
+  status="$(upstream_view "${work}/jar2")"
+  record "$area" "immediately after IdP-side logout" "observe" "http=${status}" info
+  while [[ "$status" == 200 && "$elapsed" -lt 240 ]]; do
+    sleep 10
+    status="$(upstream_view "${work}/jar2")"
+    elapsed=$(( $(date +%s) - start ))
+  done
+  expect "$area" "after IdP-side logout, within refresh interval + margin" "401" "$status"
+  record "$area" "seconds until gateway rejected" "observe" "${elapsed}" info
+
+  outages "$store" "$service" "$work"
+
+  write_results "${EVIDENCE_DIR}/oauth2-proxy-${store}.json"
+  rm -rf -- "$work"
+  [[ "$FAILED" -eq 0 ]]
+}
+
+introspect() {
+  local token="${1#Bearer }"
+  kc_curl -u "work-items-gateway:$(secret gateway-client-secret)" \
+    --data-urlencode "token=${token}" "${ISSUER}/protocol/openid-connect/token/introspect" \
+    | python3 -I -c 'import json,sys; print("active=" + str(json.load(sys.stdin).get("active")).lower())'
+}
+
+sleep_until() {
+  local remaining=$(( $1 - $(date +%s) ))
+  if [[ "$remaining" -gt 0 ]]; then sleep "$remaining"; fi
+}
+
+wait_for_issuer() {
+  local _
+  for _ in $(seq 1 60); do
+    [[ "$(kc_curl -o /dev/null -w '%{http_code}' "${ISSUER}/.well-known/openid-configuration" 2>/dev/null)" == 200 ]] && return 0
+    sleep 2
+  done
+  return 1
+}
+
+idp_logout_user() {
+  compose --profile probe run --rm -T --entrypoint sh idp-probe -s <<EOF_PROBE >/dev/null
+set -e
+token=\$(curl -sS -u "experiment-admin:$(secret experiment-admin-secret)" -d grant_type=client_credentials \
+  http://keycloak:8080/realms/work-items/protocol/openid-connect/token | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+id=\$(curl -sS -H "Authorization: Bearer \$token" \
+  "http://keycloak:8080/admin/realms/work-items/users?username=lab-user&exact=true" | sed 's/^\[{"id":"\([^"]*\)".*/\1/')
+curl -sS -f -X POST -H "Authorization: Bearer \$token" "http://keycloak:8080/admin/realms/work-items/users/\$id/logout"
+EOF_PROBE
+}
+
+outages() {
+  local store="$1" service="$2" work="$3" status
+  local area="oauth2-proxy ${store}"
+
+  # Identity provider down. Run 1 expected 401 once a refresh was due and
+  # observed 200; the session is now also checked after the access token
+  # has expired.
+  login_oauth2 "${work}/jar3"
+  local login_time
+  login_time="$(date +%s)"
+  compose stop keycloak >/dev/null 2>&1
+  status="$(upstream_view "${work}/jar3")"
+  expect "$area" "IdP down: existing session before refresh" "200" "$status"
+  sleep_until $(( login_time + 75 ))
+  status="$(upstream_view "${work}/jar3")"
+  record "$area" "IdP down: existing session after refresh is due, token unexpired" "observe" \
+    "http=${status} $(claims expires_in < "${work}/jar3.body" 2>/dev/null || echo)" info
+  sleep_until $(( login_time + ACCESS_TOKEN_SECONDS + 10 ))
+  status="$(upstream_view "${work}/jar3")"
+  expect "$area" "IdP down: existing session after the access token expired" "401" "$status"
+  if [[ "$status" == 200 ]]; then
+    record "$area" "IdP down: token forwarded after expiry" "observe" "$(claims expires_in < "${work}/jar3.body")" info
+  fi
+  status="$(curl -sS -L --cacert "$CA" -o /dev/null -w '%{http_code}' --max-time 20 "${APP}/oauth2/start?rd=%2F")"
+  expect "$area" "IdP down: new login" "503" "$status"
+  compose --profile keycloak up -d --wait keycloak >/dev/null 2>&1
+  wait_for_issuer
+  login_oauth2 "${work}/jar4"
+  expect "$area" "IdP restored: new login works" "200" "$(upstream_view "${work}/jar4")"
+
+  # Gateway down.
+  compose stop "$service" >/dev/null 2>&1
+  expect "$area" "gateway down: existing session" "503" "$(upstream_view "${work}/jar4")"
+  compose --profile "$service" up -d "$service" >/dev/null 2>&1
+  sleep 5
+  expect "$area" "gateway restored: existing session without re-login" "200" "$(upstream_view "${work}/jar4")"
+
+  if [[ "$store" == server-side ]]; then
+    compose stop valkey >/dev/null 2>&1
+    expect "$area" "store down: existing session" "503" "$(upstream_view "${work}/jar4")"
+    compose --profile oauth2-proxy-server-side up -d --wait valkey >/dev/null 2>&1
+    sleep 3
+    expect "$area" "store restored (no persistence): existing session" "401" "$(upstream_view "${work}/jar4")"
+    login_oauth2 "${work}/jar5"
+    expect "$area" "store restored: new login works" "200" "$(upstream_view "${work}/jar5")"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Pomerium arm (trust path first)
+# ---------------------------------------------------------------------------
+
+pomerium_view() {
+  curl -sS --cacert "$CA" -b "$1" -c "$1" -o "${1}.body" -w '%{http_code}' --max-time 15 \
+    "${POMERIUM_APP}/" || echo error
+}
+
+run_pomerium() {
+  local work token status area="pomerium in-memory"
+  work="$(mktemp -d)"
+  RESULTS=(); FAILED=0
+
+  wait_for_issuer
+  gate_issuer_gateway pomerium
+  keycloak_form_login "${work}/jar" "${POMERIUM_APP}/" > "${work}/jar.body"
+  token="$(cat "${work}/jar.body")"
+  local iss_claim
+  iss_claim="$(claims iss <<< "$token")"
+  expect "G3 forwarding" "pomerium: upstream receives the IdP access token" "iss=${ISSUER}" "$iss_claim"
+
+  if [[ "$iss_claim" != "iss=${ISSUER}" ]]; then
+    record "$area" "trust path" "IdP token" "mismatch: arm stopped" info
+    write_results "${EVIDENCE_DIR}/pomerium.json"
+    rm -rf -- "$work"
+    return 0
+  fi
+
+  expect "G2 audience" "pomerium: access token aud includes ${API_AUDIENCE}" "yes" "$(has_audience <<< "$token")"
+  record "G2 audience" "pomerium: token summary" "observe" "$(claims aud,azp,typ,lifetime <<< "$token")" info
+
+  cp "${work}/jar" "${work}/jar.copy"
+  # Run 1 did not follow sign_out's redirect: the route host only redirects
+  # to the authenticate host, which ends the session and then redirects to
+  # the IdP's end-session endpoint.
+  status="$(curl -sS -L --cacert "$CA" -b "${work}/jar" -c "${work}/jar" -o /dev/null \
+    -w '%{http_code} %{num_redirects}' "${POMERIUM_APP}/.pomerium/sign_out")"
+  record "$area" "sign_out followed to the IdP (final status, redirects)" "observe" "$status" info
+  status="$(curl -sS --cacert "$CA" -b "${work}/jar" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
+  expect "$area" "after sign_out, same browser" "302" "$status"
+  status="$(curl -sS --cacert "$CA" -b "${work}/jar.copy" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
+  expect "$area" "after sign_out, replayed copied cookie" "302" "$status"
+
+  keycloak_form_login "${work}/jar2" "${POMERIUM_APP}/" >/dev/null
+  compose restart pomerium >/dev/null 2>&1
+  sleep 8
+  status="$(curl -sS --cacert "$CA" -b "${work}/jar2" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
+  expect "$area" "gateway restart: existing session" "302" "$status"
+
+  compose stop pomerium >/dev/null 2>&1
+  status="$(curl -sS --cacert "$CA" -o /dev/null -w '%{http_code}' "${POMERIUM_APP}/")"
+  expect "$area" "gateway down" "503" "$status"
+  compose --profile pomerium up -d pomerium >/dev/null 2>&1
+
+  write_results "${EVIDENCE_DIR}/pomerium.json"
+  rm -rf -- "$work"
+  [[ "$FAILED" -eq 0 ]]
+}
+
+# ---------------------------------------------------------------------------
+# Footprint
+# ---------------------------------------------------------------------------
+
+to_mib() {
+  python3 -I -c '
+import re, sys
+v = sys.argv[1].split("/")[0].strip()
+m = re.match(r"([0-9.]+)\s*([KMG]i?B|B)", v)
+n, u = float(m.group(1)), m.group(2)
+f = {"B": 1/1048576, "KiB": 1/1024, "KB": 1/1024, "MiB": 1, "MB": 1, "GiB": 1024, "GB": 1024}[u]
+print(round(n * f, 1))
+' "$1"
+}
+
+# start-peak <label> <profiles...> -- <services...>: start services, sample
+# memory every second for the startup window, then measure idle.
+measure() {
+  local label="$1"; shift
+  local profiles=() services=()
+  while [[ "$1" != -- ]]; do profiles+=(--profile "$1"); shift; done
+  shift
+  services=("$@")
+
+  local samples
+  samples="$(mktemp)"
+  compose "${profiles[@]}" up -d "${services[@]}" >/dev/null 2>&1 &
+  local up_pid=$!
+  local end=$(( $(date +%s) + 150 ))
+  while [[ "$(date +%s)" -lt "$end" ]]; do
+    docker stats --no-stream --format '{{.Name}}|{{.MemUsage}}' 2>/dev/null >> "$samples" || true
+    sleep 1
+  done
+  wait "$up_pid" || true
+
+  echo "Idle wait (300 s) for ${label}..."
+  sleep 300
+  local idle
+  idle="$(mktemp)"
+  for _ in 1 2 3 4 5; do
+    docker stats --no-stream --format '{{.Name}}|{{.MemUsage}}' >> "$idle"
+    sleep 10
+  done
+
+  local service name peak idle_med total=0 lines=()
+  for service in "${services[@]}"; do
+    name="${PROJECT}-${service}-1"
+    # A container missing from the samples (not running) yields no value.
+    peak="$({ grep "^${name}|" "$samples" || true; } | cut -d'|' -f2 | while read -r v; do to_mib "$v"; done | sort -n | tail -1)"
+    idle_med="$({ grep "^${name}|" "$idle" || true; } | cut -d'|' -f2 | while read -r v; do to_mib "$v"; done | sort -n | sed -n 3p)"
+    lines+=("{\"service\":\"${service}\",\"startup_peak_mib\":${peak:-null},\"idle_median_mib\":${idle_med:-null}}")
+    total="$(python3 -I -c "print(round(${total} + ${idle_med:-0}, 1))")"
+    printf '%-26s peak=%s MiB idle=%s MiB\n' "$service" "${peak:-?}" "${idle_med:-?}"
+  done
+  printf 'combined idle: %s MiB (threshold 1536 MiB)\n' "$total"
+
+  mkdir -p "$EVIDENCE_DIR"
+  {
+    printf '{\n  "configuration": "%s",\n  "recorded_at": "%s",\n' "$label" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '  "conditions": {"docker_mem_total_mib": %s, "cpus": %s, "startup_window_s": 150, "idle_wait_s": 300, "idle_samples": 5, "traffic": "none"},\n' \
+      "$(( $(docker info --format '{{.MemTotal}}') / 1048576 ))" "$(docker info --format '{{.NCPU}}')"
+    printf '  "services": [%s],\n' "$(IFS=,; echo "${lines[*]}")"
+    printf '  "combined_idle_mib": %s,\n  "threshold_mib": 1536\n}\n' "$total"
+  } > "${EVIDENCE_DIR}/footprint-${label}.json"
+  rm -f "$samples" "$idle"
+}
+
+# ---------------------------------------------------------------------------
+# Lifecycle
+# ---------------------------------------------------------------------------
+
+EXPERIMENT_SERVICES=(keycloak keycloak-postgres oauth2-proxy-cookie oauth2-proxy-server-side valkey pomerium)
+
+down_candidates() {
+  compose --profile keycloak --profile oauth2-proxy-cookie --profile oauth2-proxy-server-side \
+    --profile pomerium rm -sf "${EXPERIMENT_SERVICES[@]}" >/dev/null 2>&1 || true
+}
+
+restore_base_ingress() {
+  ZTP_SECURITY_LAB_SECRETS_DIR="${LAB_STATE}/secrets" \
+  ZTP_SECURITY_LAB_INGRESS_TLS_DIR="${LAB_STATE}/ingress-tls" \
+    docker compose --project-name "$PROJECT" -f "$BASE_COMPOSE" up -d --force-recreate --wait ingress >/dev/null
+}
+
+remove_experiment() {
+  down_candidates
+  restore_base_ingress
+  docker volume rm "${PROJECT}_keycloak_postgres_data" >/dev/null 2>&1 || true
+  local network
+  for network in idp idp-data session; do
+    docker network rm "${PROJECT}_${network}" >/dev/null 2>&1 || true
+  done
+  echo "Experiment services, volume, and networks removed; base ingress restored."
+}
+
+purge_state() {
+  [[ -f "$EXP_MARKER" ]] || die "no experiment marker in ${EXP_STATE}"
+  rm -rf --one-file-system -- "$EXP_STATE"
+  echo "Deleted ${EXP_STATE}."
+}
+
+case "${1:-}" in
+  init) init_state ;;
+  up-keycloak) compose --profile keycloak up -d --wait ingress keycloak-postgres keycloak ;;
+  up) shift; compose --profile keycloak --profile "$1" up -d --wait ;;
+  gate-issuer) RESULTS=(); gate_issuer; write_results "${EVIDENCE_DIR}/gate-issuer.json" ;;
+  gate-audience) RESULTS=(); gate_machine_audience; write_results "${EVIDENCE_DIR}/gate-audience.json" ;;
+  run-oauth2) shift; run_oauth2 "$1" ;;
+  run-pomerium) run_pomerium ;;
+  measure) shift; measure "$@" ;;
+  reload-ingress) compose up -d --force-recreate --wait ingress ;;
+  stop-candidates) down_candidates ;;
+  remove) remove_experiment ;;
+  purge-state) purge_state ;;
+  compose) shift; compose "$@" ;;
+  *) echo "usage: $0 init|up-keycloak|up <profile>|gate-issuer|gate-audience|run-oauth2 <cookie|server-side>|run-pomerium|measure ...|stop-candidates|remove|purge-state" >&2; exit 2 ;;
+esac

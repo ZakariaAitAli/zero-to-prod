@@ -125,6 +125,11 @@ assert_case \
   tools/security-lab-local
 
 assert_case \
+  "security lab authentication experiment tooling" \
+  "$backend_workflow_expected" \
+  tools/security-lab-auth-experiment
+
+assert_case \
   "worker Dockerfile" \
   "$backend_expected" \
   apps/work-items/worker/Dockerfile

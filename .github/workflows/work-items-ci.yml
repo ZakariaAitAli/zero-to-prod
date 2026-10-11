@@ -452,6 +452,7 @@ jobs:
           bash -n tools/work-items-worker-local
           bash -n tools/rabbitmq-local
           bash -n tools/security-lab-local
+          bash -n tools/security-lab-auth-experiment
           bash -n infra/local/postgres/init/001-roles.sh
           bash -n infra/security-lab/postgres/init/001-security-lab-roles.sh
 
