@@ -258,7 +258,11 @@ The candidate was integrated into the base security lab and verified with
   and request IDs.
 
 A defect found by the first lab run (the JWKS client did not use the
-configured CA) was fixed with a regression test. The test for concurrent
+configured CA) was fixed with a regression test. A branch review found the
+Valkey health check passing the password as a command-line argument (C7); it
+now sends it on standard input, and a measurement inside the container found
+it in no process argument or environment (the previous form exposed it).
+Host-side test tooling still passes client secrets to curl as arguments. The test for concurrent
 key refreshes detects a non-atomic refresh only probabilistically (17 of 20
 runs against the previous shape).
 

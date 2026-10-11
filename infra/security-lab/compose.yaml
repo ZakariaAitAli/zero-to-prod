@@ -236,7 +236,15 @@ services:
     networks:
       - session
     healthcheck:
-      test: ["CMD-SHELL", "valkey-cli -a \"$$(sed -n 's/^requirepass //p' /run/secrets/valkey.conf)\" --no-auth-warning ping | grep -q PONG"]
+      # Authenticated check without the password in any process argument or
+      # environment: the shell reads it from the secret file and sends AUTH
+      # and PING to valkey-cli on standard input (printf is a shell builtin).
+      # PING after a failed AUTH answers NOAUTH, so PONG requires the password.
+      test:
+        - CMD-SHELL
+        - >-
+          printf 'AUTH %s\nPING\n' "$$(sed -n 's/^requirepass //p' /run/secrets/valkey.conf)"
+          | valkey-cli | grep -qx PONG
       interval: 2s
       timeout: 3s
       retries: 15

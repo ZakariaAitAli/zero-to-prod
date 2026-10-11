@@ -68,7 +68,8 @@ Lifetimes: access token 300 s; oauth2-proxy refreshes a session older than
 
 Evidence: `evidence/issue-121/auth-integration/` (`verify-authentication.json`,
 `verify.json`, `missing-secret-failures.json`, `log-hygiene.json`,
-`log-hygiene-previous-config.json`, `session-refresh-previous-ingress.json`).
+`log-hygiene-previous-config.json`, `session-refresh-previous-ingress.json`,
+`valkey-healthcheck-secret-exposure.json`).
 
 `verify-authentication` (with the slow expiry checks): 77 checks passed, 10
 observations recorded, none failed. `verify`: 78 checks passed, 4
@@ -327,7 +328,27 @@ default).
   which no browser sends for a form post from a `no-referrer` page; see
   [manual browser verification](#manual-browser-verification).
 
+- A branch review found that the Valkey health check passed the Valkey
+  password as a `valkey-cli -a` argument, visible in process listings inside
+  the container, contrary to criterion C7. The check now sends `AUTH` and
+  `PING` to `valkey-cli` on standard input; the shell reads the password from
+  the secret file, and `printf` is a shell builtin. No environment variable is
+  used. Measured inside the container
+  (`valkey-healthcheck-secret-exposure.json`): with the new form the password
+  appeared in no process argument or environment across 1954 samples that
+  each observed `valkey-cli`; the previous form showed it in the arguments of
+  846 of 848 samples. A wrong password yields no `PONG`, so the check still
+  authenticates. The password still passes through a pipe and the shell's
+  memory.
+
 ## Findings for later slices
+
+- Host-side test tooling (`security-lab-local verify-authentication`,
+  `verify-log-hygiene`) and the guide's machine-client example pass client
+  secrets and the lab-user password to curl as arguments, visible to other
+  processes of the same WSL user while curl runs. Services are not affected.
+  The migrate container's connection-URL argument is the known exception
+  listed in the guide.
 
 - oauth2-proxy's auth log records the user's email and ID for each sign-in;
   personal data, not authentication material. Input for the logging review.
