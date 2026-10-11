@@ -125,14 +125,15 @@ after this ADR was proposed.
 
 ### 2026-10-11 — Feasibility stage
 
-The [feasibility record](../experiments/issue-121-authentication-comparison.md)
+The [comparison record](../experiments/issue-121-authentication-comparison.md)
 measured:
 
-- One issuer URL with verified TLS from WSL, Windows, and Go clients in
-  containers (oauth2-proxy, Pomerium). curl inside a container resolves
-  `*.localhost` to loopback itself, so client-specific handling must be checked.
-- Access tokens with `aud` including `work-items-api` for the browser and
-  machine clients.
+- One issuer URL with verified TLS from a Linux client (WSL `curl`), a Windows
+  client (`curl.exe`; not a browser), and Go clients in containers
+  (oauth2-proxy, Pomerium). curl inside a container resolves `*.localhost` to
+  loopback itself, so client-specific handling must be checked.
+- Access tokens whose decoded `aud` includes `work-items-api` for the browser
+  and machine clients (claims decoded, not cryptographically validated).
 - oauth2-proxy forwarding the IdP access token through nginx `auth_request`;
   Pomerium forwarding it through `set_request_headers` once its scopes exclude
   `offline_access`.
@@ -150,3 +151,43 @@ existing sessions continue until the access token expires.
 
 The measured evidence favors oauth2-proxy with a server-side store over
 Pomerium for this lab; that choice is open for review.
+
+### 2026-10-11 — Completion stage
+
+Pomerium's remaining behavior was measured under the same conditions, and an
+nginx classification for oauth2-proxy store outages was tested:
+
+- **Identity-provider session termination:** both gateways rejected the
+  session 60 s after Keycloak ended it.
+- **Captured access-token replay after gateway sign-out:** the token's expiry
+  was unchanged in both. oauth2-proxy's sign-out left the Keycloak session
+  active (userinfo 200); Pomerium's sign-out continued to Keycloak's
+  end-session endpoint (userinfo 401). Under the planned local-validation
+  policy (signature, issuer, audience, and expiry checked against the issuer's
+  keys, without per-request identity-provider calls), the expected behavior is
+  acceptance until expiry in either case, pending validator tests.
+- **Identity provider down:** oauth2-proxy kept existing sessions until the
+  access token expired; Pomerium ended them at the first failed refresh. New
+  logins returned 503 for both.
+- **Gateway restart:** oauth2-proxy sessions survived (store intact);
+  Pomerium's in-memory sessions were lost.
+- **Store outage signal:** nginx distinguishes oauth2-proxy's 401 using the
+  session cookie and oauth2-proxy's `/ready` endpoint; all six store cases
+  matched expectations. Trade-offs: unverifiable cookies receive 503 during an
+  outage, and rejected requests carrying cookies cost one extra gateway
+  request.
+
+**Recommendation for review:** integrate Keycloak, oauth2-proxy behind nginx
+`auth_request`, a Valkey server-side store, and the store-outage
+classification. Integration requirements: configure and test oauth2-proxy
+sign-out through Keycloak's end-session endpoint, and test that API
+validation of `exp` bounds the session tolerated while the identity provider
+is unreachable. Pomerium remains the alternative if fail-closed refresh
+becomes a requirement or the separate store proves costly.
+
+**Unresolved:** no cryptographic token validation by the API yet; no browser
+exercised the flows; machine-client calls through the ingress untested;
+introspection by the gateway client returned `active=false` for active
+sessions, cause not investigated; single runs only.
+
+This ADR stays Proposed until integration evidence is recorded.

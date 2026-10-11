@@ -75,7 +75,7 @@ Experiment records answer **what did we test and what happened?** Focused experi
 - [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
 - [Issue #117 — result implementation validation](experiments/issue-117-result-validation.md) — title-analysis results, atomic business completion, migration refusal, and result backup compatibility.
 - [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
-- [Issue #121 — authentication comparison, feasibility stage](experiments/issue-121-authentication-comparison.md) — issuer reachability, token audience and forwarding, server-side session revocation, outages, and footprint for Keycloak with oauth2-proxy (cookie and server-side stores) and Pomerium.
+- [Issue #121 — authentication comparison](experiments/issue-121-authentication-comparison.md) — issuer reachability, token audience and forwarding, gateway-session revocation, identity-provider termination, token replay, outages, store-outage signaling, and footprint for Keycloak with oauth2-proxy (cookie and server-side stores) and Pomerium.
 - [Issue #121 — local HTTPS ingress and private backends](experiments/issue-121-local-https-ingress.md) — first #121 slice: measured host and container reachability, verified HTTPS with a private lab CA, and missing-secret failures.
 
 Experiment records describe what was true when the experiment ran. They are not rewritten when the system changes later.
