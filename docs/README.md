@@ -66,6 +66,7 @@ ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
 - [ADR 0001 — Work Items async recovery boundary](adr/0001-work-items-async-recovery-boundary.md) — why the PostgreSQL backup covers `work_items`, `processing_jobs`, and `outbox_messages`.
 - [ADR 0002 — Work Items Web UI boundary](adr/0002-work-items-web-ui-boundary.md) — why the browser UI is a separate artifact and how it reaches the API locally.
 - [ADR 0003 — Work Items async success semantics](adr/0003-work-items-async-success-semantics.md) — what successful processing means, why PostgreSQL owns the result, and the required failure model.
+- [ADR 0004 — Security lab authentication](adr/0004-security-lab-authentication.md) — **Proposed:** provisional identity provider, session gateway, and session store candidates for Issue #121, pending a comparison experiment.
 
 ## Experiments
 
