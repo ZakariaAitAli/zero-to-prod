@@ -6,7 +6,14 @@
 # in its place.
 #
 # Only the ingress publishes a port, on host loopback. The API, worker,
-# PostgreSQL, and RabbitMQ are reachable only on internal networks.
+# PostgreSQL, RabbitMQ, Keycloak, oauth2-proxy, and Valkey are reachable only
+# on internal networks.
+#
+# Authentication (ADR 0004, Proposed): Keycloak is the identity provider;
+# oauth2-proxy holds browser sessions in Valkey behind nginx auth_request and
+# forwards the access token; machine clients send their own bearer token. The
+# API validates every token itself (AUTHENTICATION=oidc). The issuer URL
+# names the ingress, which internal clients reach through network aliases.
 
 name: zero-to-prod-security-lab
 
@@ -94,14 +101,20 @@ services:
         VERSION: ${ZTP_SECURITY_LAB_VERSION:-security-lab}
     image: zero-to-prod-security-lab-api:local
     environment:
-      # Intermediate: the lab is still unauthenticated until the identity
-      # provider and gateway are wired in.
-      AUTHENTICATION: disabled
+      # Required in the lab; only local development disables it.
+      AUTHENTICATION: oidc
+      OIDC_ISSUER_URL: https://auth.work-items.localhost:9443/realms/work-items
+      OIDC_AUDIENCE: work-items-api
+      OIDC_JWKS_URL: https://auth.work-items.localhost:9443/realms/work-items/protocol/openid-connect/certs
+      OIDC_CA_FILE: /lab-ca/ca.crt
       DATABASE_URL_FILE: /run/secrets/api-database-url
       RABBITMQ_PUBLISHER_URL_FILE: /run/secrets/api-rabbitmq-url
     secrets:
       - api-database-url
       - api-rabbitmq-url
+    volumes:
+      # Public CA certificate; replaced only by purge-state and init.
+      - ${ZTP_SECURITY_LAB_CA_FILE:?set by tools/security-lab-local}:/lab-ca/ca.crt:ro
     networks:
       - app
       - data
@@ -139,7 +152,8 @@ services:
     image: zero-to-prod-security-lab-ingress:local
     user: "101:101"
     ports:
-      - "127.0.0.1:${ZTP_SECURITY_LAB_HTTPS_PORT:-9443}:8443"
+      # The issuer URL carries this port, so it is fixed (see the guide).
+      - "127.0.0.1:9443:8443"
     tmpfs:
       - /tmp
       - /var/cache/nginx
@@ -148,8 +162,14 @@ services:
       # visible to nginx on reload; a single-file mount keeps the old inode.
       - ${ZTP_SECURITY_LAB_INGRESS_TLS_DIR:?set by tools/security-lab-local}:/run/ingress-tls:ro
     networks:
-      - edge
-      - app
+      edge: {}
+      app:
+        # Internal clients (the API and oauth2-proxy) reach the public names,
+        # and so the issuer, on the ingress's internal 9443 listener.
+        aliases:
+          - work-items.localhost
+          - auth.work-items.localhost
+      idp: {}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/healthz"]
       interval: 5s
@@ -157,6 +177,89 @@ services:
       retries: 10
     depends_on:
       api:
+        condition: service_healthy
+
+  keycloak-postgres:
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD_FILE: /run/secrets/keycloak-db-password
+    secrets:
+      - keycloak-db-password
+    volumes:
+      - identity_postgres_data:/var/lib/postgresql
+    networks:
+      - idp-data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741
+    # The realm is imported only when it does not exist yet; see the guide.
+    command: ["start", "--import-realm"]
+    volumes:
+      # Generated: database password, hostname, and proxy settings.
+      - ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/keycloak.conf:/opt/keycloak/conf/keycloak.conf:ro
+      - ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/realm-work-items.json:/opt/keycloak/data/import/work-items.json:ro
+    networks:
+      - idp
+      - idp-data
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+    healthcheck:
+      # Requires HTTP 200; the body reports "UP" during bootstrap as well.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          head -n 1 <&3 | grep -q ' 200 '
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
+  valkey:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    command: ["valkey-server", "/run/secrets/valkey.conf"]
+    read_only: true
+    secrets:
+      - valkey.conf
+    # Sessions are not persisted: a restart signs everyone out.
+    tmpfs:
+      - /data
+    networks:
+      - session
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$(sed -n 's/^requirepass //p' /run/secrets/valkey.conf)\" --no-auth-warning ping | grep -q PONG"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  oauth2-proxy:
+    <<: *hardened
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916
+    command: ["--config=/run/secrets/oauth2-proxy.cfg"]
+    secrets:
+      - oauth2-proxy.cfg
+    volumes:
+      - ${ZTP_SECURITY_LAB_CA_FILE:?set by tools/security-lab-local}:/lab-ca/ca.crt:ro
+    networks:
+      - app
+      - session
+    # OIDC discovery runs at startup, through the ingress, and the process
+    # exits if it fails.
+    depends_on:
+      valkey:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      ingress:
         condition: service_healthy
 
 networks:
@@ -167,10 +270,22 @@ networks:
     internal: true
   data:
     internal: true
+  # Ingress to Keycloak.
+  idp:
+    internal: true
+  # Keycloak to its own database.
+  idp-data:
+    internal: true
+  # oauth2-proxy to its session store.
+  session:
+    internal: true
 
 volumes:
   postgres_data:
   rabbitmq_data:
+  # Named apart from the comparison experiment's keycloak_postgres_data,
+  # whose realm holds that experiment's client secrets.
+  identity_postgres_data:
 
 secrets:
   postgres-admin-password:
@@ -193,3 +308,9 @@ secrets:
     file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/worker-rabbitmq-url
   rabbitmq-definitions:
     file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/rabbitmq-definitions
+  keycloak-db-password:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/keycloak-db-password
+  valkey.conf:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/valkey.conf
+  oauth2-proxy.cfg:
+    file: ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/oauth2-proxy.cfg

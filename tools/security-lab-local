@@ -20,12 +20,22 @@ PKI_DIR="${STATE_DIR}/pki"
 # replaced inode, so a renewed certificate would never reach the container.
 INGRESS_TLS_DIR="${STATE_DIR}/ingress-tls"
 INGRESS_TLS_FILE="${INGRESS_TLS_DIR}/tls.pem"
-HTTPS_PORT="${ZTP_SECURITY_LAB_HTTPS_PORT:-9443}"
+# Fixed: the issuer URL, client registrations, and the ingress's internal
+# listener all carry it.
+HTTPS_PORT=9443
 LAB_HOSTNAME="work-items.localhost"
+AUTH_HOSTNAME="auth.work-items.localhost"
+APP_URL="https://${LAB_HOSTNAME}:${HTTPS_PORT}"
+ISSUER="https://${AUTH_HOSTNAME}:${HTTPS_PORT}/realms/work-items"
+API_AUDIENCE="work-items-api"
+ACCESS_TOKEN_SECONDS=300
+SESSION_REFRESH="1m"
 CA_DAYS="${ZTP_SECURITY_LAB_CA_DAYS:-90}"
 CERT_DAYS="${ZTP_SECURITY_LAB_CERT_DAYS:-14}"
 PROBE_IMAGE="curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777"
 PROBE_NETWORK="${PROJECT}-unrelated-probe"
+
+LAB_SERVICES=(postgres rabbitmq api worker ingress keycloak-postgres keycloak valkey oauth2-proxy)
 
 POSTGRES_DB="zero_to_prod"
 RABBITMQ_VHOST="zero_to_prod"
@@ -43,9 +53,15 @@ MOUNTED_SECRETS=(
   worker-database-url
   worker-rabbitmq-url
   rabbitmq-definitions
+  keycloak-db-password
+  keycloak.conf
+  realm-work-items.json
+  oauth2-proxy.cfg
+  valkey.conf
 )
 
-# Generated once and never mounted; mounted files are derived from them.
+# Generated once; mounted files are derived from them. Only the database
+# passwords are also mounted directly.
 SOURCE_SECRETS=(
   postgres-admin-password
   postgres-migrator-password
@@ -53,6 +69,12 @@ SOURCE_SECRETS=(
   postgres-worker-password
   rabbitmq-publisher-password
   rabbitmq-worker-password
+  keycloak-db-password
+  gateway-client-secret
+  automation-client-secret
+  lab-user-password
+  valkey-password
+  oauth2-proxy-cookie-secret
 )
 
 usage() {
@@ -63,6 +85,7 @@ Usage:
   ./tools/security-lab-local start
   ./tools/security-lab-local verify [--evidence <file>]
   ./tools/security-lab-local verify-failures [--evidence <file>]
+  ./tools/security-lab-local lab-user
   ./tools/security-lab-local status
   ./tools/security-lab-local logs [service]
   ./tools/security-lab-local issue-certificate
@@ -74,9 +97,11 @@ Usage:
   ./tools/security-lab-local state-dir
 
 Opt-in security lab: an HTTPS ingress on host loopback in front of a
-containerized Work Items API, worker, PostgreSQL, and RabbitMQ that publish
-no ports. It is separate from the development lab and does not use the
-development credentials. Authentication is not implemented yet.
+containerized Work Items API, worker, PostgreSQL, RabbitMQ, Keycloak,
+oauth2-proxy, and Valkey that publish no ports. It is separate from the
+development lab and does not use the development credentials. The API
+requires an access token (AUTHENTICATION=oidc); browsers sign in through
+oauth2-proxy and Keycloak, machine clients use client credentials.
 
 Commands:
   init               Create the lab CA, ingress certificate, and runtime
@@ -88,6 +113,7 @@ Commands:
   verify             Check HTTPS access and backend reachability from the
                      host, Windows (through WSL interop), and test containers.
   verify-failures    Check that missing secrets make each service fail.
+  lab-user           Show the lab user's name and the path of its password.
   status             Show lab containers.
   logs               Show lab logs.
   issue-certificate  Issue a new ingress certificate, reload the ingress, and
@@ -105,8 +131,7 @@ Environment overrides:
   ZTP_SECURITY_LAB_STATE_DIR   secrets and PKI directory; must resolve below
                                \${XDG_STATE_HOME:-~/.local/state} or \${TMPDIR:-/tmp},
                                outside the repository and not containing home
-  ZTP_SECURITY_LAB_HTTPS_PORT  host loopback HTTPS port (default: 9443)
-  ZTP_SECURITY_LAB_CA_DAYS     lab CA validity in days (default: 90)
+  ZTP_SECURITY_LAB_CA_DAYS    lab CA validity in days (default: 90)
   ZTP_SECURITY_LAB_CERT_DAYS   ingress certificate validity in days (default: 14)
 
 State directory: ${STATE_DIR}
@@ -130,7 +155,9 @@ check_configuration() {
 
   check_state_dir
 
-  [[ "$HTTPS_PORT" =~ ^[0-9]+$ ]] || die "invalid ZTP_SECURITY_LAB_HTTPS_PORT: ${HTTPS_PORT}"
+  if [[ -n "${ZTP_SECURITY_LAB_HTTPS_PORT:-}" && "$ZTP_SECURITY_LAB_HTTPS_PORT" != "$HTTPS_PORT" ]]; then
+    die "ZTP_SECURITY_LAB_HTTPS_PORT is no longer supported: the issuer URL fixes the port at ${HTTPS_PORT}"
+  fi
 }
 
 # True when path $1 is $2 or below it.
@@ -240,7 +267,7 @@ require_owned_state() {
 compose() {
   ZTP_SECURITY_LAB_SECRETS_DIR="$SECRETS_DIR" \
     ZTP_SECURITY_LAB_INGRESS_TLS_DIR="$INGRESS_TLS_DIR" \
-    ZTP_SECURITY_LAB_HTTPS_PORT="$HTTPS_PORT" \
+    ZTP_SECURITY_LAB_CA_FILE="${PKI_DIR}/ca.crt" \
     docker compose \
       --project-name "$PROJECT" \
       -f "$COMPOSE_FILE" \
@@ -306,13 +333,14 @@ issue_certificate() {
 
   [[ -f "${PKI_DIR}/ca.key" ]] || die "lab CA missing; run: $0 init"
 
-  echo "Issuing ingress certificate for ${LAB_HOSTNAME} (${CERT_DAYS} days)..."
+  echo "Issuing ingress certificate for ${LAB_HOSTNAME} and ${AUTH_HOSTNAME} (${CERT_DAYS} days)..."
 
+  # The CA's name constraint (DNS:${LAB_HOSTNAME}) also permits its subdomains.
   cat > "$extensions" <<EOF_EXT
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:${LAB_HOSTNAME}
+subjectAltName=DNS:${LAB_HOSTNAME},DNS:${AUTH_HOSTNAME}
 subjectKeyIdentifier=hash
 authorityKeyIdentifier=keyid
 EOF_EXT
@@ -409,6 +437,8 @@ derive_secrets() {
   printf 'amqp://zero_to_prod_worker:%s@rabbitmq:5672/%s\n' "$rabbitmq_worker" "$RABBITMQ_VHOST" \
     | write_file "${SECRETS_DIR}/worker-rabbitmq-url" 644
 
+  derive_authentication_configs
+
   # The password hashes are salted randomly, so regenerate the definitions
   # only when they are missing or a RabbitMQ password was just generated.
   if [[ -s "${SECRETS_DIR}/rabbitmq-definitions" && "${1:-}" != regenerate-rabbitmq ]]; then
@@ -465,6 +495,111 @@ derive_secrets() {
 EOF_DEFINITIONS
 }
 
+audience_mapper() {
+  cat <<EOF_MAPPER
+{ "name": "${API_AUDIENCE} audience", "protocol": "openid-connect",
+  "protocolMapper": "oidc-audience-mapper",
+  "config": { "included.custom.audience": "${API_AUDIENCE}",
+              "access.token.claim": "true", "id.token.claim": "false",
+              "introspection.token.claim": "true" } }
+EOF_MAPPER
+}
+
+# Keycloak, oauth2-proxy, and Valkey configuration. Keycloak imports the
+# realm only when it does not exist yet, so a changed realm file reaches a
+# running lab only after destroy (see the guide).
+derive_authentication_configs() {
+  cat <<EOF_CONF | write_file "${SECRETS_DIR}/keycloak.conf" 644
+db=postgres
+db-url-host=keycloak-postgres
+db-url-database=keycloak
+db-username=keycloak
+db-password=$(secret keycloak-db-password)
+hostname=https://${AUTH_HOSTNAME}:${HTTPS_PORT}
+http-enabled=true
+proxy-headers=xforwarded
+health-enabled=true
+EOF_CONF
+
+  # One browser client (the gateway) and one machine client; no
+  # administrative client or user is defined.
+  cat <<EOF_REALM | write_file "${SECRETS_DIR}/realm-work-items.json" 644
+{
+  "realm": "work-items", "enabled": true, "sslRequired": "external",
+  "accessTokenLifespan": ${ACCESS_TOKEN_SECONDS},
+  "ssoSessionIdleTimeout": 1800, "ssoSessionMaxLifespan": 28800,
+  "bruteForceProtected": true, "registrationAllowed": false,
+  "clients": [
+    { "clientId": "work-items-gateway", "enabled": true, "protocol": "openid-connect",
+      "publicClient": false, "clientAuthenticatorType": "client-secret",
+      "secret": "$(secret gateway-client-secret)",
+      "standardFlowEnabled": true, "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false, "serviceAccountsEnabled": false,
+      "redirectUris": ["${APP_URL}/oauth2/callback"], "webOrigins": ["${APP_URL}"],
+      "attributes": { "pkce.code.challenge.method": "S256",
+                      "post.logout.redirect.uris": "${APP_URL}/*" },
+      "protocolMappers": [ $(audience_mapper) ] },
+    { "clientId": "work-items-automation", "enabled": true, "protocol": "openid-connect",
+      "publicClient": false, "clientAuthenticatorType": "client-secret",
+      "secret": "$(secret automation-client-secret)",
+      "standardFlowEnabled": false, "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true,
+      "protocolMappers": [ $(audience_mapper) ] }
+  ],
+  "users": [
+    { "username": "lab-user", "enabled": true, "email": "lab-user@${LAB_HOSTNAME}",
+      "emailVerified": true, "firstName": "Lab", "lastName": "User",
+      "credentials": [ { "type": "password", "value": "$(secret lab-user-password)", "temporary": false } ] }
+  ]
+}
+EOF_REALM
+
+  # Sign-out deletes the Valkey session and calls Keycloak's end-session
+  # endpoint with the session's ID token (backend_logout_url), so ending the
+  # gateway session also ends the identity-provider session.
+  cat <<EOF_OAUTH2 | write_file "${SECRETS_DIR}/oauth2-proxy.cfg" 644
+provider = "keycloak-oidc"
+oidc_issuer_url = "${ISSUER}"
+client_id = "work-items-gateway"
+client_secret = "$(secret gateway-client-secret)"
+redirect_url = "${APP_URL}/oauth2/callback"
+code_challenge_method = "S256"
+email_domains = ["*"]
+provider_ca_files = ["/lab-ca/ca.crt"]
+http_address = "0.0.0.0:4180"
+reverse_proxy = true
+upstreams = ["static://202"]
+set_xauthrequest = true
+pass_access_token = true
+skip_provider_button = true
+cookie_name = "__Host-wi-session"
+cookie_secret = "$(secret oauth2-proxy-cookie-secret)"
+cookie_secure = true
+cookie_httponly = true
+cookie_samesite = "lax"
+cookie_expire = "8h"
+cookie_refresh = "${SESSION_REFRESH}"
+session_store_type = "redis"
+redis_connection_url = "redis://valkey:6379"
+redis_password = "$(secret valkey-password)"
+backend_logout_url = "${ISSUER}/protocol/openid-connect/logout?id_token_hint={id_token}"
+# The default request log includes the request URI, so a callback logs its
+# authorization code and state. Log everything else; the request ID (set by
+# the ingress) matches each line to the ingress's path-only access log.
+request_id_header = "X-Request-Id"
+request_logging_format = "{{.Client}} - {{.RequestID}} - {{.Username}} [{{.Timestamp}}] {{.Host}} {{.RequestMethod}} {{.Upstream}} {{.Protocol}} {{.UserAgent}} {{.StatusCode}} {{.ResponseSize}} {{.RequestDuration}}"
+EOF_OAUTH2
+
+  cat <<EOF_VALKEY | write_file "${SECRETS_DIR}/valkey.conf" 644
+bind 0.0.0.0
+port 6379
+protected-mode yes
+requirepass $(secret valkey-password)
+save ""
+appendonly no
+EOF_VALKEY
+}
+
 init_state() {
   require_command openssl
 
@@ -480,15 +615,23 @@ init_state() {
   # Earlier versions mounted the ingress key and certificate as single files.
   rm -f "${SECRETS_DIR}/ingress-tls-key" "${SECRETS_DIR}/ingress-tls-chain"
 
+  # Reissue near expiry, and when an earlier certificate lacks the identity
+  # provider's name.
   if [[ ! -f "$INGRESS_TLS_FILE" ]] ||
-     ! openssl x509 -checkend 172800 -noout -in "$INGRESS_TLS_FILE" >/dev/null 2>&1; then
+     ! openssl x509 -checkend 172800 -noout -in "$INGRESS_TLS_FILE" >/dev/null 2>&1 ||
+     ! openssl x509 -noout -checkhost "$AUTH_HOSTNAME" -in "$INGRESS_TLS_FILE" 2>/dev/null | grep -q ' does match '; then
     issue_certificate
   fi
 
   local name rabbitmq_changed=""
   for name in "${SOURCE_SECRETS[@]}"; do
     if [[ ! -s "${SECRETS_DIR}/${name}" ]]; then
-      openssl rand -hex 24 | write_file "${SECRETS_DIR}/${name}" 600
+      if [[ "$name" == oauth2-proxy-cookie-secret ]]; then
+        # oauth2-proxy requires a 16, 24, or 32 byte secret: 32 hex characters.
+        openssl rand -hex 16 | write_file "${SECRETS_DIR}/${name}" 600
+      else
+        openssl rand -hex 24 | write_file "${SECRETS_DIR}/${name}" 600
+      fi
       echo "Generated ${name}"
       if [[ "$name" == rabbitmq-* ]]; then
         rabbitmq_changed=regenerate-rabbitmq
@@ -501,7 +644,8 @@ init_state() {
     "${SECRETS_DIR}/postgres-admin-password" \
     "${SECRETS_DIR}/postgres-migrator-password" \
     "${SECRETS_DIR}/postgres-app-password" \
-    "${SECRETS_DIR}/postgres-worker-password"
+    "${SECRETS_DIR}/postgres-worker-password" \
+    "${SECRETS_DIR}/keycloak-db-password"
 
   derive_secrets "$rabbitmq_changed"
 
@@ -604,18 +748,27 @@ start_lab() {
   # Recreate containers so every file mount refers to the current secret
   # files; a container created before a file was replaced would keep the old
   # inode or fail to start. Volumes are kept.
-  compose up -d --wait --force-recreate postgres rabbitmq
+  compose up -d --wait --force-recreate postgres rabbitmq keycloak-postgres keycloak valkey
 
   # The init script runs only on an empty volume; re-apply identities so the
   # secret files remain authoritative.
   compose exec -T postgres /docker-entrypoint-initdb.d/001-security-lab-roles.sh
   compose run --rm migrate
 
+  # oauth2-proxy discovers the issuer through the ingress, so it starts last.
   compose up -d --wait --force-recreate api worker ingress
+  compose up -d --wait --force-recreate oauth2-proxy
 
   echo
-  echo "Security lab running: https://${LAB_HOSTNAME}:${HTTPS_PORT}/"
-  echo "Not authenticated yet: anyone who can reach this host-loopback port can use it."
+  echo "Security lab running: ${APP_URL}/"
+  echo "Sign in as lab-user; show the password path with: $0 lab-user"
+}
+
+show_lab_user() {
+  [[ -s "${SECRETS_DIR}/lab-user-password" ]] || die "lab user password missing; run: $0 init"
+  echo "Lab user:      lab-user"
+  echo "Password file: ${SECRETS_DIR}/lab-user-password"
+  echo "The password is not printed; read the file when signing in."
 }
 
 issue_certificate_command() {
@@ -965,18 +1118,19 @@ verify_lab() {
   [[ -f "$ca" ]] || die "lab CA missing; run: $0 init"
 
   local service health
-  for service in postgres rabbitmq api worker ingress; do
+  for service in "${LAB_SERVICES[@]}"; do
     health="$(docker inspect --format '{{.State.Status}}{{with .State.Health}}/{{.Status}}{{end}}' \
       "$(compose ps -q "$service")" 2>/dev/null || echo missing)"
     case "$service" in
-      worker) expect "docker" "${service} state" "running" "$health" ;;
+      # Neither image ships a health-check tool.
+      worker | oauth2-proxy) expect "docker" "${service} state" "running" "$health" ;;
       *) expect "docker" "${service} state" "running/healthy" "$health" ;;
     esac
   done
 
   local published
   published="$(
-    for service in postgres rabbitmq api worker ingress; do
+    for service in "${LAB_SERVICES[@]}"; do
       docker inspect --format \
         '{{range $port, $bindings := .NetworkSettings.Ports}}{{range $bindings}}{{$port}}->{{.HostIp}}:{{.HostPort}};{{end}}{{end}}' \
         "$(compose ps -q "$service")" | sed "s/^/${service}=/"
@@ -986,7 +1140,14 @@ verify_lab() {
 
   # --- WSL host -------------------------------------------------------------
   expect "wsl" "HTTPS UI with lab CA" "200 0" "$(https_status --cacert "$ca" "${base}/")"
-  expect "wsl" "HTTPS API via ingress with lab CA" "200 0" "$(https_status --cacert "$ca" "${base}/api/items")"
+  expect "wsl" "HTTPS API without credentials" "401 0" "$(https_status --cacert "$ca" "${base}/api/items")"
+  expect "wsl" "HTTPS issuer discovery with lab CA" "200 0" \
+    "$(https_status --cacert "$ca" "${ISSUER}/.well-known/openid-configuration")"
+  expect "wsl" "Keycloak admin console not routed" "404 0" \
+    "$(https_status --cacert "$ca" "https://${AUTH_HOSTNAME}:${HTTPS_PORT}/admin/")"
+  expect "wsl" "Keycloak master realm not routed" "404 0" \
+    "$(https_status --cacert "$ca" "https://${AUTH_HOSTNAME}:${HTTPS_PORT}/realms/master/")"
+  expect "wsl" "gateway auth endpoint not routed" "404 0" "$(https_status --cacert "$ca" "${base}/oauth2/auth")"
   expect "wsl" "HTTPS without lab CA (control)" "error:60" "$(https_status "${base}/")"
   expect "wsl" "TLS for unconfigured name" "error:35" \
     "$(https_status --cacert "$ca" --connect-to "other.localhost:${HTTPS_PORT}:127.0.0.1:${HTTPS_PORT}" "https://other.localhost:${HTTPS_PORT}/")"
@@ -1004,11 +1165,15 @@ verify_lab() {
     expect_unreachable "wsl" "WSL eth0 ${wsl_address}:${HTTPS_PORT}" "$(probe_tcp_host_detail "${wsl_address}:${HTTPS_PORT}")"
   fi
 
-  local api_ip postgres_ip rabbitmq_ip ingress_edge_ip
+  local api_ip postgres_ip rabbitmq_ip ingress_edge_ip keycloak_ip keycloak_postgres_ip valkey_ip oauth2_proxy_ip
   api_ip="$(container_ip api app)"
   postgres_ip="$(container_ip postgres data)"
   rabbitmq_ip="$(container_ip rabbitmq data)"
   ingress_edge_ip="$(container_ip ingress edge)"
+  keycloak_ip="$(container_ip keycloak idp)"
+  keycloak_postgres_ip="$(container_ip keycloak-postgres idp-data)"
+  valkey_ip="$(container_ip valkey session)"
+  oauth2_proxy_ip="$(container_ip oauth2-proxy app)"
 
   expect_unreachable "wsl" "api container IP :8080" "$(probe_tcp_host_detail "${api_ip}:8080")"
   expect_unreachable "wsl" "postgres container IP :5432" "$(probe_tcp_host_detail "${postgres_ip}:5432")"
@@ -1059,7 +1224,7 @@ verify_lab() {
     # revocation checking is relaxed, chain and name verification are not.
     expect "windows-curl" "HTTPS UI with lab CA" "200" \
       "$(windows_https --cacert "$windows_ca" --ssl-revoke-best-effort "${base}/")"
-    expect "windows-curl" "HTTPS API via ingress with lab CA" "200" \
+    expect "windows-curl" "HTTPS API without credentials" "401" \
       "$(windows_https --cacert "$windows_ca" --ssl-revoke-best-effort "${base}/api/items")"
     # The negative control is only meaningful while Windows does not trust
     # the lab CA itself, for example after the manual browser check.
@@ -1123,9 +1288,23 @@ verify_lab() {
       "https://${LAB_HOSTNAME}:8443/api/items" 2>/dev/null
   )" || rc=$?
   [[ "$rc" -eq 0 ]] || edge_https_status="error:${rc}"
-  expect "edge-network client" "HTTPS API via ingress with lab CA" "200 0" "$edge_https_status"
+  expect "edge-network client" "HTTPS API via ingress without credentials" "401 0" "$edge_https_status"
   expect "edge-network client" "resolve api" "unresolved" "$(probe_dns "$edge" api)"
   expect "edge-network client" "resolve postgres" "unresolved" "$(probe_dns "$edge" postgres)"
+  expect "edge-network client" "resolve keycloak" "unresolved" "$(probe_dns "$edge" keycloak)"
+  expect "edge-network client" "resolve oauth2-proxy" "unresolved" "$(probe_dns "$edge" oauth2-proxy)"
+  expect "edge-network client" "resolve valkey" "unresolved" "$(probe_dns "$edge" valkey)"
+  expect_unreachable "edge-network client" "keycloak container IP :8080" "$(probe_tcp_detail "$edge" "${keycloak_ip}:8080")"
+  expect_unreachable "edge-network client" "valkey container IP :6379" "$(probe_tcp_detail "$edge" "${valkey_ip}:6379")"
+
+  # The API's network reaches the gateway but not the identity provider or
+  # the session store directly.
+  expect "app-network client" "resolve valkey" "unresolved" "$(probe_dns "${PROJECT}_app" valkey)"
+  expect "app-network client" "resolve keycloak" "unresolved" "$(probe_dns "${PROJECT}_app" keycloak)"
+  expect_unreachable "app-network client" "valkey container IP :6379" "$(probe_tcp_detail "${PROJECT}_app" "${valkey_ip}:6379")"
+  expect_unreachable "app-network client" "keycloak container IP :8080" "$(probe_tcp_detail "${PROJECT}_app" "${keycloak_ip}:8080")"
+  expect_unreachable "app-network client" "keycloak-postgres container IP :5432" \
+    "$(probe_tcp_detail "${PROJECT}_app" "${keycloak_postgres_ip}:5432")"
   expect_unreachable "edge-network client" "api container IP :8080" "$(probe_tcp_detail "$edge" "${api_ip}:8080")"
   expect_unreachable "edge-network client" "postgres container IP :5432" "$(probe_tcp_detail "$edge" "${postgres_ip}:5432")"
   expect_unreachable "edge-network client" "rabbitmq container IP :5672" "$(probe_tcp_detail "$edge" "${rabbitmq_ip}:5672")"
@@ -1134,6 +1313,9 @@ verify_lab() {
   expect_unreachable "unrelated container" "api container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${api_ip}:8080")"
   expect_unreachable "unrelated container" "postgres container IP :5432" "$(probe_tcp_detail "$PROBE_NETWORK" "${postgres_ip}:5432")"
   expect_unreachable "unrelated container" "rabbitmq container IP :5672" "$(probe_tcp_detail "$PROBE_NETWORK" "${rabbitmq_ip}:5672")"
+  expect_unreachable "unrelated container" "keycloak container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${keycloak_ip}:8080")"
+  expect_unreachable "unrelated container" "valkey container IP :6379" "$(probe_tcp_detail "$PROBE_NETWORK" "${valkey_ip}:6379")"
+  expect_unreachable "unrelated container" "oauth2-proxy container IP :4180" "$(probe_tcp_detail "$PROBE_NETWORK" "${oauth2_proxy_ip}:4180")"
   expect_unreachable "default-bridge container" "api container IP :8080" "$(probe_tcp_detail bridge "${api_ip}:8080")"
   expect_unreachable "default-bridge container" "postgres container IP :5432" "$(probe_tcp_detail bridge "${postgres_ip}:5432")"
 
@@ -1155,6 +1337,11 @@ verify_lab() {
   expect "app-network control" "api:8080" "connected" "$(probe_tcp "${PROJECT}_app" "api:8080")"
   expect "data-network control" "postgres:5432" "connected" "$(probe_tcp "${PROJECT}_data" "postgres:5432")"
   expect "data-network control" "rabbitmq:5672" "connected" "$(probe_tcp "${PROJECT}_data" "rabbitmq:5672")"
+  expect "app-network control" "oauth2-proxy:4180" "connected" "$(probe_tcp "${PROJECT}_app" "oauth2-proxy:4180")"
+  expect "idp-network control" "keycloak:8080" "connected" "$(probe_tcp "${PROJECT}_idp" "keycloak:8080")"
+  expect "session-network control" "valkey:6379" "connected" "$(probe_tcp "${PROJECT}_session" "valkey:6379")"
+  expect "idp-data-network control" "keycloak-postgres:5432" "connected" \
+    "$(probe_tcp "${PROJECT}_idp-data" "keycloak-postgres:5432")"
 
   local ingress_to_api
   ingress_to_api="$(compose exec -T ingress wget -q -O - http://api:8080/health 2>/dev/null | tr -d '\n' || true)"
@@ -1245,6 +1432,10 @@ verify_failures() {
     compose run --rm --no-deps -e DATABASE_URL_FILE=/run api
   check_failure "api: RABBITMQ_PUBLISHER_URL_FILE missing" "read RABBITMQ_PUBLISHER_URL_FILE" \
     compose run --rm --no-deps -e RABBITMQ_PUBLISHER_URL_FILE=/run/secrets/absent api
+  check_failure "api: AUTHENTICATION unset" "AUTHENTICATION is required" \
+    compose run --rm --no-deps -e AUTHENTICATION= api
+  check_failure "api: OIDC_CA_FILE missing" "read OIDC_CA_FILE" \
+    compose run --rm --no-deps -e OIDC_CA_FILE=/run/secrets/absent api
   check_failure "worker: DATABASE_URL_FILE missing" "read DATABASE_URL_FILE" \
     compose run --rm --no-deps -e DATABASE_URL_FILE=/run/secrets/absent worker
   check_failure "worker: RABBITMQ_WORKER_URL_FILE missing" "read RABBITMQ_WORKER_URL_FILE" \
@@ -1305,6 +1496,9 @@ case "${1:-}" in
     require_command docker
     shift
     verify_failures "$@"
+    ;;
+  lab-user)
+    show_lab_user
     ;;
   status)
     compose --profile tools ps -a
