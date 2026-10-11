@@ -79,6 +79,11 @@ func main() {
 		rabbitMQQueue = defaultWorkItemProcessingQueue
 	}
 
+	authenticate, err := authenticationFromEnvironment(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	store, err := newPostgresStore(context.Background(), databaseURL)
 	if err != nil {
 		log.Fatalf("initialize PostgreSQL store: %v", err)
@@ -89,7 +94,7 @@ func main() {
 	readiness := &readinessState{}
 	server := newHTTPServer(
 		address,
-		newHandler(version, readiness, store),
+		newApplicationHandler(version, readiness, store, authenticate),
 	)
 
 	shutdownContext, stop := signal.NotifyContext(
@@ -209,10 +214,21 @@ func runHTTPServer(
 	}
 }
 
+// newHandler builds the handler without authentication. Production uses
+// newApplicationHandler with the middleware chosen from configuration.
 func newHandler(
 	appVersion string,
 	readiness *readinessState,
 	store applicationStore,
+) http.Handler {
+	return newApplicationHandler(appVersion, readiness, store, withoutAuthentication)
+}
+
+func newApplicationHandler(
+	appVersion string,
+	readiness *readinessState,
+	store applicationStore,
+	authenticate middleware,
 ) http.Handler {
 	if appVersion == "" {
 		appVersion = "dev"
@@ -258,8 +274,9 @@ func newHandler(
 		})
 	})
 
-	registerWorkItemHandlers(mux, store)
-	registerProcessingHandlers(mux, store)
+	business := authenticatedRoutes{mux: mux, authenticate: authenticate}
+	registerWorkItemHandlers(business, store)
+	registerProcessingHandlers(business, store)
 
 	return mux
 }

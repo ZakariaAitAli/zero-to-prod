@@ -94,6 +94,9 @@ services:
         VERSION: ${ZTP_SECURITY_LAB_VERSION:-security-lab}
     image: zero-to-prod-security-lab-api:local
     environment:
+      # Intermediate: the lab is still unauthenticated until the identity
+      # provider and gateway are wired in.
+      AUTHENTICATION: disabled
       DATABASE_URL_FILE: /run/secrets/api-database-url
       RABBITMQ_PUBLISHER_URL_FILE: /run/secrets/api-rabbitmq-url
     secrets:

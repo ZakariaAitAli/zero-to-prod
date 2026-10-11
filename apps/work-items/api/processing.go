@@ -9,7 +9,7 @@ import (
 )
 
 func registerProcessingHandlers(
-	mux *http.ServeMux,
+	mux routes,
 	store applicationStore,
 ) {
 	mux.HandleFunc(
