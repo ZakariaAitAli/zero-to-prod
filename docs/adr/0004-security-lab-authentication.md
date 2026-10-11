@@ -2,8 +2,8 @@
 
 ## Status
 
-Proposed (provisional). Pending the Issue #121 authentication comparison
-experiment.
+Proposed (provisional). The comparison and a first integration are recorded
+under [later evidence](#later-evidence); the decision awaits review.
 
 ## Context
 
@@ -191,3 +191,64 @@ introspection by the gateway client returned `active=false` for active
 sessions, cause not investigated; single runs only.
 
 This ADR stays Proposed until integration evidence is recorded.
+
+### 2026-10-11 — Integration stage
+
+The candidate was integrated into the base security lab and verified with
+`security-lab-local verify-authentication`
+([integration record](../experiments/issue-121-authentication-integration.md)):
+
+- **Validation in the API (C3):** local validation against Keycloak's JWKS,
+  RS256 allow-list, issuer, audience, and required `exp`. Through the ingress,
+  a changed payload, an unsigned token, a malformed value, and a
+  Keycloak-signed ID token for another audience were rejected with 401; the
+  API logged `signature`, `algorithm`, `malformed`, and `audience`.
+- **Both paths (C4, C8):** browser sessions (oauth2-proxy, Valkey) and
+  client-credentials tokens (bearer path, gateway not involved) created,
+  processed, and polled Work Items with unchanged API semantics, including
+  409 `work_item_already_done`. A request with both credentials is refused.
+- **CSRF (C6):** session state changes without the UI header, from another
+  origin, or with cross-site or same-site fetch metadata were refused with
+  403; sign-out is POST-only and same-origin.
+- **Sign-out (C5):** a copied session cookie was rejected after sign-out, and
+  Keycloak's session ended (`backend_logout_url`): the next sign-in showed the
+  login form and Keycloak's userinfo rejected the captured token.
+- **Captured access-token replay:** accepted by the API after sign-out until
+  expiry, as expected under local validation, and rejected by the API
+  (`expired`) after expiry plus the 30 s skew.
+- **Expiry at two boundaries:** a browser session whose access token expired
+  while Keycloak was down was rejected by **oauth2-proxy** (failed refresh);
+  that request did not reach the API. The captured-token replay
+  independently verified the **API's** expiry check on the bearer path. The
+  integration requirement expected the API's check to bound the outage
+  tolerance for sessions; the gateway enforced it first, and the API's check
+  is a second boundary that this browser request did not reach.
+- **Outages (C10):** Keycloak down: existing sessions and machine clients
+  with cached keys continued; new sign-ins and the token endpoint answered
+  503; an API restarted without cached keys answered 503
+  `authentication_unavailable` for unexpired tokens. Gateway down: sessions
+  503, machine clients unaffected. Store down: sessions 503 through the readiness
+  classification (a separate observation with a documented race), machine
+  clients unaffected; sessions are lost when the store restarts.
+
+- **Authentication material in logs:** the first integration run logged
+  authorization codes and state (oauth2-proxy's request log, nginx's error
+  log). After the logging change, a check that searches the logs for the 15
+  actual codes, state values, cookie, tokens, and secrets of a run found none
+  in the ingress or gateway logs for the tested flows: a sign-in and failed
+  callbacks (reused code, Keycloak down, gateway down). Its positive controls
+  passed, and the same check found codes and state with the previous
+  configuration. Trade-off: in the public servers, nginx error-log entries
+  below `crit` are suppressed, so upstream failure reasons are not logged;
+  access logs keep status, upstream status and connect time, request time,
+  and request IDs.
+
+A defect found by the first lab run (the JWKS client did not use the
+configured CA) was fixed with a regression test. The test for concurrent
+key refreshes detects a non-atomic refresh only probabilistically (17 of 20
+runs against the previous shape).
+
+**Unresolved:** no browser exercised the integrated flows (scripted
+sign-ins only); no authorization; single runs.
+
+The decision stays Proposed pending review.

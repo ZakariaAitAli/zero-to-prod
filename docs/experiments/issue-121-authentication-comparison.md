@@ -308,6 +308,17 @@ Completion stage:
 - The store-outage classification doubles gateway requests for rejected
   traffic carrying cookies; rate limiting should consider it.
 
+## After this record
+
+A2 was integrated into the base security lab; see the
+[integration record](issue-121-authentication-integration.md). The overlay
+(`infra/security-lab/auth-experiment/`) and its tool
+(`tools/security-lab-auth-experiment`) were then removed; their evidence stays
+in `evidence/issue-121/auth-comparison/`. Integration requirement 1 was met
+with oauth2-proxy's `backend_logout_url` (a server-side call to Keycloak's
+end-session endpoint with the session's ID token) rather than the sign-out
+redirect described above.
+
 ## Capability levels
 
 No change. Two gateway architectures were implemented and compared on the same
