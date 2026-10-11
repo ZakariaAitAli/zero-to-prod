@@ -222,7 +222,10 @@ oauth2-proxy keeps the session in Valkey and gives the browser only a ticket
 cookie (`__Host-wi-session`: Secure, HttpOnly, SameSite=Lax, path `/`).
 For each API request nginx asks oauth2-proxy (`auth_request`), replaces the
 request's credentials with the session's access token, and drops the cookie
-before the API. Tokens are never readable by browser JavaScript.
+before the API. Tokens are never readable by browser JavaScript. When
+oauth2-proxy refreshes the session it issues a new session cookie on its auth
+response; nginx forwards that `Set-Cookie` to the browser unchanged, together
+with the usual security headers.
 
 **Sign out** (a same-origin POST) deletes the Valkey session and calls
 Keycloak's end-session endpoint with the session's ID token, so the next
@@ -259,7 +262,7 @@ curl -sS --cacert "$state/pki/ca.crt" -H "Authorization: Bearer $token" \
 | Setting | Value |
 | --- | --- |
 | Access token lifetime | 300 s |
-| Gateway session refresh | after 1 min, on the next request |
+| Gateway session refresh | after 1 min, on the next request; the ingress forwards the new session cookie (verified with a scripted cookie-jar client, not yet in a browser) |
 | Gateway session cookie | 8 h |
 | Keycloak SSO session | 30 min idle, 8 h maximum |
 
@@ -302,9 +305,10 @@ values out of the ingress and gateway logs:
 - the request ID (`rid=` in the access log, `X-Request-Id` in the response) is
   also logged by oauth2-proxy, so a gateway line can be matched to its path.
 
-`verify-log-hygiene` checks this for the flows it drives (a sign-in and the
-failed callbacks described under [verify](#verify)) with the actual values of
-a run. It does not cover other flows or debug-level logging.
+`verify-log-hygiene` checks this for the flows it drives (a sign-in, the
+failed callbacks described under [verify](#verify), and a session refresh)
+with the actual values of a run. It does not cover other flows or debug-level
+logging.
 
 ## Verify
 
@@ -347,7 +351,9 @@ unset `AUTHENTICATION` and a missing `OIDC_CA_FILE`.
 `verify-authentication` signs in with a scripted browser (curl following
 Keycloak's form), uses the machine client, and checks token rejection
 (changed payload, `alg: none`, malformed, an issuer-signed ID token for
-another audience), Work Items behavior on both paths, CSRF refusals, sign-out,
+another audience), Work Items behavior on both paths, CSRF refusals, that the
+scripted client's cookie jar receives and then uses the refreshed session
+cookie, sign-out,
 cookie replay, captured-token replay, and Keycloak, gateway, and store
 outages. It **stops and restarts lab services**, and without `--skip-slow` it
 waits for access tokens to expire (about 12 minutes in total). To compare a
@@ -356,7 +362,8 @@ probe on the internal `app` network; no public route exposes it.
 
 `verify-log-hygiene` drives a successful sign-in and three failed callbacks
 (a reused code, Keycloak down during redemption, oauth2-proxy down when the
-browser returns), plus an authorization request to a stopped Keycloak. It then
+browser returns), an authorization request to a stopped Keycloak, and a
+session refresh. It then
 searches the logs written during the run for the authorization codes, state
 values, session cookie, access tokens, and long-lived secrets it used, as
 fixed strings and in their percent-encoded forms. Positive controls show that
@@ -406,10 +413,54 @@ expires after 90 days. Remove it when you are done.
    profile: Settings → Privacy & Security → Certificates → View Certificates →
    Authorities → Import, and allow it to identify websites.
 
-3. Open `https://work-items.localhost:9443/`. Check that the certificate is
-   issued by "Zero-to-Prod security lab CA", sign in as `lab-user`, then
-   list, create, and process a Work Item and wait for `succeeded` and its
-   result. Sign out and check that signing in again asks for the password.
+3. Follow the [manual browser check](#manual-browser-check-brave).
+
+### Manual browser check (Brave)
+
+The automated checks use scripted clients; this check is the browser
+verification. Use a fresh private window (Ctrl+Shift+N) so no earlier cookies
+interfere. Brave on Windows uses the Windows certificate store. Do not copy
+cookie values or tokens into notes or screenshots.
+
+1. In WSL, start the lab and locate the lab user's password:
+
+   ```bash
+   ./tools/security-lab-local start
+   ./tools/security-lab-local lab-user
+   ```
+
+2. Open `https://work-items.localhost:9443/`. Expect no certificate warning;
+   the site information shows a certificate issued by "Zero-to-Prod security
+   lab CA". Expect the **Sign in required** notice.
+3. Open DevTools (F12) on the **Network** tab with **Preserve log** enabled.
+4. Choose **Sign in**. Expect Keycloak's login page at
+   `https://auth.work-items.localhost:9443/realms/work-items/…`. Sign in as
+   `lab-user`. Expect to return to the Work Items page, with the lab user's
+   email and a **Sign out** button at the top.
+5. In **Application → Storage → Cookies → https://work-items.localhost:9443**,
+   check `__Host-wi-session`: Secure and HttpOnly set, SameSite `Lax`, path
+   `/`. Note its expiry time.
+6. Choose **New Work Item**, enter a title, and **Create**: the row appears
+   as `pending`. Choose **Process**: the job goes from `accepted` to
+   `succeeded`, and the result shows character and word counts.
+7. Session refresh: wait at least 70 seconds, then reload the page (F5).
+   - In **Network**, select the `items` request; its response headers include
+     `set-cookie: __Host-wi-session=…; Path=/; Max-Age=28800; HttpOnly;
+     Secure; SameSite=Lax`.
+   - In **Application → Cookies**, the cookie's expiry time is later than in
+     step 5.
+   - Create and process a second Work Item: it still works, so the browser
+     stored and sent the refreshed cookie.
+8. Choose **Sign out**. Expect the page to return to **Sign in required**, and
+   `__Host-wi-session` to be gone from **Application → Cookies**.
+9. Choose **Sign in** again. Expect Keycloak's login form asking for the
+   password, not a silent sign-in, which shows that the Keycloak session
+   ended. Close the window without signing in.
+10. In WSL, stop the lab: `./tools/security-lab-local stop`.
+
+If the browser shows `NET::ERR_CERT_AUTHORITY_INVALID`, the lab CA is not
+trusted. Do not click through; trust it as described above and restart
+Brave.
 
 ### Removing the lab CA
 
@@ -494,8 +545,8 @@ manually when no longer needed.
   processing are suppressed, so upstream failure reasons are not logged; the
   access log keeps status, upstream status and address, upstream connect time,
   request time, and request IDs.
-- Log hygiene is verified only for the tested sign-in and failed-callback
-  flows.
+- Log hygiene is verified only for the tested sign-in, failed-callback, and
+  session-refresh flows.
 - One lab user and one machine client, defined in the realm file; no
   self-service, MFA, or Keycloak administration access.
 - The HTTPS port is fixed at 9443.

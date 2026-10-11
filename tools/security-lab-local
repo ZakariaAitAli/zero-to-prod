@@ -120,8 +120,9 @@ Commands:
                      validation, logout, replay, CSRF, and dependency
                      outages. Stops and restarts lab services; without
                      --skip-slow it waits for access-token expiry.
-  verify-log-hygiene Drive a sign-in and failed callbacks (reused code,
-                     Keycloak down, gateway down) and search the logs for
+  verify-log-hygiene Drive a sign-in, failed callbacks (reused code,
+                     Keycloak down, gateway down), and a session refresh,
+                     and search the logs for
                      the codes, state, cookie, tokens, and secrets used.
                      Stops and restarts Keycloak and oauth2-proxy.
   lab-user           Show the lab user's name and the path of its password.
@@ -1606,6 +1607,30 @@ session_cookie() {
   awk '$6 == "__Host-wi-session" {print $7}' "$1" | tail -n 1
 }
 
+# Short digest of the session cookie, for comparison only.
+cookie_digest() {
+  local value
+  value="$(session_cookie "$1")"
+  [[ -n "$value" ]] || { echo ""; return 0; }
+  printf '%s' "$value" | sha256sum | cut -c1-16
+}
+
+# The signed issue time in an oauth2-proxy cookie value (value|time|signature);
+# not secret. Empty if the format differs.
+cookie_issued_at() {
+  session_cookie "$1" | awk -F'|' 'NF == 3 && $2 ~ /^[0-9]+$/ {print $2}'
+}
+
+# Attributes of a Set-Cookie header in a fixed order, without its value.
+set_cookie_attributes() {
+  local header="$1" attribute out=()
+  for attribute in 'Path=/' HttpOnly Secure 'SameSite=Lax'; do
+    grep -qiE "; *${attribute}( *;|$)" <<< "$header" && out+=("$attribute")
+  done
+  out+=("$(grep -oiE 'Max-Age=[0-9]+' <<< "$header" | head -n 1)")
+  echo "${out[*]}"
+}
+
 # The access token a session forwards, read from oauth2-proxy by a probe on
 # the internal app network. This is test instrumentation standing in for an
 # access token captured downstream of the gateway; no public route exposes it.
@@ -1838,6 +1863,49 @@ verify_authentication() {
   expect "replay" "captured token at the API after sign-out, before expiry" "200" \
     "$(bearer_status "$captured" "${APP_URL}/api/items")"
   record "replay" "captured token remaining lifetime at sign-out" "observe" "$(token_claims expires_in <<< "$captured")" info
+
+  # --- Session refresh through auth_request ---------------------------------
+  # oauth2-proxy refreshes a session older than SESSION_REFRESH on its next
+  # request and issues a new session cookie on its auth response. The check is
+  # that a scripted client (curl with a cookie jar, standing in for a browser)
+  # receives that cookie through the ingress, stores it, and
+  # is then authenticated with it; not only that the gateway refreshed its
+  # server-side state. Cookie values are compared by digest and never recorded.
+  area="session refresh"
+  local refresh_jar="${AUTH_WORK}/refresh" refresh_login login_digest login_issued headers set_cookie
+  browser_login "$refresh_jar" >/dev/null
+  refresh_login="$(date +%s)"
+  login_digest="$(cookie_digest "$refresh_jar")"
+  login_issued="$(cookie_issued_at "$refresh_jar")"
+  headers="$(lab_curl -o /dev/null -D - -b "$refresh_jar" -c "$refresh_jar" "${APP_URL}/api/items" 2>/dev/null | tr -d '\r')"
+  expect "$area" "request before a refresh is due" "200" "$(awk 'NR==1{print $2}' <<< "$headers")"
+  expect "$area" "no session cookie issued before a refresh is due" "0" \
+    "$(grep -ci '^set-cookie: __Host-wi-session=' <<< "$headers" || true)"
+
+  sleep_until $(( refresh_login + 70 ))
+  headers="$(lab_curl -o /dev/null -D - -b "$refresh_jar" -c "$refresh_jar" "${APP_URL}/api/items" 2>/dev/null | tr -d '\r')"
+  set_cookie="$(grep -i '^set-cookie: __Host-wi-session=' <<< "$headers" || true)"
+  expect "$area" "request after a refresh is due" "200" "$(awk 'NR==1{print $2}' <<< "$headers")"
+  expect "$area" "refreshed session cookie reaches the client" "1" "$(grep -c . <<< "$set_cookie" || true)"
+  expect "$area" "refreshed cookie attributes" "Path=/ HttpOnly Secure SameSite=Lax Max-Age=28800" \
+    "$(set_cookie_attributes "$set_cookie")"
+  expect "$area" "security headers on the refresh response" "4" \
+    "$(grep -ciE '^(x-content-type-options: nosniff|x-frame-options: deny|referrer-policy: no-referrer|x-request-id: [0-9a-f]+)$' <<< "$headers" || true)"
+  expect "$area" "client stored a new cookie value" "yes" \
+    "$([[ -n "$login_digest" && "$(cookie_digest "$refresh_jar")" != "$login_digest" ]] && echo yes || echo no)"
+  local refreshed_issued
+  refreshed_issued="$(cookie_issued_at "$refresh_jar")"
+  record "$area" "signed issue time advanced (s)" "observe" \
+    "$([[ -n "$login_issued" && -n "$refreshed_issued" ]] && echo $(( refreshed_issued - login_issued )) || echo unknown)" info
+  # The jar now holds only the refreshed value; the next request presents it.
+  headers="$(lab_curl -o /dev/null -D - -b "$refresh_jar" -c "$refresh_jar" "${APP_URL}/api/items" 2>/dev/null | tr -d '\r')"
+  expect "$area" "next request with the refreshed cookie" "200" "$(awk 'NR==1{print $2}' <<< "$headers")"
+  expect "$area" "no further cookie right after the refresh" "0" \
+    "$(grep -ci '^set-cookie: __Host-wi-session=' <<< "$headers" || true)"
+  expect "$area" "refreshed cookie used for a state change" "201" \
+    "$(session_status "$refresh_jar" "${ui_headers[@]}" -H 'Content-Type: application/json' -d '{"title":"after refresh"}' "${APP_URL}/api/items")"
+  expect "$area" "machine client gets no session cookie" "0" \
+    "$(lab_curl -o /dev/null -D - -H "Authorization: Bearer ${machine_token}" "${APP_URL}/api/items" 2>/dev/null | grep -ci '^set-cookie:' || true)"
 
   # --- Outages -------------------------------------------------------------
   # Identity provider down.
@@ -2088,6 +2156,8 @@ verify_log_hygiene() {
   callback_rid="${result#* }"
   expect "$area" "successful flow: callback redirects to the UI" "302" "${result%% *}"
   expect "$area" "successful flow: session works" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  local signed_in
+  signed_in="$(date +%s)"
   add_value "$values" session-cookie "$(session_cookie "$jar")"
   add_value "$values" session-access-token "$(session_access_token "$jar")"
   local machine_token
@@ -2125,6 +2195,17 @@ verify_log_hygiene() {
   expect "$area" "failed callback: gateway down" "503" "$(http_status -c "$jar4" -b "$jar4" "$callback4")"
   restore_service oauth2-proxy
 
+  # Session refresh: the refreshed cookie passes through the ingress in a
+  # response header and must not be logged either.
+  sleep_until $(( signed_in + 70 ))
+  local before_refresh
+  before_refresh="$(session_cookie "$jar")"
+  expect "$area" "session refresh: request after a refresh is due" "200" \
+    "$(http_status -b "$jar" -c "$jar" "${APP_URL}/api/items")"
+  expect "$area" "session refresh: client received a new cookie" "yes" \
+    "$([[ -n "$(session_cookie "$jar")" && "$(session_cookie "$jar")" != "$before_refresh" ]] && echo yes || echo no)"
+  add_value "$values" session-cookie "$(session_cookie "$jar")"
+
   # Long-lived secrets the gateway and identity provider hold.
   local name
   for name in gateway-client-secret automation-client-secret oauth2-proxy-cookie-secret valkey-password lab-user-password; do
@@ -2135,7 +2216,7 @@ verify_log_hygiene() {
   local kinds value_count
   kinds="$(awk -F'\t' '$2 != "" && $1 !~ /\+encoded$/ {n[$1]++} END {for (k in n) printf "%s=%d ", k, n[k]}' "$values" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
   expect "$area" "values collected per kind" \
-    "code=3 machine-access-token=1 secret=5 session-access-token=1 session-cookie=1 state=4" "$kinds"
+    "code=3 machine-access-token=1 secret=5 session-access-token=1 session-cookie=2 state=4" "$kinds"
   record "$area" "percent-encoded forms also searched" "observe" \
     "$(awk -F'\t' '$1 ~ /\+encoded$/' "$values" | wc -l)" info
   value_count="$(awk -F'\t' '$2 != ""' "$values" | wc -l)"
@@ -2178,7 +2259,7 @@ verify_log_hygiene() {
     {
       printf '{\n  "project": "%s",\n  "started_at": "%s",\n  "recorded_at": "%s",\n' \
         "$PROJECT" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      printf '  "values": "authorization codes from three flows and state values from four, one session cookie, one session access token, one machine access token, and five long-lived secrets; searched as fixed strings, never recorded",\n'
+      printf '  "values": "authorization codes from three flows and state values from four, the session cookie before and after a refresh, one session access token, one machine access token, and five long-lived secrets; searched as fixed strings, never recorded",\n'
       printf '  "results": [\n'
       local index
       for index in "${!RESULTS[@]}"; do

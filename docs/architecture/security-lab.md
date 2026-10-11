@@ -139,7 +139,7 @@ automated checks, or an operator-managed browser trust store.
 | `start` | Check secret files, build images, recreate containers, apply identities and migrations, wait for health |
 | `verify`, `verify-failures`, `verify-renewal` | Reachability, missing-secret, and renewal checks with optional JSON evidence |
 | `verify-authentication` | Sign-in, both API paths, token rejection, CSRF, sign-out, replay, and dependency outages; stops and restarts services |
-| `verify-log-hygiene` | Search ingress and gateway logs for the codes, state, cookie, tokens, and secrets of a sign-in and failed callbacks, with positive controls |
+| `verify-log-hygiene` | Search ingress and gateway logs for the codes, state, cookies, tokens, and secrets of a sign-in, failed callbacks, and a session refresh, with positive controls |
 | `stop` | Stop containers, keep volumes and state |
 | `destroy` | Remove this project's containers, networks, and volumes |
 | `purge-state --yes` | Delete the marked state directory |

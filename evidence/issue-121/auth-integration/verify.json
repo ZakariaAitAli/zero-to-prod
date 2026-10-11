@@ -2,7 +2,7 @@
   "project": "zero-to-prod-security-lab",
   "host": "work-items.localhost",
   "https_port": 9443,
-  "recorded_at": "2026-10-11T16:17:31Z",
+  "recorded_at": "2026-10-11T16:50:43Z",
   "results": [
     {"vantage":"docker","check":"postgres state","expected":"running/healthy","observed":"running/healthy","result":"pass"},
     {"vantage":"docker","check":"rabbitmq state","expected":"running/healthy","observed":"running/healthy","result":"pass"},
@@ -31,7 +31,7 @@
     {"vantage":"wsl","check":"127.0.0.1:15672","expected":"refused connects=0 exit=7","observed":"refused connects=0 exit=7","result":"pass"},
     {"vantage":"wsl","check":"WSL eth0 172.27.247.28:9443","expected":"no-connection","observed":"refused connects=0 exit=7","result":"pass"},
     {"vantage":"wsl","check":"api container IP :8080","expected":"no-connection","observed":"timeout connects=0 exit=28","result":"pass"},
-    {"vantage":"wsl","check":"postgres container IP :5432","expected":"no-connection","observed":"refused connects=0 exit=7","result":"pass"},
+    {"vantage":"wsl","check":"postgres container IP :5432","expected":"no-connection","observed":"timeout connects=0 exit=28","result":"pass"},
     {"vantage":"wsl","check":"rabbitmq container IP :5672","expected":"no-connection","observed":"refused connects=0 exit=7","result":"pass"},
     {"vantage":"probe control","check":"windows: listener that never responds","expected":"connected connects=1 exit=28","observed":"connected connects=1 exit=28","result":"pass"},
     {"vantage":"windows-curl","check":"HTTPS UI with lab CA","expected":"200","observed":"200","result":"pass"},

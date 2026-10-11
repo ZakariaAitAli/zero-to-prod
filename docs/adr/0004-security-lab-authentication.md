@@ -210,6 +210,13 @@ The candidate was integrated into the base security lab and verified with
 - **CSRF (C6):** session state changes without the UI header, from another
   origin, or with cross-site or same-site fetch metadata were refused with
   403; sign-out is POST-only and same-origin.
+- **Session refresh (C5, C6):** the refreshed session cookie that
+  oauth2-proxy issues on its auth response was at first discarded by nginx's
+  `auth_request` path; it is now forwarded with its Secure, HttpOnly, and
+  SameSite attributes and the security headers. A scripted client test
+  (curl with a cookie jar) shows it being received, stored, and used, and
+  fails against the previous ingress. Acceptance by a real browser is not
+  yet verified.
 - **Sign-out (C5):** a copied session cookie was rejected after sign-out, and
   Keycloak's session ended (`backend_logout_url`): the next sign-in showed the
   login form and Keycloak's userinfo rejected the captured token.
@@ -233,10 +240,11 @@ The candidate was integrated into the base security lab and verified with
 
 - **Authentication material in logs:** the first integration run logged
   authorization codes and state (oauth2-proxy's request log, nginx's error
-  log). After the logging change, a check that searches the logs for the 15
-  actual codes, state values, cookie, tokens, and secrets of a run found none
-  in the ingress or gateway logs for the tested flows: a sign-in and failed
-  callbacks (reused code, Keycloak down, gateway down). Its positive controls
+  log). After the logging change, a check that searches the logs for the 16
+  actual codes, state values, cookies, tokens, and secrets of a run found none
+  in the ingress or gateway logs for the tested flows: a sign-in, failed
+  callbacks (reused code, Keycloak down, gateway down), and a session
+  refresh. Its positive controls
   passed, and the same check found codes and state with the previous
   configuration. Trade-off: in the public servers, nginx error-log entries
   below `crit` are suppressed, so upstream failure reasons are not logged;
@@ -248,7 +256,8 @@ configured CA) was fixed with a regression test. The test for concurrent
 key refreshes detects a non-atomic refresh only probabilistically (17 of 20
 runs against the previous shape).
 
-**Unresolved:** no browser exercised the integrated flows (scripted
+**Unresolved:** no browser exercised the integrated flows, including the
+refreshed session cookie (scripted
 sign-ins only); no authorization; single runs.
 
 The decision stays Proposed pending review.

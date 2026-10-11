@@ -66,9 +66,9 @@ Lifetimes: access token 300 s; oauth2-proxy refreshes a session older than
 
 Evidence: `evidence/issue-121/auth-integration/` (`verify-authentication.json`,
 `verify.json`, `missing-secret-failures.json`, `log-hygiene.json`,
-`log-hygiene-previous-config.json`).
+`log-hygiene-previous-config.json`, `session-refresh-previous-ingress.json`).
 
-`verify-authentication` (with the slow expiry checks): 61 checks passed, 9
+`verify-authentication` (with the slow expiry checks): 72 checks passed, 10
 observations recorded, none failed. `verify`: 78 checks passed, 4
 observations, 1 skipped (the Windows "without lab CA" control, because Windows
 trusts the lab CA). `verify-failures`: 10 of 10 cases passed.
@@ -179,9 +179,52 @@ of the original 401, so a request that races a store failure or recovery can
 be misclassified. These results show the classification under steady outage
 and steady recovery only.
 
+### Session refresh through `auth_request`
+
+oauth2-proxy refreshes a session older than 1 min on its next request and
+answers the auth subrequest with a new session cookie: a new signed value with
+`Path=/; Max-Age=28800; HttpOnly; Secure; SameSite=Lax`. Observed directly on
+the internal network, the value differed from the login cookie.
+
+Before the fix, nginx discarded that header. After a refresh was due, the
+client received no `Set-Cookie`, and its cookie kept the login value and expiry
+(observed with a probe and with the control below). The ingress now captures
+the gateway's `Set-Cookie` with `auth_request_set` and adds it to the API
+response unchanged. It repeats the server's security headers in that
+location, because a location-level `add_header` replaces the inherited ones.
+
+**Method and limit.** These checks use a scripted client: curl with a cookie
+jar, which stores and resends cookies as instructed by `Set-Cookie`. A browser
+applies further rules (the `__Host-` prefix, SameSite, cookie storage
+policies) that curl does not enforce. Whether a real browser accepts, stores,
+and resends the refreshed cookie is **not yet verified**; it is part of the
+outstanding manual browser check.
+
+| Check (session path, scripted cookie-jar client) | Fixed ingress | Previous ingress (control) |
+| --- | --- | --- |
+| Request before a refresh is due: status; session `Set-Cookie` headers | 200; 0 | 200; 0 |
+| Request after a refresh is due: status | 200 | 200 |
+| Refreshed session cookie received by the client | 1 | **0** |
+| Its attributes | `Path=/ HttpOnly Secure SameSite=Lax Max-Age=28800` | **none** |
+| Security headers on that response (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `X-Request-Id`) | 4 | 4 |
+| Client's stored cookie value changed | yes | **no** |
+| Signed issue time in the stored cookie advanced (observation) | 70 s | 0 s |
+| Next request with the stored (refreshed) cookie; further `Set-Cookie` | 200; 0 | 200; 0 |
+| State change with the stored cookie and the UI headers | 201 | 201 |
+| Machine client response: `Set-Cookie` headers | 0 | 0 |
+
+The control (`session-refresh-previous-ingress.json`) ran the same quick
+suite with the previous `nginx.conf` mounted through a temporary Compose
+override; only the three marked checks failed. The previous ingress still
+authenticated the next request because the login cookie remains valid on the
+server. Per oauth2-proxy's cookie validation, that cookie is rejected once its
+signed issue time is older than `cookie_expire` (8 h), however recently the
+session refreshed. That consequence was not measured here. Cookie values were
+compared by digest and are not recorded.
+
 ### Authentication material in logs
 
-`verify-log-hygiene` drives four flows and records the sensitive values it
+`verify-log-hygiene` drives five flows and records the sensitive values it
 uses:
 
 | Flow | Path exercised |
@@ -190,18 +233,20 @@ uses:
 | The same authorization code redeemed again | oauth2-proxy callback failure (403) |
 | A fresh code redeemed while Keycloak is down; an authorization request to the stopped Keycloak | oauth2-proxy redemption failure (500); ingress upstream failure (503) |
 | A fresh code returned while oauth2-proxy is down | ingress upstream failure on the callback (503) |
+| The first session's next request after a refresh is due | Refreshed session cookie returned through the ingress (200) |
 
-It then searches the logs written during the run for 15 values: 3
-authorization codes, 4 state values, the session cookie value, the session's
-access token, a machine access token, and 5 long-lived secrets (both client
-secrets, the cookie secret, the Valkey password, and the lab-user password).
-It also searches the 9 percent-encoded forms that differ from them, which is
-how URLs appear in logs: 24 strings in all. Values are never printed or
-recorded; the evidence holds counts and value kinds only.
+It then searches the logs written during the run for 16 values: 3
+authorization codes, 4 state values, the session cookie before and after the
+refresh, the session's access token, a machine access token, and 5 long-lived
+secrets (both client secrets, the cookie secret, the Valkey password, and the
+lab-user password). It also searches the 10 percent-encoded forms that
+differ from them, which is how URLs appear in logs: 26 strings in all.
+Values are never printed or recorded; the evidence holds counts and value
+kinds only.
 
 Positive controls, in the same run:
 
-- the scanner finds each of the 24 strings in a synthetic log line;
+- the scanner finds each of the 26 strings in a synthetic log line;
 - the ingress log window contains a unique, non-secret control path requested
   during the run;
 - the callback's request ID appears in both the ingress and the oauth2-proxy
@@ -225,11 +270,11 @@ callback URIs of the successful, reused, and Keycloak-down flows. Its capture
 controls passed, so the leaks it found show that the check detects real
 leakage. The committed configuration was then restored.
 
-**Scope.** The result applies to the flows above: in them, none of the 24
-searched strings appeared in the ingress or oauth2-proxy logs. It is not a
-claim about other flows (for example sign-out, refresh, or error paths not
-driven here), debug-level logging (off), or Keycloak's event logging
-(disabled by default).
+**Scope.** The result applies to the flows above: in them, none of the
+26 searched strings appeared in the ingress or oauth2-proxy logs. It is
+not a claim about other flows (for example sign-out, or error paths not driven
+here), debug-level logging (off), or Keycloak's event logging (disabled by
+default).
 
 ## Corrections
 
@@ -266,6 +311,13 @@ driven here), debug-level logging (off), or Keycloak's event logging
     percent-encoded, so state values went unseen. Encoded forms are now
     searched as well.
 
+- After the first commits, a review of the `auth_request` path found that
+  refreshed session cookies never reached the browser. The earlier checks
+  observed refresh only on the server side: the session kept working because
+  the login cookie stays valid on the server. The ingress now forwards the
+  cookie, and a scripted cookie-jar refresh test was added. Its control fails against
+  the previous ingress.
+
 ## Findings for later slices
 
 - oauth2-proxy's auth log records the user's email and ID for each sign-in;
@@ -280,6 +332,15 @@ driven here), debug-level logging (off), or Keycloak's event logging
   load.
 - oauth2-proxy trusts `X-Forwarded-*` from any client on the `app` network,
   which includes the API.
+
+## Outstanding verification
+
+A manual check in a real browser (Brave on Windows) is outstanding. All flows
+in this record were driven by scripted clients. It should cover sign-in
+through Keycloak, creating and processing a Work Item, the session continuing
+across a gateway refresh (the browser storing and resending the refreshed
+`__Host-wi-session` cookie), and sign-out ending both the gateway and the
+Keycloak session. The guide lists the steps.
 
 ## Pending cleanup
 
