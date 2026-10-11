@@ -249,16 +249,24 @@ sends its token as a bearer token. The ingress passes such requests to the API
 unchanged; the gateway is not involved. A request with both a session cookie
 and a bearer token is refused (400 `ambiguous_credentials`).
 
+The client secret and the token are passed to curl as a config on standard
+input (`-K -`, written by the shell builtin `printf`), so neither appears in
+any process's arguments or environment. Do not use `-u` or
+`-H "Authorization: …"` with the values on the command line; other processes
+of the same user can read command lines.
+
 ```bash
 state="$(./tools/security-lab-local state-dir)"
-token="$(curl -sS --cacert "$state/pki/ca.crt" \
-  -u "work-items-automation:$(cat "$state/secrets/automation-client-secret")" \
-  -d grant_type=client_credentials \
-  https://auth.work-items.localhost:9443/realms/work-items/protocol/openid-connect/token \
+token="$(printf 'user = "work-items-automation:%s"\n' "$(< "$state/secrets/automation-client-secret")" \
+  | curl -sS --cacert "$state/pki/ca.crt" -K - -d grant_type=client_credentials \
+      https://auth.work-items.localhost:9443/realms/work-items/protocol/openid-connect/token \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
-curl -sS --cacert "$state/pki/ca.crt" -H "Authorization: Bearer $token" \
-  https://work-items.localhost:9443/api/items
+printf 'header = "Authorization: Bearer %s"\n' "$token" \
+  | curl -sS --cacert "$state/pki/ca.crt" -K - https://work-items.localhost:9443/api/items
 ```
+
+`$(< file)` is read by the shell itself. The token stays in a shell variable;
+do not `export` it.
 
 ### Lifetimes and revocation
 
@@ -569,7 +577,12 @@ manually when no longer needed.
   network gateway address, so per-address limits would treat all host clients
   as one.
 - No secret rotation procedure yet. The migrator URL is visible in the migrate
-  container's process arguments while it runs.
+  container's process arguments while it runs; it is the one known secret in
+  a process argument. The tool passes passwords, client secrets, tokens,
+  cookies, and codes to curl, docker, grep, and Python on standard input, and
+  a sampler found none in host process arguments or environments during the
+  checks. Secrets are still held in the tool's shell variables and in the
+  test cookie jars (in a mode-700 temporary directory) while it runs.
 - Single-tier lab CA without revocation; no public-CA operations.
 - The ingress image is not built in CI; CI validates the Compose model and
   scripts only.

@@ -1,7 +1,7 @@
 {
   "project": "zero-to-prod-security-lab",
-  "started_at": "2026-10-11T17:27:28Z",
-  "recorded_at": "2026-10-11T17:34:57Z",
+  "started_at": "2026-10-11T18:12:03Z",
+  "recorded_at": "2026-10-11T18:19:34Z",
   "conditions": {"access_token_seconds": 300, "session_refresh": "1m", "api_clock_skew_seconds": 30, "slow_checks": true},
   "results": [
     {"vantage":"unauthenticated","check":"GET /api/items without credentials","expected":"401","observed":"401","result":"pass"},

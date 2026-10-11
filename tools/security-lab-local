@@ -1405,7 +1405,7 @@ verify_failures() {
     local secret_name
     for secret_name in "${SOURCE_SECRETS[@]}"; do
       if [[ -s "${SECRETS_DIR}/${secret_name}" ]] &&
-         grep -qF -- "$(secret "$secret_name")" <<< "$output"; then
+         grep -qFf <(secret "$secret_name") <<< "$output"; then
         leaked="$secret_name"
       fi
     done
@@ -1563,16 +1563,32 @@ elif kind == "none":
 ' "$1"
 }
 
+# Credentials never appear in a process's arguments or environment: they
+# reach curl as a config read from standard input (curl -K -), written by
+# printf, a shell builtin. This prints one config line with its value quoted.
+curl_config() {
+  local value="${2//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s = "%s"\n' "$1" "$value"
+}
+
 client_credentials() {
   local field="${1:-access_token}" scope="${2:-}"
-  local args=(-u "work-items-automation:$(secret automation-client-secret)" -d grant_type=client_credentials)
+  local args=(-d grant_type=client_credentials)
   [[ -n "$scope" ]] && args+=(-d "scope=${scope}")
-  { lab_curl "${args[@]}" "${ISSUER}/protocol/openid-connect/token" 2>/dev/null || true; } | json_field "$field"
+  { curl_config user "work-items-automation:$(secret automation-client-secret)" \
+      | lab_curl -K - "${args[@]}" "${ISSUER}/protocol/openid-connect/token" 2>/dev/null || true; } \
+    | json_field "$field"
+}
+
+# Config line carrying a bearer token, for: bearer_header "$token" | <curl wrapper> -K - ...
+bearer_header() {
+  curl_config header "Authorization: Bearer $1"
 }
 
 bearer_status() {
   local token="$1"; shift
-  http_status -H "Authorization: Bearer ${token}" "$@"
+  bearer_header "$token" | http_status -K - "$@"
 }
 
 # Scripted browser sign-in: follow the gateway to Keycloak's login form and
@@ -1585,10 +1601,11 @@ browser_login() {
     echo "no-login-form"
     return 0
   fi
-  lab_curl -L -c "$jar" -b "$jar" \
-    --data-urlencode "username=lab-user" \
-    --data-urlencode "password=$(secret lab-user-password)" \
-    --data "credentialId=" "$action" 2>/dev/null || true
+  # The login action URL carries Keycloak's session code; it goes in the
+  # config with the password.
+  { curl_config url "$action"; curl_config data-urlencode "password=$(secret lab-user-password)"; } \
+    | lab_curl -K - -L -c "$jar" -b "$jar" \
+        --data-urlencode "username=lab-user" --data "credentialId=" 2>/dev/null || true
 }
 
 # Whether starting a new sign-in with this browser's cookies shows Keycloak's
@@ -1638,11 +1655,13 @@ session_access_token() {
   local cookie
   cookie="$(session_cookie "$1")"
   [[ -n "$cookie" ]] || { echo ""; return 0; }
-  docker run --rm --network "${PROJECT}_app" --entrypoint curl "$PROBE_IMAGE" \
-    -sS -o /dev/null -D - --max-time 10 \
-    -H "Cookie: __Host-wi-session=${cookie}" -H "X-Forwarded-Proto: https" \
-    -H "X-Forwarded-Host: ${LAB_HOSTNAME}:${HTTPS_PORT}" \
-    http://oauth2-proxy:4180/oauth2/auth 2>/dev/null \
+  # The cookie reaches the probe's curl on standard input, not as an argument
+  # of docker or curl.
+  curl_config header "Cookie: __Host-wi-session=${cookie}" \
+    | docker run --rm -i --network "${PROJECT}_app" --entrypoint curl "$PROBE_IMAGE" \
+        -sS -o /dev/null -D - --max-time 10 -K - -H "X-Forwarded-Proto: https" \
+        -H "X-Forwarded-Host: ${LAB_HOSTNAME}:${HTTPS_PORT}" \
+        http://oauth2-proxy:4180/oauth2/auth 2>/dev/null \
     | tr -d '\r' | awk 'tolower($1) == "x-auth-request-access-token:" {print $2}' || true
 }
 
@@ -1692,7 +1711,7 @@ auth_work_items() {
   local area="$1" mode="$2" credential="$3" created item_id job job_id state status
 
   if [[ "$mode" == bearer ]]; then
-    created="$(http_status_body -H "Authorization: Bearer ${credential}" -H "Content-Type: application/json" \
+    created="$(bearer_header "${credential}" | http_status_body -K - -H "Content-Type: application/json" \
       -d "{\"title\":\"${area} item\"}" "${APP_URL}/api/items")"
   else
     created="$(http_status_body -b "$credential" "${ui_headers[@]}" -H "Content-Type: application/json" \
@@ -1702,7 +1721,7 @@ auth_work_items() {
   item_id="$(json_field id <<< "${created#* }")"
 
   if [[ "$mode" == bearer ]]; then
-    job="$(http_status_body -X POST -H "Authorization: Bearer ${credential}" "${APP_URL}/api/items/${item_id}/process")"
+    job="$(bearer_header "${credential}" | http_status_body -K - -X POST "${APP_URL}/api/items/${item_id}/process")"
   else
     job="$(http_status_body -X POST -b "$credential" "${ui_headers[@]}" "${APP_URL}/api/items/${item_id}/process")"
   fi
@@ -1713,7 +1732,7 @@ auth_work_items() {
   state="accepted"
   for _ in $(seq 1 40); do
     if [[ "$mode" == bearer ]]; then
-      status="$(http_status_body -H "Authorization: Bearer ${credential}" "${APP_URL}/api/processing-jobs/${job_id}")"
+      status="$(bearer_header "${credential}" | http_status_body -K - "${APP_URL}/api/processing-jobs/${job_id}")"
     else
       status="$(http_status_body -b "$credential" "${APP_URL}/api/processing-jobs/${job_id}")"
     fi
@@ -1724,7 +1743,7 @@ auth_work_items() {
   expect "$area" "polled processing job reaches succeeded" "succeeded" "$state"
 
   if [[ "$mode" == bearer ]]; then
-    status="$(http_status_body -X POST -H "Authorization: Bearer ${credential}" "${APP_URL}/api/items/${item_id}/process")"
+    status="$(bearer_header "${credential}" | http_status_body -K - -X POST "${APP_URL}/api/items/${item_id}/process")"
   else
     status="$(http_status_body -X POST -b "$credential" "${ui_headers[@]}" "${APP_URL}/api/items/${item_id}/process")"
   fi
@@ -1781,7 +1800,7 @@ verify_authentication() {
   area="token validation"
   local since
   since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  status="$(lab_curl -o /dev/null -D - -H "Authorization: Bearer $(token_variant tampered <<< "$machine_token")" \
+  status="$(bearer_header "$(token_variant tampered <<< "$machine_token")" | lab_curl -K - -o /dev/null -D - \
     "${APP_URL}/api/items" 2>/dev/null | tr -d '\r')"
   expect "$area" "payload changed under the original signature" "401" "$(awk 'NR==1{print $2}' <<< "$status")"
   expect "$area" "rejection challenge names invalid_token" "yes" \
@@ -1815,7 +1834,7 @@ verify_authentication() {
   token="$(session_access_token "$jar")"
   record "$area" "forwarded access token summary" "observe" "$(token_claims alg,iss,aud,azp,typ,lifetime <<< "$token")" info
   expect "$area" "session with a bearer token is ambiguous" "400" \
-    "$(session_status "$jar" -H "Authorization: Bearer ${machine_token}" "${APP_URL}/api/items")"
+    "$(bearer_header "${machine_token}" | session_status "$jar" -K - "${APP_URL}/api/items")"
   expect "$area" "Keycloak session active (silent sign-in)" "silent-sign-in" "$(idp_session_state "$jar")"
 
   # --- CSRF ----------------------------------------------------------------
@@ -1876,7 +1895,7 @@ verify_authentication() {
   expect "$area" "same browser after sign-out" "401" "$(session_status "$jar" "${APP_URL}/api/items")"
   expect "$area" "replayed copy of the session cookie" "401" "$(session_status "${jar}.copy" "${APP_URL}/api/items")"
   expect "$area" "Keycloak session ended (login form on next sign-in)" "login-form" "$(idp_session_state "${jar}.copy")"
-  status="$(http_status -H "Authorization: Bearer ${captured}" "${ISSUER}/protocol/openid-connect/userinfo")"
+  status="$(bearer_header "${captured}" | http_status -K - "${ISSUER}/protocol/openid-connect/userinfo")"
   expect "$area" "captured token at Keycloak userinfo (session-bound)" "401" "$status"
   # Local validation does not consult Keycloak per request, so the expected
   # behavior is acceptance until expiry.
@@ -1925,7 +1944,7 @@ verify_authentication() {
   expect "$area" "refreshed cookie used for a state change" "201" \
     "$(session_status "$refresh_jar" "${ui_headers[@]}" -H 'Content-Type: application/json' -d '{"title":"after refresh"}' "${APP_URL}/api/items")"
   expect "$area" "machine client gets no session cookie" "0" \
-    "$(lab_curl -o /dev/null -D - -H "Authorization: Bearer ${machine_token}" "${APP_URL}/api/items" 2>/dev/null | grep -ci '^set-cookie:' || true)"
+    "$(bearer_header "${machine_token}" | lab_curl -K - -o /dev/null -D - "${APP_URL}/api/items" 2>/dev/null | grep -ci '^set-cookie:' || true)"
 
   # --- Outages -------------------------------------------------------------
   # Identity provider down.
@@ -1949,7 +1968,7 @@ verify_authentication() {
   compose restart api >/dev/null 2>&1
   compose up -d --wait api >/dev/null 2>&1
   expect "$area" "API cold start: unexpired token cannot be judged" "503 authentication_unavailable" \
-    "$(body="$(http_status_body -H "Authorization: Bearer ${cold_token}" "${APP_URL}/api/items")"; echo "${body%% *} $(json_field error <<< "${body#* }")")"
+    "$(body="$(bearer_header "${cold_token}" | http_status_body -K - "${APP_URL}/api/items")"; echo "${body%% *} $(json_field error <<< "${body#* }")")"
   expect "$area" "API cold start: no token is still 401" "401" "$(http_status "${APP_URL}/api/items")"
 
   sleep_until $(( idp_login + 75 ))
@@ -2058,10 +2077,9 @@ authorize_until_callback() {
   page="$(lab_curl -L -c "$jar" -b "$jar" "${APP_URL}/oauth2/start?rd=%2F" 2>/dev/null || true)"
   action="$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' <<< "$page" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g' || true)"
   [[ -n "$action" ]] || { echo ""; return 0; }
-  lab_curl -o /dev/null -D - -c "$jar" -b "$jar" \
-    --data-urlencode "username=lab-user" \
-    --data-urlencode "password=$(secret lab-user-password)" \
-    --data "credentialId=" "$action" 2>/dev/null \
+  { curl_config url "$action"; curl_config data-urlencode "password=$(secret lab-user-password)"; } \
+    | lab_curl -K - -o /dev/null -D - -c "$jar" -b "$jar" \
+        --data-urlencode "username=lab-user" --data "credentialId=" 2>/dev/null \
     | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}' || true
 }
 
@@ -2072,12 +2090,13 @@ authorization_request() {
     | tr -d '\r' | awk 'tolower($1) == "location:" {print $2}' || true
 }
 
+# The URL (which carries a code or state) is read from standard input.
 query_param() {
   python3 -I -c '
 import sys, urllib.parse
-q = urllib.parse.parse_qs(urllib.parse.urlsplit(sys.argv[1]).query)
-print(q.get(sys.argv[2], [""])[0])
-' "$1" "$2"
+q = urllib.parse.parse_qs(urllib.parse.urlsplit(sys.stdin.read().strip()).query)
+print(q.get(sys.argv[1], [""])[0])
+' "$2" <<< "$1"
 }
 
 # "<status> <request id>" for a request, without following redirects.
@@ -2098,10 +2117,10 @@ add_value() {
     printf '%s+encoded\t%s\n' "$kind" "$variant" >> "$file"
   done < <(python3 -I -c '
 import sys, urllib.parse
-v = sys.argv[1]
+v = sys.stdin.read().rstrip("\n")
 for form in sorted({urllib.parse.quote(v, safe=""), urllib.parse.quote(v), urllib.parse.quote_plus(v)} - {v}):
     print(form)
-' "$value")
+' <<< "$value")
 }
 
 # Kinds of values found in a file with their occurrences ("code=2 state=1"),
@@ -2111,7 +2130,7 @@ kinds_found() {
   declare -A found=()
   while IFS=$'\t' read -r kind value; do
     [[ -n "$value" ]] || continue
-    n="$(grep -cF -- "$value" "$file" || true)"
+    n="$(grep -cFf <(printf '%s\n' "$value") "$file" || true)"
     [[ "$n" -gt 0 ]] && found[$kind]=$(( ${found[$kind]:-0} + n ))
   done < "$values_file"
   if [[ ${#found[@]} -eq 0 ]]; then echo none; return 0; fi
@@ -2123,7 +2142,7 @@ count_values() {
   local file="$1" values_file="$2" total=0 found=0 value n
   while IFS=$'\t' read -r _ value; do
     [[ -n "$value" ]] || continue
-    n="$(grep -cF -- "$value" "$file" || true)"
+    n="$(grep -cFf <(printf '%s\n' "$value") "$file" || true)"
     total=$(( total + n ))
     [[ "$n" -gt 0 ]] && found=$(( found + 1 ))
   done < "$values_file"
@@ -2172,7 +2191,7 @@ verify_log_hygiene() {
   expect "$area" "successful flow: authorization code obtained" "yes" "$([[ -n "$code" ]] && echo yes || echo no)"
   add_value "$values" code "$code"
   add_value "$values" state "$state"
-  result="$(status_and_request_id -c "$jar" -b "$jar" "$callback")"
+  result="$(curl_config url "$callback" | status_and_request_id -K - -c "$jar" -b "$jar")"
   callback_rid="${result#* }"
   expect "$area" "successful flow: callback redirects to the UI" "302" "${result%% *}"
   expect "$area" "successful flow: session works" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
@@ -2186,7 +2205,7 @@ verify_log_hygiene() {
   expect "$area" "successful flow: machine token at the API" "200" "$(bearer_status "$machine_token" "${APP_URL}/api/items")"
 
   # Failed callback 1: the same code again (already redeemed).
-  result="$(status_and_request_id -c "$jar" -b "$jar" "$callback")"
+  result="$(curl_config url "$callback" | status_and_request_id -K - -c "$jar" -b "$jar")"
   record "$area" "failed callback: reused authorization code" "observe" "http=${result%% *}" info
 
   # Failed callback 2: Keycloak down while the gateway redeems a fresh code;
@@ -2200,9 +2219,9 @@ verify_log_hygiene() {
   state3="$(query_param "$authorize" state)"
   add_value "$values" state "$state3"
   compose stop keycloak >/dev/null 2>&1
-  result="$(status_and_request_id -c "$jar2" -b "$jar2" "$callback2")"
+  result="$(curl_config url "$callback2" | status_and_request_id -K - -c "$jar2" -b "$jar2")"
   record "$area" "failed callback: Keycloak down during code redemption" "observe" "http=${result%% *}" info
-  expect "$area" "authorization request to the stopped identity provider" "503" "$(http_status "$authorize")"
+  expect "$area" "authorization request to the stopped identity provider" "503" "$(curl_config url "$authorize" | http_status -K -)"
   restore_service keycloak
   wait_for_issuer || die "Keycloak did not return"
 
@@ -2212,7 +2231,7 @@ verify_log_hygiene() {
   add_value "$values" code "$(query_param "$callback4" code)"
   add_value "$values" state "$(query_param "$callback4" state)"
   compose stop oauth2-proxy >/dev/null 2>&1
-  expect "$area" "failed callback: gateway down" "503" "$(http_status -c "$jar4" -b "$jar4" "$callback4")"
+  expect "$area" "failed callback: gateway down" "503" "$(curl_config url "$callback4" | http_status -K - -c "$jar4" -b "$jar4")"
   restore_service oauth2-proxy
 
   # Session refresh: the refreshed cookie passes through the ingress in a

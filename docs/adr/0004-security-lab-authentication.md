@@ -262,7 +262,10 @@ configured CA) was fixed with a regression test. A branch review found the
 Valkey health check passing the password as a command-line argument (C7); it
 now sends it on standard input, and a measurement inside the container found
 it in no process argument or environment (the previous form exposed it).
-Host-side test tooling still passes client secrets to curl as arguments. The test for concurrent
+Host-side test tooling and the guide's example also passed credentials
+(client secret, lab-user password, bearer tokens, session cookie, codes) as
+process arguments; they now pass them on standard input, and a host-side
+sampler found none in process arguments or environments during the checks. The test for concurrent
 key refreshes detects a non-atomic refresh only probabilistically (17 of 20
 runs against the previous shape).
 

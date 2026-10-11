@@ -1,7 +1,7 @@
 {
   "project": "zero-to-prod-security-lab",
-  "started_at": "2026-10-11T17:26:14Z",
-  "recorded_at": "2026-10-11T17:27:28Z",
+  "started_at": "2026-10-11T18:19:34Z",
+  "recorded_at": "2026-10-11T18:20:47Z",
   "values": "authorization codes from three flows and state values from four, the session cookie before and after a refresh, one session access token, one machine access token, and five long-lived secrets; searched as fixed strings, never recorded",
   "results": [
     {"vantage":"log hygiene","check":"ingress: control request with a unique path","expected":"404","observed":"404","result":"pass"},
@@ -20,13 +20,13 @@
     {"vantage":"log hygiene","check":"searched strings are distinct","expected":"26","observed":"26","result":"pass"},
     {"vantage":"log hygiene","check":"ingress: occurrences of the 26 searched strings","expected":"0","observed":"0","result":"pass"},
     {"vantage":"log hygiene","check":"ingress: kinds found","expected":"observe","observed":"none","result":"info"},
-    {"vantage":"log hygiene","check":"ingress: log lines in the window","expected":"observe","observed":"30","result":"info"},
+    {"vantage":"log hygiene","check":"ingress: log lines in the window","expected":"observe","observed":"41","result":"info"},
     {"vantage":"log hygiene","check":"oauth2-proxy: occurrences of the 26 searched strings","expected":"0","observed":"0","result":"pass"},
     {"vantage":"log hygiene","check":"oauth2-proxy: kinds found","expected":"observe","observed":"none","result":"info"},
-    {"vantage":"log hygiene","check":"oauth2-proxy: log lines in the window","expected":"observe","observed":"20","result":"info"},
+    {"vantage":"log hygiene","check":"oauth2-proxy: log lines in the window","expected":"observe","observed":"27","result":"info"},
     {"vantage":"log hygiene","check":"keycloak: occurrences of the 26 searched strings","expected":"observe","observed":"0","result":"info"},
     {"vantage":"log hygiene","check":"keycloak: kinds found","expected":"observe","observed":"none","result":"info"},
-    {"vantage":"log hygiene","check":"keycloak: log lines in the window","expected":"observe","observed":"35","result":"info"},
+    {"vantage":"log hygiene","check":"keycloak: log lines in the window","expected":"observe","observed":"36","result":"info"},
     {"vantage":"log hygiene","check":"api: occurrences of the 26 searched strings","expected":"observe","observed":"0","result":"info"},
     {"vantage":"log hygiene","check":"api: kinds found","expected":"observe","observed":"none","result":"info"},
     {"vantage":"log hygiene","check":"api: log lines in the window","expected":"observe","observed":"0","result":"info"},
@@ -40,7 +40,7 @@
     {"vantage":"positive control","check":"ingress log captured (unique control path)","expected":"yes","observed":"yes","result":"pass"},
     {"vantage":"positive control","check":"callback request ID in the ingress log","expected":"yes","observed":"yes","result":"pass"},
     {"vantage":"positive control","check":"callback request ID in the oauth2-proxy log","expected":"yes","observed":"yes","result":"pass"},
-    {"vantage":"positive control","check":"oauth2-proxy error lines in the window (diagnostics kept)","expected":"observe","observed":"1","result":"info"},
-    {"vantage":"positive control","check":"ingress 503 lines with upstream status in the window","expected":"observe","observed":"4","result":"info"}
+    {"vantage":"positive control","check":"oauth2-proxy error lines in the window (diagnostics kept)","expected":"observe","observed":"2","result":"info"},
+    {"vantage":"positive control","check":"ingress 503 lines with upstream status in the window","expected":"observe","observed":"2","result":"info"}
   ]
 }

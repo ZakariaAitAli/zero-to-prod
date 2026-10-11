@@ -69,7 +69,7 @@ Lifetimes: access token 300 s; oauth2-proxy refreshes a session older than
 Evidence: `evidence/issue-121/auth-integration/` (`verify-authentication.json`,
 `verify.json`, `missing-secret-failures.json`, `log-hygiene.json`,
 `log-hygiene-previous-config.json`, `session-refresh-previous-ingress.json`,
-`valkey-healthcheck-secret-exposure.json`).
+`valkey-healthcheck-secret-exposure.json`, `curl-credential-exposure.json`).
 
 `verify-authentication` (with the slow expiry checks): 77 checks passed, 10
 observations recorded, none failed. `verify`: 78 checks passed, 4
@@ -341,14 +341,30 @@ default).
   authenticates. The password still passes through a pipe and the shell's
   memory.
 
-## Findings for later slices
+- The same review found that the host-side test tooling and the guide's
+  machine-client example passed credentials as process arguments, visible to
+  other processes of the same WSL user while they ran:
+  - the machine client's secret (`curl -u`) and the lab-user password
+    (`--data-urlencode`);
+  - bearer tokens (`-H "Authorization: …"`);
+  - the session cookie to the in-network probe (`docker run … -H "Cookie: …"`);
+  - callback and login-action URLs carrying authorization and session codes;
+  - the values searched for by the log-hygiene and missing-secret checks
+    (`grep -F` patterns), and URLs and values handed to Python.
 
-- Host-side test tooling (`security-lab-local verify-authentication`,
-  `verify-log-hygiene`) and the guide's machine-client example pass client
-  secrets and the lab-user password to curl as arguments, visible to other
-  processes of the same WSL user while curl runs. Services are not affected.
-  The migrate container's connection-URL argument is the known exception
-  listed in the guide.
+  Credentials now reach curl as a config on standard input (`curl -K -`,
+  written by the shell builtin `printf`). Search patterns reach `grep`
+  through `-f` and a process substitution, and Python reads values from
+  standard input. No value is exported to an environment.
+
+  A host-side sampler ran while `verify-failures`, the full
+  `verify-authentication`, `verify-log-hygiene`, and the guide's example ran
+  (`curl-credential-exposure.json`). It found no lab secret and no credential
+  shape in any process argument or environment. Its argument, environment, and
+  credential-shape controls were detected. The migrate container's
+  connection-URL argument remains the known exception listed in the guide.
+
+## Findings for later slices
 
 - oauth2-proxy's auth log records the user's email and ID for each sign-in;
   personal data, not authentication material. Input for the logging review.
