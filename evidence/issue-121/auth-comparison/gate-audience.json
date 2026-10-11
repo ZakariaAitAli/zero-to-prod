@@ -1,0 +1,8 @@
+{
+  "recorded_at": "2026-10-11T10:21:21Z",
+  "results": [
+    {"area":"G2 audience","check":"machine client: aud includes work-items-api","expected":"yes","observed":"yes","result":"pass"},
+    {"area":"G2 audience","check":"machine client: issuer","expected":"iss=https://auth.work-items.localhost:9443/realms/work-items","observed":"iss=https://auth.work-items.localhost:9443/realms/work-items","result":"pass"},
+    {"area":"G2 audience","check":"machine client: token summary","expected":"observe","observed":"aud=account,work-items-api azp=work-items-automation typ=Bearer lifetime=120","result":"info"}
+  ]
+}

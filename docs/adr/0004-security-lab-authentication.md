@@ -117,3 +117,36 @@ updates, and failure handling, and sessions are lost when it restarts. nginx gai
 
 No change. A documentation comparison and a single implementation do not
 establish comparison-level capability.
+
+## Later evidence
+
+The provisional decision above is unchanged. Entries record evidence gathered
+after this ADR was proposed.
+
+### 2026-10-11 — Feasibility stage
+
+The [feasibility record](../experiments/issue-121-authentication-comparison.md)
+measured:
+
+- One issuer URL with verified TLS from WSL, Windows, and Go clients in
+  containers (oauth2-proxy, Pomerium). curl inside a container resolves
+  `*.localhost` to loopback itself, so client-specific handling must be checked.
+- Access tokens with `aud` including `work-items-api` for the browser and
+  machine clients.
+- oauth2-proxy forwarding the IdP access token through nginx `auth_request`;
+  Pomerium forwarding it through `set_request_headers` once its scopes exclude
+  `offline_access`.
+- Server-side session invalidation after gateway sign-out for oauth2-proxy with
+  Valkey and for Pomerium; the cookie store accepted a copied cookie after
+  sign-out and was removed from the experiment.
+- Valkey compatibility with oauth2-proxy's Redis store.
+- Combined idle memory of 812.6–878.7 MiB across the three configurations,
+  below the investigation threshold, about 93 % of it Keycloak.
+
+Measured behavior that contradicts this ADR's expectations: with the
+server-side store unreachable, oauth2-proxy answers 401, so a store outage is
+indistinguishable from sign-out; when the identity provider is unreachable,
+existing sessions continue until the access token expires.
+
+The measured evidence favors oauth2-proxy with a server-side store over
+Pomerium for this lab; that choice is open for review.

@@ -1,0 +1,8 @@
+{
+  "recorded_at": "2026-10-11T10:36:25Z",
+  "results": [
+    {"area":"G1 issuer","check":"pomerium: running after OIDC discovery (Go resolver, lab CA)","expected":"running restarts=0","observed":"running restarts=0","result":"pass"},
+    {"area":"G3 forwarding","check":"pomerium: upstream receives the IdP access token","expected":"iss=https://auth.work-items.localhost:9443/realms/work-items","observed":"not-a-jwt","result":"fail"},
+    {"area":"pomerium in-memory","check":"trust path","expected":"IdP token","observed":"mismatch: arm stopped","result":"info"}
+  ]
+}

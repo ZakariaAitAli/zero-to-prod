@@ -1,0 +1,8 @@
+{
+  "configuration": "oauth2-proxy-cookie",
+  "recorded_at": "2026-10-11T11:22:05Z",
+  "conditions": {"docker_mem_total_mib": 15808, "cpus": 20, "startup_window_s": 150, "idle_wait_s": 300, "idle_samples": 5, "traffic": "none"},
+  "services": [{"service":"keycloak-postgres","startup_peak_mib":39.6,"idle_median_mib":39.1},{"service":"keycloak","startup_peak_mib":899.4,"idle_median_mib":769.1},{"service":"oauth2-proxy-cookie","startup_peak_mib":6.3,"idle_median_mib":4.4}],
+  "combined_idle_mib": 812.6,
+  "threshold_mib": 1536
+}

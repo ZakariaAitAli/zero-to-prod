@@ -1,0 +1,8 @@
+{
+  "configuration": "oauth2-proxy-server-side",
+  "recorded_at": "2026-10-11T11:30:41Z",
+  "conditions": {"docker_mem_total_mib": 15808, "cpus": 20, "startup_window_s": 150, "idle_wait_s": 300, "idle_samples": 5, "traffic": "none"},
+  "services": [{"service":"keycloak-postgres","startup_peak_mib":41.5,"idle_median_mib":39.1},{"service":"keycloak","startup_peak_mib":816.5,"idle_median_mib":787.4},{"service":"valkey","startup_peak_mib":7.9,"idle_median_mib":5.8},{"service":"oauth2-proxy-server-side","startup_peak_mib":6.6,"idle_median_mib":5.4}],
+  "combined_idle_mib": 837.7,
+  "threshold_mib": 1536
+}
