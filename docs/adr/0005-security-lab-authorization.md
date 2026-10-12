@@ -155,5 +155,11 @@ run in a separate lab project; scripted clients only:
 - **Identity provider down:** outcomes were unchanged.
 - **Role-management client:** an irreducible role set (`view-clients`, `manage-users`), determined in a throwaway project.
 
+A review rerun (`verify-authorization-rerun.json`) supersedes two parts of the first run:
+- rejections now count only on the expected status: 403 for the session, 401 at expiry for tokens, with `expired=2` logged by the API;
+- the API log is now searched for the denied principals' actual credentials (0 matches, with controls).
+
+The startup check now treats malformed role data like the API parser does.
+
 Open: browser verification (operator); the original lab is not upgraded; single runs.
 The decision stays Proposed pending review.

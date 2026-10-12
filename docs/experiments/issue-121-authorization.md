@@ -44,7 +44,8 @@ Evidence: [`evidence/issue-121/authorization/`](../../evidence/issue-121/authori
 | `verify-admin-permissions` (`admin-permissions.json`) | 4 / 4 |
 | `verify-realm` (`verify-realm.json`) | 11 / 11 |
 | `verify-authorization`, full run including role removal (`verify-authorization.json`) | 72 pass, 12 observations, 0 fail; rerun after the revocation observations were split into separate first-observed and boundary entries, with the same values |
-| `scripts/test-security-lab-startup-warning.sh` (simulated token responses) | 10 / 10 |
+| `scripts/test-security-lab-startup-warning.sh` (simulated token responses) | 14 / 14 (10 before the review fixes) |
+| `verify-authorization` rerun after the review fixes (`verify-authorization-rerun.json`) | 79 pass, 14 observations, 0 fail; see [review fixes](#review-fixes-and-superseded-results) |
 | `verify` (`verify.json`) | 79 pass, 4 observations, 0 fail; the Windows "no lab CA" control ran, because Windows does not trust this project's CA |
 | `verify-failures` (`missing-secret-failures.json`) | 10 / 10 |
 | `verify-authentication`, adapted to the machine client's permissions (`verify-authentication.json`) | 77 pass, 10 observations, 0 fail |
@@ -152,7 +153,7 @@ from the token itself, which the polls did not measure directly.
 | --- | --- | --- |
 | Browser session (gateway refreshes after 1 min of session age) | 43 s, 403 | refresh due at about 39 s (session age 21 s at removal, 60 s refresh threshold), applied on the next request |
 | Browser token captured before removal, used directly as a bearer token | 312 s, 401 (expired) | `exp` + 30 s skew at 309 s |
-| Machine token issued before removal | 312 s | `exp` + 30 s skew at 310 s |
+| Machine token issued before removal | 312 s, 401 (expired) | `exp` + 30 s skew at 310 s |
 | Machine token issued after removal | first request, 403 (its roles: `items.process` only) | — |
 
 Each first-observed rejection came at or after its computed boundary. The
@@ -161,6 +162,25 @@ rejection at the boundary. The pre-removal tokens were accepted on every
 poll before that. The captured browser token was refused as expired,
 not by role, because it still carried the removed role. Restoring both
 mappings made new sessions and new tokens work again (201, 200).
+
+### Review fixes and superseded results
+
+A review found three gaps. They were fixed, and the affected checks were run
+again in the same isolated lab
+(`verify-authorization-rerun.json`: 79 pass, 14 observations, 0 fail). The
+earlier `verify-authorization.json` is kept unchanged. The original lab was
+not touched.
+
+| Gap in the earlier run | Fix | Rerun result |
+| --- | --- | --- |
+| **Revocation polling** counted any non-200 response as a token's rejection, so a timeout or 5xx would have been reported as revocation | A session counts as rejected only on 403 `insufficient_permissions`, and a pre-removal token only on 401. Any other response is counted separately and polling continues. The suite asserts each rejection status, that both tokens were rejected at or after their `exp`, and that the API logged exactly two `expired` authentication rejections after removal | Session 403 `insufficient_permissions`; captured browser token and machine token 401 `unauthenticated`, both at or after `exp`; API: `expired=2`; 0 other responses. First-observed times unchanged: 43 s, 312 s, 312 s |
+| **Authorization log hygiene** was not asserted for the denial flows; the API log was only checked for a JWT prefix | The suite collects the actual credentials of the denied principals: `lab-viewer` and `lab-outsider` passwords, session cookies, the access tokens their sessions forwarded, and the machine token used for denials. It searches the run's API log for them and their percent-encoded forms (9 strings), and requires zero matches. Controls: the scanner finds all 9 in a synthetic log, and the captured log contains both principals' denial lines. A match fails the suite | 0 matches; both controls passed |
+| **Startup check** ignored non-string role entries, unlike the API parser | Any malformed role data invalidates the whole list | 14 / 14 simulated cases, including both expected permissions plus a non-string entry |
+
+**Superseded:** in `verify-authorization.json`, the role-removal rejection
+results (counted on any non-200) and the absence of a credential search of
+the API log. The rerun confirms the earlier matrix, claims, ordering, logs,
+outage, and baseline-control results with the same outcomes.
 
 ### Startup permission check
 
@@ -174,13 +194,14 @@ It does not suggest cleanup.
 Two different kinds of evidence:
 
 - **Simulated token responses** (`scripts/test-security-lab-startup-warning.sh`,
-  also run in CI): ten cases, all passing, run without a lab, Docker, or
+  also run in CI): 14 cases, all passing, run without a lab, Docker, or
   network:
   - expected permissions present, with or without other roles: silent;
-  - no `resource_access`, no `work-items-api` entry, one permission missing, names only under another client, a non-string role entry: the missing permissions are named;
+  - no `resource_access`, no `work-items-api` entry, one permission missing, or names only under another client: the missing permissions are named;
+  - any malformed role data invalidates the whole list, as in the API parser: a non-string entry (also next to both expected permissions), roles that are not a list, or a `resource_access` that is not an object. The warning says the role data is malformed and names both permissions as missing;
   - an empty, error, or non-JWT response: "could not be checked".
 
-  Every warning recommends `verify-realm` and contains no cause or cleanup advice.
+  Every warning recommends `verify-realm` and contains no cause or cleanup advice. Before the review fix, the check ignored non-string entries and kept the rest. Run against the previous version, the case with both permissions plus a `null` entry printed nothing; it now fails that version.
 - **Runtime:** one `start` of the authorization lab after the change printed no warning (permissions present). The warning path has not been exercised at runtime: the original lab, whose realm lacks the roles, was not started or changed.
 
 ### Identity provider down, keys cached
