@@ -99,7 +99,9 @@ services:
       dockerfile: api/Dockerfile
       args:
         VERSION: ${ZTP_SECURITY_LAB_VERSION:-security-lab}
-    image: zero-to-prod-security-lab-api:local
+    # Overridden only by verify-authorization's old-baseline control, which
+    # runs an image built from the pinned pre-authorization commit.
+    image: ${ZTP_SECURITY_LAB_API_IMAGE:-zero-to-prod-security-lab-api:local}
     environment:
       # Required in the lab; only local development disables it.
       AUTHENTICATION: oidc
