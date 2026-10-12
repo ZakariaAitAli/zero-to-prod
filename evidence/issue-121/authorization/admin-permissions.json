@@ -1,0 +1,23 @@
+{
+  "project": "zero-to-prod-security-lab-probe",
+  "started_at": "2026-10-12T19:33:00Z",
+  "recorded_at": "2026-10-12T19:38:31Z",
+  "method": "Each run imports the realm into a fresh identity database with the given realm-management roles for work-items-lab-admin, then performs the admin operations verify-realm and verify-authorization need (statuses: 200 for reads, 204 for role-mapping changes). Roles are dropped greedily from the candidate set when every operation still passes; each remaining role is then dropped alone to confirm it is needed.",
+  "runs": [
+    {"label":"candidate set","roles":["view-clients","query-clients","view-users","query-users","manage-users"],"operations":{"client-lookup":"200","client-roles":"200","composite-roles":"200","role-lookup":"200","user-lookup":"200","user-effective-roles":"200","machine-client-lookup":"200","service-account-lookup":"200","remove-role-mapping":"204","add-role-mapping":"204"},"all_pass":true},
+    {"label":"without view-clients","roles":["query-clients","view-users","query-users","manage-users"],"operations":{"client-lookup":"200","client-roles":"skipped","composite-roles":"skipped","role-lookup":"skipped","user-lookup":"200","user-effective-roles":"skipped","machine-client-lookup":"200","service-account-lookup":"skipped","remove-role-mapping":"skipped","add-role-mapping":"skipped"},"all_pass":false},
+    {"label":"without query-clients","roles":["view-clients","view-users","query-users","manage-users"],"operations":{"client-lookup":"200","client-roles":"200","composite-roles":"200","role-lookup":"200","user-lookup":"200","user-effective-roles":"200","machine-client-lookup":"200","service-account-lookup":"200","remove-role-mapping":"204","add-role-mapping":"204"},"all_pass":true},
+    {"label":"without view-users","roles":["view-clients","query-users","manage-users"],"operations":{"client-lookup":"200","client-roles":"200","composite-roles":"200","role-lookup":"200","user-lookup":"200","user-effective-roles":"200","machine-client-lookup":"200","service-account-lookup":"200","remove-role-mapping":"204","add-role-mapping":"204"},"all_pass":true},
+    {"label":"without query-users","roles":["view-clients","manage-users"],"operations":{"client-lookup":"200","client-roles":"200","composite-roles":"200","role-lookup":"200","user-lookup":"200","user-effective-roles":"200","machine-client-lookup":"200","service-account-lookup":"200","remove-role-mapping":"204","add-role-mapping":"204"},"all_pass":true},
+    {"label":"without manage-users","roles":["view-clients"],"operations":{"client-lookup":"200","client-roles":"200","composite-roles":"200","role-lookup":"200","user-lookup":"403","user-effective-roles":"skipped","machine-client-lookup":"200","service-account-lookup":"200","remove-role-mapping":"403","add-role-mapping":"403"},"all_pass":false},
+    {"label":"final set","roles":["view-clients","manage-users"],"operations":{"client-lookup":"200","client-roles":"200","composite-roles":"200","role-lookup":"200","user-lookup":"200","user-effective-roles":"200","machine-client-lookup":"200","service-account-lookup":"200","remove-role-mapping":"204","add-role-mapping":"204"},"all_pass":true},
+    {"label":"final set without view-clients","roles":["manage-users"],"operations":{"client-lookup":"403","client-roles":"skipped","composite-roles":"skipped","role-lookup":"skipped","user-lookup":"200","user-effective-roles":"skipped","machine-client-lookup":"403","service-account-lookup":"skipped","remove-role-mapping":"skipped","add-role-mapping":"skipped"},"all_pass":false},
+    {"label":"final set without manage-users","roles":["view-clients"],"operations":{"client-lookup":"200","client-roles":"200","composite-roles":"200","role-lookup":"200","user-lookup":"403","user-effective-roles":"skipped","machine-client-lookup":"200","service-account-lookup":"200","remove-role-mapping":"403","add-role-mapping":"403"},"all_pass":false}
+  ],
+  "results": [
+    {"vantage":"minimum permissions","check":"final set covers every operation","expected":"yes","observed":"yes","result":"pass"},
+    {"vantage":"minimum permissions","check":"dropping view-clients from the final set breaks an operation","expected":"yes","observed":"yes","result":"pass"},
+    {"vantage":"minimum permissions","check":"dropping manage-users from the final set breaks an operation","expected":"yes","observed":"yes","result":"pass"},
+    {"vantage":"minimum permissions","check":"configured LAB_ADMIN_ROLES equal the final set","expected":"manage-users,view-clients","observed":"manage-users,view-clients","result":"pass"}
+  ]
+}
