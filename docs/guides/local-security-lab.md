@@ -572,9 +572,11 @@ cookie values or tokens into notes or screenshots.
    password, not a silent sign-in, which shows that the Keycloak session
    ended. Close the window without signing in.
 10. Authorization (separate project): in a new private window, sign in as
-    `lab-viewer`. Listing works. **New Work Item → Create** and **Process**
-    show "Not allowed", and the session stays signed in. In **Network**, the
-    refused request has status 403 with `insufficient_permissions`.
+    `lab-viewer`. Listing works. **New Work Item → Create** shows "Not
+    allowed" inside the dialog and keeps the entered title; editing the title
+    or closing the dialog clears the message. **Process** shows "Not allowed"
+    on the page. The session stays signed in. In **Network**,
+    the refused request has status 403 with `insufficient_permissions`.
 11. In WSL, stop the lab: `./tools/security-lab-local stop`.
 
 If the browser shows `NET::ERR_CERT_AUTHORITY_INVALID`, the lab CA is not

@@ -46,6 +46,27 @@ import type {
 const processingPollIntervalMilliseconds = 500
 const processingPollAttempts = 20
 
+// User-facing text for a failed create, shown inside the dialog.
+function describeCreateError(code: string): { title: string; description: string } {
+  switch (code) {
+    case 'insufficient_permissions':
+      return {
+        title: 'Not allowed',
+        description: 'Your account is not allowed to create Work Items. The title you entered is kept.',
+      }
+    case 'unauthenticated':
+      return {
+        title: 'Sign in required',
+        description: 'Your session has ended.',
+      }
+    default:
+      return {
+        title: 'Could not create the Work Item',
+        description: `The request failed (${code}). The title you entered is kept; try again.`,
+      }
+  }
+}
+
 function wait(milliseconds: number) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds)
@@ -58,6 +79,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
 
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [creating, setCreating] = useState(false)
 
@@ -140,6 +162,13 @@ export default function App() {
     }
   }, [])
 
+  // Opening or closing the dialog starts from a clean state; the entered
+  // title is kept so a failed attempt can be retried.
+  function handleDialogOpenChange(open: boolean) {
+    setDialogOpen(open)
+    setCreateError(null)
+  }
+
   async function handleCreate() {
     const trimmedTitle = title.trim()
 
@@ -148,7 +177,8 @@ export default function App() {
     }
 
     setCreating(true)
-    setError(null)
+    // A new attempt replaces any earlier failure.
+    setCreateError(null)
 
     try {
       const created = await createWorkItem({
@@ -157,11 +187,13 @@ export default function App() {
 
       setItems((current) => [...current, created])
       setTitle('')
-      setDialogOpen(false)
-    } catch (createError) {
-      setError(
-        createError instanceof Error
-          ? createError.message
+      handleDialogOpenChange(false)
+    } catch (failure) {
+      // Shown inside the open dialog: an error on the page behind the
+      // modal overlay would be hidden by it.
+      setCreateError(
+        failure instanceof Error
+          ? failure.message
           : 'unknown_error',
       )
     } finally {
@@ -258,7 +290,7 @@ export default function App() {
 
             <Dialog
               open={dialogOpen}
-              onOpenChange={setDialogOpen}
+              onOpenChange={handleDialogOpenChange}
             >
               <DialogTrigger render={<Button />}>
                 New Work Item
@@ -275,8 +307,14 @@ export default function App() {
 
                 <Input
                   value={title}
-                  onChange={(event) => setTitle(event.target.value)}
+                  onChange={(event) => {
+                    setTitle(event.target.value)
+                    // An edited title is a new attempt; the old failure is stale.
+                    setCreateError(null)
+                  }}
                   placeholder="Work Item title"
+                  aria-label="Work Item title"
+                  aria-describedby={createError ? 'create-work-item-error' : undefined}
                   disabled={creating}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
@@ -285,10 +323,28 @@ export default function App() {
                   }}
                 />
 
+                {createError && (
+                  // role="alert" (from Alert) announces the failure.
+                  <Alert variant="destructive" id="create-work-item-error">
+                    <AlertTitle>{describeCreateError(createError).title}</AlertTitle>
+                    <AlertDescription>
+                      {describeCreateError(createError).description}
+                      {createError === 'unauthenticated' && (
+                        <>
+                          {' '}
+                          <a className="underline" href={signInURL}>
+                            Sign in
+                          </a>
+                        </>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 <DialogFooter>
                   <Button
                     variant="outline"
-                    onClick={() => setDialogOpen(false)}
+                    onClick={() => handleDialogOpenChange(false)}
                     disabled={creating}
                   >
                     Cancel
