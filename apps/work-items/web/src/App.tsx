@@ -316,6 +316,16 @@ export default function App() {
               to view and change Work Items.
             </AlertDescription>
           </Alert>
+        ) : error === 'insufficient_permissions' ? (
+          // 403 from the API: signed in, but the account lacks the
+          // permission for this action. The session stays valid.
+          <Alert variant="destructive">
+            <AlertTitle>Not allowed</AlertTitle>
+            <AlertDescription>
+              Your account is not allowed to do this. Ask for the required
+              permission or sign in with another account.
+            </AlertDescription>
+          </Alert>
         ) : error && (
           <Alert variant="destructive">
             <AlertTitle>Request failed</AlertTitle>
