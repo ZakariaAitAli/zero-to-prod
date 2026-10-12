@@ -247,9 +247,35 @@ in the isolated authorization lab. The Brave version was not recorded.
 alert, behind the open dialog and its blurred overlay, rather than in the
 dialog. The UI now shows create failures inside the dialog as an alert, keeps
 the entered title, and clears the message when the title is edited, a new
-attempt starts, or the dialog is opened or closed. That change was checked
-with lint and a production build only; it has not been retested in a
-browser.
+attempt starts, or the dialog is opened or closed. When this session was
+recorded, that change had been checked only with lint and a production
+build; the retest below followed.
+
+### Focused Brave retest of the Create dialog (2026-10-12)
+
+The operator retested the corrected dialog in the isolated authorization
+lab. The Brave version is unknown; DevTools device emulation was enabled in
+the screenshots.
+
+**Visible in screenshots:**
+
+- In Network, the Create and Process requests returned 403 and the read request returned 200.
+
+**Reported by the operator** (screenshot coverage not stated, so not attributed to one):
+
+- The Create denial appeared inside the modal, and the entered title was preserved.
+- The Process error, shown on the page, cleared after a page reload.
+- As `lab-user`, item #89 ("browser-ui-test") was created (201), accepted for processing (202), and completed successfully, with a result of 15 characters and 1 word.
+
+**Not confirmed:**
+
+- Clearing the in-dialog error by editing the title.
+- Clearing it by closing and reopening the dialog.
+
+The code clears it in both cases, but no browser check covered them.
+
+This retest resolves the placement defect found in the first session; that
+session's record above is unchanged.
 
 ## Limitations
 
@@ -258,7 +284,7 @@ browser.
 - **No upgrade of existing realms:** the original lab is not upgraded. With the current API, its realm (no `work-items-api` roles) would refuse every Work Items request. The startup permission check would name the machine client's missing permissions and recommend `verify-realm`; that path was tested only with simulated token responses (see [startup permission check](#startup-permission-check)).
 - **Standing privileged credential:** `work-items-lab-admin` exists in every realm the tool creates. It is internal-network only, its secret is a generated file passed on standard input, and it is removed with the lab.
 - **Route-registration safety:** it prevents accidental omission inside the API package, not a handler deliberately registered on the mux in the constructor. Request tests cover only the routes in the matrix.
-- **UI:** it explains a 403 after the fact and does not know permissions in advance. One manual Brave session checked it (see [manual browser verification](#manual-browser-verification-brave-2026-10-12)); the corrected Create dialog has not been retested in a browser.
+- **UI:** it explains a 403 after the fact and does not know permissions in advance. Two manual Brave sessions checked it (see [manual browser verification](#manual-browser-verification-brave-2026-10-12) and the [retest](#focused-brave-retest-of-the-create-dialog-2026-10-12)). Clearing the in-dialog error by editing the title, or by closing and reopening the dialog, was not confirmed in a browser.
 - **Single runs.**
 
 ## Capability levels

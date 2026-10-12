@@ -165,8 +165,11 @@ A manual Brave session (operator, same day; three screenshots plus verbal
 confirmation, attributed separately in the experiment record) covered the
 viewer's list, Create and Process outcomes and the editor's processing and
 creation. The viewer screenshots show the Create denial behind the open
-dialog; the UI change that moves it into the dialog has not
-been retested in a browser.
+dialog. A focused retest the same day:
+- the operator reported the denial inside the dialog, with the title kept;
+- Network screenshots show 403 for Create and Process and 200 for reading.
 
-Open: browser retest of the Create dialog; the original lab is not upgraded; single runs.
+Error clearing on title edit or reopen was not confirmed.
+
+Open: browser confirmation of in-dialog error clearing; the original lab is not upgraded; single runs.
 The decision stays Proposed pending review.
