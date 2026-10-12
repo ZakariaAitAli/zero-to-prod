@@ -10,9 +10,11 @@ private lab CA, file-based runtime secrets, and **authentication**: browsers
 sign in through oauth2-proxy and Keycloak with server-side sessions, machine
 clients use the client-credentials grant, and the API validates every access
 token itself ([ADR 0004](../adr/0004-security-lab-authentication.md),
-Proposed). There is **no authorization**: every authenticated caller can do
-everything. Datastore TLS, rate limiting, and secret rotation are not
-implemented yet. It does not complete Issue #121.
+Proposed). The API also enforces **authorization**: per-route permissions
+from Keycloak client roles, deny by default
+([ADR 0005](../adr/0005-security-lab-authorization.md), Proposed). Datastore
+TLS, rate limiting, and secret rotation are not implemented yet. It does not
+complete Issue #121.
 
 The development lab ([local Work Items guide](local-work-items.md)) is
 unchanged and keeps its labelled development credentials. The security lab
@@ -268,6 +270,72 @@ printf 'header = "Authorization: Bearer %s"\n' "$token" \
 `$(< file)` is read by the shell itself. The token stays in a shell variable;
 do not `export` it.
 
+### Authorization
+
+The API checks a permission for every Work Items route after authenticating
+the token. Permissions are Keycloak client roles of `work-items-api`; the API
+reads only `resource_access["work-items-api"].roles`. Role data of any other
+shape, roles of other clients, and realm roles grant nothing.
+
+| Route | Permission | `lab-user` (editor) | `lab-viewer` | `lab-outsider` | `work-items-automation` |
+| --- | --- | --- | --- | --- | --- |
+| `GET /api/items` | `items.read` | ✓ | ✓ | — | ✓ |
+| `POST /api/items` | `items.create` | ✓ | — | — | — |
+| `POST /api/items/{id}/process` | `items.process` | ✓ | — | — | ✓ |
+| `GET /api/processing-jobs/{id}` | `items.read` | ✓ | ✓ | — | ✓ |
+
+`lab-outsider` is a test principal with no Work Items permission; it holds
+the name `items.create` only as a realm role and a gateway-client role, which
+grant nothing. `./tools/security-lab-local lab-user` lists the three people
+and their password files.
+
+| Response | Meaning |
+| --- | --- |
+| 401 `unauthenticated` | No token, or the token was rejected (signature, issuer, audience, expiry) |
+| 403 `insufficient_permissions` (`WWW-Authenticate: Bearer …, error="insufficient_scope"`) | Valid token without the route's permission; checked before the handler, so before 404 or 409 |
+| 403 `csrf_rejected` | The ingress refused a browser state change; the API never saw it |
+
+The API logs each authorization denial (subject, client, permission, route;
+never the token). CSRF rejections appear only in the ingress access log
+(`upstream=-`), not in the API log.
+
+**Role changes** reach only newly issued tokens. A token issued before a
+removal keeps its roles until it expires (up to 300 s plus 30 s skew). A
+browser session picks up the change at the gateway's next refresh.
+
+**Realms created before authorization.** Keycloak imports the realm file only
+when the realm does not exist, so a lab created before this change has no
+`work-items-api` roles and refuses Work Items requests with 403. `start`
+checks the machine client's token. If it lacks that client's expected
+permissions, `start` names them and recommends `verify-realm`; it does not
+conclude why they are missing. This change does not upgrade such a lab. Run
+authorization in a separate project, which leaves the existing lab and its
+data untouched:
+
+```bash
+ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab-authz ./tools/security-lab-local init
+```
+
+```bash
+ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab-authz ./tools/security-lab-local start
+```
+
+The separate project has its own state directory, lab CA, realm, and volumes.
+Only one lab can run at a time (both use port 9443 and the same names); stop
+the other first. Images are shared, so the other lab's next `start` builds
+the current API. A browser needs the separate project's CA trusted
+separately (see [trusting the lab CA](#trusting-the-lab-ca); use that
+project's `ca-certificate`).
+
+**Role-management client.** `work-items-lab-admin` exists only to read the
+authorization configuration (`verify-realm`) and to remove and restore role
+mappings during `verify-authorization`. It holds the realm-management roles
+`view-clients` and `manage-users`, the minimum `verify-admin-permissions`
+measured. Its secret is a generated file passed on standard input, and it is
+reachable only from the internal `idp` network; the ingress does not route
+`/admin`. It is created with the realm and removed by `destroy` and
+`purge-state`.
+
 ### Lifetimes and revocation
 
 | Setting | Value |
@@ -328,7 +396,39 @@ logging.
 ./tools/security-lab-local verify-failures
 ./tools/security-lab-local verify-authentication
 ./tools/security-lab-local verify-log-hygiene
+./tools/security-lab-local verify-realm
+./tools/security-lab-local verify-authorization
 ```
+
+(For the separate authorization project, prefix each with
+`ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab-authz`.)
+
+`verify-realm` reads the realm through the admin API and compares it with the
+authorization model:
+- the client and its roles;
+- the composite roles;
+- every principal's effective roles;
+- the misplaced-claim setup;
+- the role-management client's own roles.
+
+It does not infer readiness from one person's token.
+
+`verify-authorization`:
+- checks the matrix on the browser and machine paths with fixtures the editor creates; denied actions must leave no side effect;
+- checks misplaced claims, wrong audience, and a token with an added role;
+- checks that 403 precedes 404 and 409;
+- checks the API's decision log line versus a CSRF rejection's absence;
+- measures role removal, separately for a browser session, a browser token captured before removal, and a machine token issued before removal;
+- checks behavior with Keycloak down and keys cached;
+- runs the same unauthorized actions against an API built from the pinned pre-authorization commit, where they must succeed.
+
+It stops and restarts services, temporarily removes and restores role mappings, and without `--skip-slow` waits up to seven minutes for tokens to expire.
+
+`verify-admin-permissions` runs in a throwaway project
+(`ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab-probe`). It imports the
+realm repeatedly with different role sets for the role-management client,
+reduces the candidate set to one in which every role is needed, and removes
+the project and its state afterwards.
 
 `verify` checks, with positive controls:
 
@@ -471,7 +571,11 @@ cookie values or tokens into notes or screenshots.
 9. Choose **Sign in** again. Expect Keycloak's login form asking for the
    password, not a silent sign-in, which shows that the Keycloak session
    ended. Close the window without signing in.
-10. In WSL, stop the lab: `./tools/security-lab-local stop`.
+10. Authorization (separate project): in a new private window, sign in as
+    `lab-viewer`. Listing works. **New Work Item → Create** and **Process**
+    show "Not allowed", and the session stays signed in. In **Network**, the
+    refused request has status 403 with `insufficient_permissions`.
+11. In WSL, stop the lab: `./tools/security-lab-local stop`.
 
 If the browser shows `NET::ERR_CERT_AUTHORITY_INVALID`, the lab CA is not
 trusted. Do not click through; trust it as described above and restart
@@ -539,6 +643,7 @@ manually when no longer needed.
 | `secret file missing` or `is a directory` from `check-secrets` | `init` not run, or Docker created a directory for a missing file | Remove the directory; run `init` |
 | `port is already allocated` | Something else uses host port 9443 | Stop it; the lab's port is fixed |
 | Sign-in fails with an invalid client or the lab-user password is refused | The Keycloak realm was imported with earlier secrets (for example after `purge-state` without `destroy`) | `destroy`, then `start` (re-imports the realm) |
+| `start` warns that the work-items-automation access token lacks permissions, or Work Items requests get 403 `insufficient_permissions` | The principal's token lacks the route's permission: for example a realm created before authorization, a changed role mapping, or a failed token request | Run `verify-realm` to compare the realm with the authorization model. For a realm created before authorization, use the separate authorization project (see [authorization](#authorization)); this change does not upgrade existing realms |
 | API answers 503 `authentication_unavailable` | The API cannot fetch Keycloak's signing keys; the log names the cause | Check Keycloak's health and `logs api` |
 | oauth2-proxy exits at startup | Issuer discovery through the ingress failed | Check that Keycloak and the ingress are healthy; `start` again |
 | Browser certificate error after trusting | Certificate expired, or the browser does not use the Windows store | `issue-certificate`; check which store the browser uses |
@@ -548,8 +653,14 @@ manually when no longer needed.
 
 ## Limitations
 
-- No authorization (any authenticated user or machine client can do
-  everything) and no rate limiting.
+- Coarse role-based authorization: no per-item or ownership rules. No rate
+  limiting.
+- Role removal reaches tokens already issued only when they expire (up to
+  300 s plus 30 s skew).
+- Labs created before authorization are not upgraded; use a separate project.
+- `work-items-lab-admin` is a standing privileged credential in the lab realm
+  (internal network only).
+- The UI does not know permissions in advance; it explains a 403 afterwards.
 - An access token captured before sign-out is accepted until it expires (up
   to 300 s plus 30 s skew). With Keycloak down, sessions continue until their
   access token expires.
