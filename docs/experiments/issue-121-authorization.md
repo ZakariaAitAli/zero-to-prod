@@ -32,7 +32,7 @@ project on one workstation (Windows 11, WSL 2 in NAT mode, Docker Desktop).
 | `work-items-lab-admin` (not a Work Items principal) | Keycloak admin API on the internal `idp` network | `realm-management`: `view-clients`, `manage-users` |
 
 - **Baseline control** runs the same unauthorized actions against an API image built from commit `0682b5275998d08c88476429ba6558ebf945417f` (main after #134, before authorization).
-- **Method and its limits:** the automated checks use scripted clients (curl with cookie jars) and probe containers; no browser was used. Trusting the separate lab's CA and the manual Brave check are left to the operator. The Windows trust store was not changed.
+- **Method and its limits:** the automated checks use scripted clients (curl with cookie jars) and probe containers; no browser was used. Trusting the separate lab's CA and the Brave checks were manual steps outside the automated checks (see [manual browser verification](#manual-browser-verification-brave-2026-10-12)). The automated checks did not change the Windows trust store.
 
 ## Results
 
@@ -215,67 +215,61 @@ Authorization needs no call to the identity provider.
 
 ### Manual browser verification (Brave, 2026-10-12)
 
-The operator ran the authorization part of the
-[manual browser check](../guides/local-security-lab.md#manual-browser-check-brave)
-in the isolated authorization lab. The Brave version was not recorded.
+Manual observations from the authorization part of the
+[manual browser check](../guides/local-security-lab.md#manual-browser-check-brave),
+run in the isolated authorization lab. No browser evidence is retained in
+the repository. The Brave version was not recorded.
 
-**Visible in screenshots** (three: two of `lab-viewer`, one of `lab-user`):
+**Observed:**
 
-- `lab-viewer` screenshots:
-  - signed in as `lab-viewer`;
-  - the items list;
-  - "Not allowed";
-  - the open Create dialog obscuring the page-level error.
-- `lab-user` screenshot:
-  - item #14 ("viewer create") processed successfully;
-  - in Network, 202 for the processing request and 200 for polling;
-  - DevTools device emulation enabled.
-
-**Confirmed verbally by the operator, not shown in a screenshot:**
-
-- `lab-viewer`: Create and Process were both denied with "Not allowed", and the session remained active.
-- `lab-user`: item #14 showed status `done`, job `succeeded`, and a result of 13 characters and 2 words.
-- `lab-user`: creating a new item succeeded.
+- `lab-viewer`:
+  - the items list was displayed;
+  - Create and Process were both denied with "Not allowed";
+  - the session remained active.
+- The Create denial was displayed in the page-level alert, behind the open dialog and its blurred overlay, not inside the dialog.
+- `lab-user`:
+  - existing item #14 ("viewer create") was processed to status `done`, job `succeeded`, with a result of 13 characters and 2 words;
+  - in Network, the processing request returned 202 and polling returned 200;
+  - creating a new item succeeded.
 - The authorization lab was stopped afterward.
+- Device emulation was enabled during the `lab-user` processing step.
 
 **Not recorded:**
 
-- the HTTP status of the viewer's denied requests (no screenshot or report covers it);
-- browser settings, such as device emulation, outside the `lab-user` screenshot.
+- the HTTP status of the viewer's denied requests;
+- browser settings, including device emulation, for the other steps.
 
-**Defect found:** the viewer's Create denial was shown in the page-level
-alert, behind the open dialog and its blurred overlay, rather than in the
-dialog. The UI now shows create failures inside the dialog as an alert, keeps
-the entered title, and clears the message when the title is edited, a new
-attempt starts, or the dialog is opened or closed. When this session was
-recorded, that change had been checked only with lint and a production
-build; the retest below followed.
+**Defect found:** the Create denial was not visible inside the open dialog.
+The UI was then changed to show create failures inside the dialog as an
+alert, keep the entered title, and clear the message when the title is
+edited, a new attempt starts, or the dialog is opened or closed. At the
+time of this check, that change had been verified only with lint and a
+production build; the retest below followed.
 
 ### Focused Brave retest of the Create dialog (2026-10-12)
 
-The operator retested the corrected dialog in the isolated authorization
-lab. The Brave version is unknown; DevTools device emulation was enabled in
-the screenshots.
+Manual observations after the dialog change, in the isolated authorization
+lab. No browser evidence is retained in the repository. The Brave version
+was not recorded. Device emulation was enabled throughout this retest.
 
-**Visible in screenshots:**
+**Observed:**
 
-- In Network, the Create and Process requests returned 403 and the read request returned 200.
-
-**Reported by the operator** (screenshot coverage not stated, so not attributed to one):
-
-- The Create denial appeared inside the modal, and the entered title was preserved.
-- The Process error, shown on the page, cleared after a page reload.
-- As `lab-user`, item #89 ("browser-ui-test") was created (201), accepted for processing (202), and completed successfully, with a result of 15 characters and 1 word.
+- `lab-viewer`:
+  - the Create denial appeared inside the dialog;
+  - the entered title, "browser-ui-test", was preserved;
+  - in Network, Create and Process returned 403 and reading items returned 200;
+  - the Process error, shown on the page, disappeared after reloading.
+- `lab-user`: item #89 ("browser-ui-test") was created (201), accepted for processing (202), and completed successfully (polling 200), with a result of 15 characters and 1 word.
 
 **Not confirmed:**
 
-- Clearing the in-dialog error by editing the title.
-- Clearing it by closing and reopening the dialog.
+- clearing the in-dialog error by editing the title;
+- clearing it by closing and reopening the dialog.
 
 The code clears it in both cases, but no browser check covered them.
 
-This retest resolves the placement defect found in the first session; that
-session's record above is unchanged.
+The retest no longer shows the placement defect found in the first check.
+The first check's record above is kept as observed then.
 
 ## Limitations
 

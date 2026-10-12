@@ -161,15 +161,18 @@ A review rerun (`verify-authorization-rerun.json`) supersedes two parts of the f
 
 The startup check now treats malformed role data like the API parser does.
 
-A manual Brave session (operator, same day; three screenshots plus verbal
-confirmation, attributed separately in the experiment record) covered the
-viewer's list, Create and Process outcomes and the editor's processing and
-creation. The viewer screenshots show the Create denial behind the open
-dialog. A focused retest the same day:
-- the operator reported the denial inside the dialog, with the title kept;
-- Network screenshots show 403 for Create and Process and 200 for reading.
+Manual browser checks in Brave the same day (observations only; no browser
+evidence retained):
+- **First check:**
+  - the viewer could list items but was denied Create and Process, and stayed signed in;
+  - the editor processed and created items;
+  - the Create denial was displayed behind the open dialog.
+- **Focused retest after the dialog change:**
+  - the denial appeared inside the dialog, with the entered title kept;
+  - Create and Process returned 403 and reading returned 200;
+  - the editor created and processed a new item.
 
-Error clearing on title edit or reopen was not confirmed.
+  Clearing the dialog error on title edit or reopen was not confirmed.
 
 Open: browser confirmation of in-dialog error clearing; the original lab is not upgraded; single runs.
 The decision stays Proposed pending review.
