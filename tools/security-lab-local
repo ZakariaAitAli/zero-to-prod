@@ -2562,6 +2562,19 @@ machine_work_items() {
     "$(call_summary bearer "$token" POST "/items/${item}/process")"
 }
 
+# One claim of a JWT read from standard input (claims only, never the token).
+json_query_token() {
+  python3 -I -c '
+import base64, json, sys
+parts = sys.stdin.read().strip().split(".")
+try:
+    c = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    print(c.get(sys.argv[1], ""))
+except Exception:
+    print("")
+' "$1"
+}
+
 # Work Items roles in a token (claims only, no token material): the API's
 # own roles, realm roles, and other clients' roles.
 token_roles() {
@@ -3043,6 +3056,48 @@ verify_authorization() {
     "$(compose logs --no-color --since "$since" ingress 2>/dev/null | grep -F "rid=${rid}" | grep -q '" 403 .*upstream=- ' && echo yes || echo no)"
   record "$area" "API authorization log lines contain a JWT" "observe" \
     "$(compose logs --no-color --since "$since" api 2>/dev/null | grep 'authorization' | grep -c 'eyJ' || true)" info
+
+  # The denied principals' actual credentials must not appear in the API log
+  # for this run: passwords, session cookies, the access tokens their
+  # sessions forwarded, and the machine token used for denials (plus their
+  # percent-encoded forms). Values are searched as fixed strings from a file
+  # and never printed or recorded.
+  local values="${AUTH_WORK}/denial-values" api_log="${AUTH_WORK}/api.log" principal jar counts kinds
+  : > "$values"
+  for principal in lab-viewer lab-outsider; do
+    case "$principal" in
+      lab-viewer) jar="$viewer" ;;
+      lab-outsider) jar="$outsider" ;;
+    esac
+    add_value "$values" password "$(secret "${principal}-password")"
+    add_value "$values" session-cookie "$(session_cookie "$jar")"
+    add_value "$values" session-access-token "$(session_access_token "$jar")"
+  done
+  add_value "$values" machine-access-token "$machine"
+  kinds="$(awk -F'\t' '$2 != "" && $1 !~ /\+encoded$/ {n[$1]++} END {for (k in n) printf "%s=%d ", k, n[k]}' "$values" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+  expect "$area" "denied principals' credentials collected per kind" \
+    "machine-access-token=1 password=2 session-access-token=2 session-cookie=2" "$kinds"
+  sleep 1
+  compose logs --no-color --since "$started" api > "$api_log" 2>&1 || true
+  counts="$(count_values "$api_log" "$values")"
+  expect "$area" "API log: occurrences of the denied principals' credentials" "0" "${counts%% *}"
+  record "$area" "API log: credential kinds found" "observe" "$(kinds_found "$api_log" "$values")" info
+  # Controls: the scanner finds every searched string when present, and the
+  # captured API log holds this run's denial lines for both principals.
+  local synthetic="${AUTH_WORK}/synthetic.log" searched subject
+  searched="$(awk -F'\t' '$2 != ""' "$values" | wc -l)"
+  awk -F'\t' '$2 != "" {print "authorization denied: subject=x token=" $2}' "$values" > "$synthetic"
+  counts="$(count_values "$synthetic" "$values")"
+  expect "positive control" "scanner finds each searched string in a synthetic API log" "$searched" "${counts#* }"
+  for principal in lab-viewer lab-outsider; do
+    case "$principal" in
+      lab-viewer) jar="$viewer" ;;
+      lab-outsider) jar="$outsider" ;;
+    esac
+    subject="$(session_access_token "$jar" | json_query_token sub)"
+    expect "positive control" "captured API log has ${principal}'s denial lines" "yes" \
+      "$([[ -n "$subject" ]] && grep -F "authorization denied: subject=${subject} " "$api_log" | grep -q . && echo yes || echo no)"
+  done
 
   # --- Role removal: existing versus newly issued tokens ----------------------
   # Remove lab-user's editor role and the automation client's items.read at
