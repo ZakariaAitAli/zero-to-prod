@@ -161,5 +161,12 @@ A review rerun (`verify-authorization-rerun.json`) supersedes two parts of the f
 
 The startup check now treats malformed role data like the API parser does.
 
-Open: browser verification (operator); the original lab is not upgraded; single runs.
+A manual Brave session (operator, same day; three screenshots plus verbal
+confirmation, attributed separately in the experiment record) covered the
+viewer's list, Create and Process outcomes and the editor's processing and
+creation. The viewer screenshots show the Create denial behind the open
+dialog; the UI change that moves it into the dialog has not
+been retested in a browser.
+
+Open: browser retest of the Create dialog; the original lab is not upgraded; single runs.
 The decision stays Proposed pending review.

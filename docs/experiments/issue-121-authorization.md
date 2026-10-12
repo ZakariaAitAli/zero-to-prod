@@ -213,6 +213,44 @@ With Keycloak stopped:
 
 Authorization needs no call to the identity provider.
 
+### Manual browser verification (Brave, 2026-10-12)
+
+The operator ran the authorization part of the
+[manual browser check](../guides/local-security-lab.md#manual-browser-check-brave)
+in the isolated authorization lab. The Brave version was not recorded.
+
+**Visible in screenshots** (three: two of `lab-viewer`, one of `lab-user`):
+
+- `lab-viewer` screenshots:
+  - signed in as `lab-viewer`;
+  - the items list;
+  - "Not allowed";
+  - the open Create dialog obscuring the page-level error.
+- `lab-user` screenshot:
+  - item #14 ("viewer create") processed successfully;
+  - in Network, 202 for the processing request and 200 for polling;
+  - DevTools device emulation enabled.
+
+**Confirmed verbally by the operator, not shown in a screenshot:**
+
+- `lab-viewer`: Create and Process were both denied with "Not allowed", and the session remained active.
+- `lab-user`: item #14 showed status `done`, job `succeeded`, and a result of 13 characters and 2 words.
+- `lab-user`: creating a new item succeeded.
+- The authorization lab was stopped afterward.
+
+**Not recorded:**
+
+- the HTTP status of the viewer's denied requests (no screenshot or report covers it);
+- browser settings, such as device emulation, outside the `lab-user` screenshot.
+
+**Defect found:** the viewer's Create denial was shown in the page-level
+alert, behind the open dialog and its blurred overlay, rather than in the
+dialog. The UI now shows create failures inside the dialog as an alert, keeps
+the entered title, and clears the message when the title is edited, a new
+attempt starts, or the dialog is opened or closed. That change was checked
+with lint and a production build only; it has not been retested in a
+browser.
+
 ## Limitations
 
 - **Coarse rules:** role-based authorization only, with no per-item or ownership rules.
@@ -220,7 +258,7 @@ Authorization needs no call to the identity provider.
 - **No upgrade of existing realms:** the original lab is not upgraded. With the current API, its realm (no `work-items-api` roles) would refuse every Work Items request. The startup permission check would name the machine client's missing permissions and recommend `verify-realm`; that path was tested only with simulated token responses (see [startup permission check](#startup-permission-check)).
 - **Standing privileged credential:** `work-items-lab-admin` exists in every realm the tool creates. It is internal-network only, its secret is a generated file passed on standard input, and it is removed with the lab.
 - **Route-registration safety:** it prevents accidental omission inside the API package, not a handler deliberately registered on the mux in the constructor. Request tests cover only the routes in the matrix.
-- **UI:** it explains a 403 after the fact and does not know permissions in advance. Its rendering was not verified in a browser.
+- **UI:** it explains a 403 after the fact and does not know permissions in advance. One manual Brave session checked it (see [manual browser verification](#manual-browser-verification-brave-2026-10-12)); the corrected Create dialog has not been retested in a browser.
 - **Single runs.**
 
 ## Capability levels
