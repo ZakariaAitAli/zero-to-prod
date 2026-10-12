@@ -73,9 +73,20 @@ SOURCE_SECRETS=(
   gateway-client-secret
   automation-client-secret
   lab-user-password
+  lab-viewer-password
+  lab-outsider-password
+  lab-admin-client-secret
   valkey-password
   oauth2-proxy-cookie-secret
 )
+
+# realm-management roles of the lab's role-management client
+# (work-items-lab-admin), used only by verify-realm and verify-authorization
+# to read the authorization configuration and add or remove role mappings.
+# verify-admin-permissions checks that this set suffices and that no role in
+# it can be dropped; it reduced the candidate set to these two (query-clients,
+# view-users, and query-users were not needed).
+LAB_ADMIN_ROLES=(view-clients manage-users)
 
 usage() {
   cat <<EOF_USAGE
@@ -539,15 +550,53 @@ proxy-headers=xforwarded
 health-enabled=true
 EOF_CONF
 
-  # One browser client (the gateway) and one machine client; no
-  # administrative client or user is defined.
+  # Clients: the gateway (browser), the automation machine client, the
+  # work-items-api client that owns the permission roles (no flows), and the
+  # lab's role-management client (see LAB_ADMIN_ROLES).
+  #
+  # Permissions are client roles of work-items-api; the API reads only
+  # resource_access["work-items-api"].roles. editor and viewer are composite
+  # roles for people. lab-outsider holds permission names only where they
+  # must grant nothing (a realm role and a gateway-client role).
+  local admin_roles
+  admin_roles="$(printf '"%s",' "${LAB_ADMIN_ROLES[@]}")"
+  admin_roles="${admin_roles%,}"
   cat <<EOF_REALM | write_file "${SECRETS_DIR}/realm-work-items.json" 644
 {
   "realm": "work-items", "enabled": true, "sslRequired": "external",
   "accessTokenLifespan": ${ACCESS_TOKEN_SECONDS},
   "ssoSessionIdleTimeout": 1800, "ssoSessionMaxLifespan": 28800,
   "bruteForceProtected": true, "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "items.create", "description": "Misplaced-claim test: a realm role named like a permission; grants nothing" }
+    ],
+    "client": {
+      "work-items-api": [
+        { "name": "items.read", "description": "List Work Items and read processing jobs" },
+        { "name": "items.create", "description": "Create Work Items" },
+        { "name": "items.process", "description": "Request processing of a Work Item" },
+        { "name": "editor", "description": "People who create and process Work Items", "composite": true,
+          "composites": { "client": { "work-items-api": ["items.read", "items.create", "items.process"] } } },
+        { "name": "viewer", "description": "People who only read Work Items", "composite": true,
+          "composites": { "client": { "work-items-api": ["items.read"] } } }
+      ],
+      "work-items-gateway": [
+        { "name": "items.create", "description": "Misplaced-claim test: another client's role named like a permission; grants nothing" }
+      ]
+    }
+  },
   "clients": [
+    { "clientId": "work-items-api", "enabled": true, "protocol": "openid-connect",
+      "publicClient": true, "standardFlowEnabled": false, "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false, "serviceAccountsEnabled": false,
+      "description": "Owns the Work Items permission roles; no flows" },
+    { "clientId": "work-items-lab-admin", "enabled": true, "protocol": "openid-connect",
+      "publicClient": false, "clientAuthenticatorType": "client-secret",
+      "secret": "$(secret lab-admin-client-secret)",
+      "standardFlowEnabled": false, "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true,
+      "description": "Lab role management for verify-realm and verify-authorization; internal network only" },
     { "clientId": "work-items-gateway", "enabled": true, "protocol": "openid-connect",
       "publicClient": false, "clientAuthenticatorType": "client-secret",
       "secret": "$(secret gateway-client-secret)",
@@ -567,7 +616,23 @@ EOF_CONF
   "users": [
     { "username": "lab-user", "enabled": true, "email": "lab-user@${LAB_HOSTNAME}",
       "emailVerified": true, "firstName": "Lab", "lastName": "User",
-      "credentials": [ { "type": "password", "value": "$(secret lab-user-password)", "temporary": false } ] }
+      "credentials": [ { "type": "password", "value": "$(secret lab-user-password)", "temporary": false } ],
+      "clientRoles": { "work-items-api": ["editor"] } },
+    { "username": "lab-viewer", "enabled": true, "email": "lab-viewer@${LAB_HOSTNAME}",
+      "emailVerified": true, "firstName": "Lab", "lastName": "Viewer",
+      "credentials": [ { "type": "password", "value": "$(secret lab-viewer-password)", "temporary": false } ],
+      "clientRoles": { "work-items-api": ["viewer"] } },
+    { "username": "lab-outsider", "enabled": true, "email": "lab-outsider@${LAB_HOSTNAME}",
+      "emailVerified": true, "firstName": "Lab", "lastName": "Outsider",
+      "credentials": [ { "type": "password", "value": "$(secret lab-outsider-password)", "temporary": false } ],
+      "realmRoles": ["items.create"],
+      "clientRoles": { "work-items-gateway": ["items.create"] } },
+    { "username": "service-account-work-items-automation", "enabled": true,
+      "serviceAccountClientId": "work-items-automation",
+      "clientRoles": { "work-items-api": ["items.read", "items.process"] } },
+    { "username": "service-account-work-items-lab-admin", "enabled": true,
+      "serviceAccountClientId": "work-items-lab-admin",
+      "clientRoles": { "realm-management": [${admin_roles}] } }
   ]
 }
 EOF_REALM
@@ -784,9 +849,16 @@ start_lab() {
 
 show_lab_user() {
   [[ -s "${SECRETS_DIR}/lab-user-password" ]] || die "lab user password missing; run: $0 init"
-  echo "Lab user:      lab-user"
-  echo "Password file: ${SECRETS_DIR}/lab-user-password"
-  echo "The password is not printed; read the file when signing in."
+  local user role
+  for user in lab-user lab-viewer lab-outsider; do
+    case "$user" in
+      lab-user) role="editor: read, create, process" ;;
+      lab-viewer) role="viewer: read" ;;
+      lab-outsider) role="no Work Items permission" ;;
+    esac
+    printf '%-13s %-32s password file: %s\n' "$user" "($role)" "${SECRETS_DIR}/${user}-password"
+  done
+  echo "Passwords are not printed; read the file when signing in."
 }
 
 issue_certificate_command() {
@@ -1600,7 +1672,9 @@ bearer_status() {
 # Scripted browser sign-in: follow the gateway to Keycloak's login form and
 # submit it. Prints the final page.
 browser_login() {
-  local jar="$1" page action
+  # $2: lab-user (default), lab-viewer, or lab-outsider; the password is in
+  # the matching <user>-password secret file.
+  local jar="$1" user="${2:-lab-user}" page action
   page="$(lab_curl -L -c "$jar" -b "$jar" "${APP_URL}/oauth2/start?rd=%2F" 2>/dev/null || true)"
   action="$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' <<< "$page" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g' || true)"
   if [[ -z "$action" ]]; then
@@ -1609,9 +1683,9 @@ browser_login() {
   fi
   # The login action URL carries Keycloak's session code; it goes in the
   # config with the password.
-  { curl_config url "$action"; curl_config data-urlencode "password=$(secret lab-user-password)"; } \
+  { curl_config url "$action"; curl_config data-urlencode "password=$(secret "${user}-password")"; } \
     | lab_curl -K - -L -c "$jar" -b "$jar" \
-        --data-urlencode "username=lab-user" --data "credentialId=" 2>/dev/null || true
+        --data-urlencode "username=${user}" --data "credentialId=" 2>/dev/null || true
 }
 
 # Whether starting a new sign-in with this browser's cookies shows Keycloak's
