@@ -91,7 +91,9 @@ run_app() {
   echo "Version: ${VERSION}"
   echo
 
+  # Local development runs without authentication; the security lab requires it.
   exec env \
+    AUTHENTICATION=disabled \
     PORT="$PORT" \
     DATABASE_URL="$DATABASE_URL" \
     RABBITMQ_PUBLISHER_URL="$RABBITMQ_PUBLISHER_URL" \

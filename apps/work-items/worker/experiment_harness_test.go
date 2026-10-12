@@ -583,6 +583,7 @@ func startAPI(t *testing.T, config experimentConfig, record *experimentRecord, n
 	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 	_ = listener.Close()
 	process := startManagedProcess(t, name, config.APIBinary, []string{
+		"AUTHENTICATION=disabled",
 		"PORT=" + port,
 		"DATABASE_URL=" + withParams(config.AppURL, map[string]string{"application_name": appName(name)}),
 		"RABBITMQ_PUBLISHER_URL=" + config.RabbitPublisherURL,

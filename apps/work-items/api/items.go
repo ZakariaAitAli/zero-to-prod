@@ -31,7 +31,7 @@ type errorResponse struct {
 }
 
 func registerWorkItemHandlers(
-	mux *http.ServeMux,
+	mux routes,
 	store applicationStore,
 ) {
 	mux.HandleFunc("POST /items", func(w http.ResponseWriter, r *http.Request) {

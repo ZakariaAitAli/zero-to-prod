@@ -1,0 +1,8 @@
+{
+  "recorded_at": "2026-10-11T10:21:20Z",
+  "results": [
+    {"area":"G1 issuer","check":"WSL: discovery issuer with verified TLS","expected":"https://auth.work-items.localhost:9443/realms/work-items","observed":"https://auth.work-items.localhost:9443/realms/work-items","result":"pass"},
+    {"area":"G1 issuer","check":"Windows: discovery issuer with verified TLS","expected":"https://auth.work-items.localhost:9443/realms/work-items","observed":"https://auth.work-items.localhost:9443/realms/work-items","result":"pass"},
+    {"area":"G1 issuer","check":"container curl (special-cases .localhost)","expected":"observe","observed":"exit=7","result":"info"}
+  ]
+}

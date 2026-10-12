@@ -3,8 +3,12 @@ import { useEffect, useState } from 'react'
 import {
   createWorkItem,
   getProcessingJob,
+  getSession,
   listWorkItems,
   processWorkItem,
+  signInURL,
+  signOut,
+  type Session,
 } from '@/api/work-items'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -62,6 +66,41 @@ export default function App() {
 
   const [jobsByItemID, setJobsByItemID] =
     useState<Record<number, ProcessingJob>>({})
+
+  const [session, setSession] = useState<Session>({ kind: 'no-gateway' })
+  const [signingOut, setSigningOut] = useState(false)
+
+  async function handleSignOut() {
+    setSigningOut(true)
+    setError(null)
+
+    try {
+      await signOut()
+      // Reload so the page reflects the ended session.
+      window.location.assign('/')
+    } catch (signOutError) {
+      setError(
+        signOutError instanceof Error
+          ? `sign_out_failed: ${signOutError.message}`
+          : 'sign_out_failed',
+      )
+      setSigningOut(false)
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+
+    void getSession().then((result) => {
+      if (!cancelled) {
+        setSession(result)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   async function refreshItems() {
     const result = await listWorkItems()
@@ -201,56 +240,83 @@ export default function App() {
             </h1>
           </div>
 
-          <Dialog
-            open={dialogOpen}
-            onOpenChange={setDialogOpen}
-          >
-            <DialogTrigger render={<Button />}>
-              New Work Item
-            </DialogTrigger>
-
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create Work Item</DialogTitle>
-
-                <DialogDescription>
-                  Add a new Work Item to the system.
-                </DialogDescription>
-              </DialogHeader>
-
-              <Input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Work Item title"
-                disabled={creating}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    void handleCreate()
-                  }
-                }}
-              />
-
-              <DialogFooter>
+          <div className="flex items-center gap-3">
+            {session.kind === 'signed-in' && (
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">
+                  {session.email}
+                </span>
                 <Button
                   variant="outline"
-                  onClick={() => setDialogOpen(false)}
-                  disabled={creating}
+                  disabled={signingOut}
+                  onClick={() => void handleSignOut()}
                 >
-                  Cancel
+                  {signingOut ? 'Signing out...' : 'Sign out'}
                 </Button>
+              </div>
+            )}
 
-                <Button
-                  onClick={() => void handleCreate()}
-                  disabled={creating || !title.trim()}
-                >
-                  {creating ? 'Creating...' : 'Create'}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+            <Dialog
+              open={dialogOpen}
+              onOpenChange={setDialogOpen}
+            >
+              <DialogTrigger render={<Button />}>
+                New Work Item
+              </DialogTrigger>
+
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create Work Item</DialogTitle>
+
+                  <DialogDescription>
+                    Add a new Work Item to the system.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <Input
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="Work Item title"
+                  disabled={creating}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      void handleCreate()
+                    }
+                  }}
+                />
+
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => setDialogOpen(false)}
+                    disabled={creating}
+                  >
+                    Cancel
+                  </Button>
+
+                  <Button
+                    onClick={() => void handleCreate()}
+                    disabled={creating || !title.trim()}
+                  >
+                    {creating ? 'Creating...' : 'Create'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
-        {error && (
+        {error === 'unauthenticated' ? (
+          <Alert>
+            <AlertTitle>Sign in required</AlertTitle>
+            <AlertDescription>
+              <a className="underline" href={signInURL}>
+                Sign in
+              </a>{' '}
+              to view and change Work Items.
+            </AlertDescription>
+          </Alert>
+        ) : error && (
           <Alert variant="destructive">
             <AlertTitle>Request failed</AlertTitle>
             <AlertDescription>{error}</AlertDescription>

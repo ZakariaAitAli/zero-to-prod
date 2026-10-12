@@ -1,0 +1,14 @@
+{
+  "recorded_at": "2026-10-11T10:42:53Z",
+  "results": [
+    {"area":"G1 issuer","check":"pomerium: running after OIDC discovery (Go resolver, lab CA)","expected":"running restarts=0","observed":"running restarts=0","result":"pass"},
+    {"area":"G3 forwarding","check":"pomerium: upstream receives the IdP access token","expected":"iss=https://auth.work-items.localhost:9443/realms/work-items","observed":"iss=https://auth.work-items.localhost:9443/realms/work-items","result":"pass"},
+    {"area":"G2 audience","check":"pomerium: access token aud includes work-items-api","expected":"yes","observed":"yes","result":"pass"},
+    {"area":"G2 audience","check":"pomerium: token summary","expected":"observe","observed":"aud=work-items-api azp=pomerium-gateway typ=Bearer lifetime=120","result":"info"},
+    {"area":"pomerium in-memory","check":"sign_out followed to the IdP (final status, redirects)","expected":"observe","observed":"200 3","result":"info"},
+    {"area":"pomerium in-memory","check":"after sign_out, same browser","expected":"302","observed":"302","result":"pass"},
+    {"area":"pomerium in-memory","check":"after sign_out, replayed copied cookie","expected":"302","observed":"302","result":"pass"},
+    {"area":"pomerium in-memory","check":"gateway restart: existing session","expected":"302","observed":"302","result":"pass"},
+    {"area":"pomerium in-memory","check":"gateway down","expected":"503","observed":"503","result":"pass"}
+  ]
+}

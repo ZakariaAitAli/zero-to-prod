@@ -66,6 +66,7 @@ ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
 - [ADR 0001 — Work Items async recovery boundary](adr/0001-work-items-async-recovery-boundary.md) — why the PostgreSQL backup covers `work_items`, `processing_jobs`, and `outbox_messages`.
 - [ADR 0002 — Work Items Web UI boundary](adr/0002-work-items-web-ui-boundary.md) — why the browser UI is a separate artifact and how it reaches the API locally.
 - [ADR 0003 — Work Items async success semantics](adr/0003-work-items-async-success-semantics.md) — what successful processing means, why PostgreSQL owns the result, and the required failure model.
+- [ADR 0004 — Security lab authentication](adr/0004-security-lab-authentication.md) — **Proposed:** provisional identity provider, session gateway, and session store candidates for Issue #121, pending a comparison experiment.
 
 ## Experiments
 
@@ -74,6 +75,8 @@ Experiment records answer **what did we test and what happened?** Focused experi
 - [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
 - [Issue #117 — result implementation validation](experiments/issue-117-result-validation.md) — title-analysis results, atomic business completion, migration refusal, and result backup compatibility.
 - [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
+- [Issue #121 — authentication integration](experiments/issue-121-authentication-integration.md) — the security lab with Keycloak, oauth2-proxy and Valkey, and API token validation: both API paths, token rejection, CSRF, sign-out through Keycloak, cookie and captured-token replay, and dependency outages.
+- [Issue #121 — authentication comparison](experiments/issue-121-authentication-comparison.md) — issuer reachability, token audience and forwarding, gateway-session revocation, identity-provider termination, token replay, outages, store-outage signaling, and footprint for Keycloak with oauth2-proxy (cookie and server-side stores) and Pomerium.
 - [Issue #121 — local HTTPS ingress and private backends](experiments/issue-121-local-https-ingress.md) — first #121 slice: measured host and container reachability, verified HTTPS with a private lab CA, and missing-secret failures.
 
 Experiment records describe what was true when the experiment ran. They are not rewritten when the system changes later.

@@ -1,0 +1,8 @@
+{
+  "configuration": "pomerium",
+  "recorded_at": "2026-10-11T11:39:17Z",
+  "conditions": {"docker_mem_total_mib": 15808, "cpus": 20, "startup_window_s": 150, "idle_wait_s": 300, "idle_samples": 5, "traffic": "none"},
+  "services": [{"service":"keycloak-postgres","startup_peak_mib":40.7,"idle_median_mib":38.6},{"service":"keycloak","startup_peak_mib":859.1,"idle_median_mib":774.7},{"service":"pomerium","startup_peak_mib":71.8,"idle_median_mib":65.4}],
+  "combined_idle_mib": 878.7,
+  "threshold_mib": 1536
+}

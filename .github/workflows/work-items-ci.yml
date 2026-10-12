@@ -202,6 +202,20 @@ jobs:
       - name: Run dependency-free tests
         run: go test ./... -v -count=1
 
+      # The race detector needs cgo and a C compiler, which the local WSL
+      # environment lacks; the hosted runner provides gcc. The unknown-key
+      # refresh test detects a check-then-fetch race probabilistically, so it
+      # is repeated here.
+      - name: Run dependency-free tests with the race detector
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          gcc --version | head -n 1
+          go test -race ./internal/authn -count=1
+          go test -race ./internal/authn \
+            -run '^TestValidateSharesOneRefreshAcrossConcurrentUnknownKeys$' \
+            -count=5
+
       - name: Start local integration dependencies
         working-directory: .
         run: |
@@ -461,6 +475,7 @@ jobs:
           # tools/security-lab-local before the lab starts.
           ZTP_SECURITY_LAB_SECRETS_DIR=/nonexistent \
             ZTP_SECURITY_LAB_INGRESS_TLS_DIR=/nonexistent \
+            ZTP_SECURITY_LAB_CA_FILE=/nonexistent \
             docker compose -f infra/security-lab/compose.yaml config --quiet
 
           ./scripts/test-ci-change-classifier.sh
