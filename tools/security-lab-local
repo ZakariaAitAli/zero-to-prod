@@ -165,6 +165,12 @@ check_configuration() {
     *) die "ZTP_SECURITY_LAB_PROJECT must start with zero-to-prod-security-lab: ${PROJECT}" ;;
   esac
 
+  # The lab CA's common name embeds the project, and X.509 limits a common
+  # name to 64 characters.
+  if (( ${#PROJECT} > 33 )); then
+    die "ZTP_SECURITY_LAB_PROJECT is too long for the lab CA's name (at most 33 characters): ${PROJECT}"
+  fi
+
   check_state_dir
 
   if [[ -n "${ZTP_SECURITY_LAB_HTTPS_PORT:-}" && "$ZTP_SECURITY_LAB_HTTPS_PORT" != "$HTTPS_PORT" ]]; then
