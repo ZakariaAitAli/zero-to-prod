@@ -3075,19 +3075,40 @@ verify_authorization() {
     record "$area" "machine token issued after removal: roles" "observe" "$(token_roles <<< "$new_machine")" info
     expect "$area" "machine token issued after removal: GET /items" "403 insufficient_permissions" "$(call_summary bearer "$new_machine" GET /items)"
 
+    # A credential counts as rejected only on its expected status: 403
+    # insufficient_permissions for the session (its refreshed token lacks the
+    # role), 401 for the tokens issued before removal (at expiry). Timeouts,
+    # 5xx, and any other status are not revocation: they are counted
+    # separately and polling continues.
     local session_at="" captured_at="" machine_at="" now status
+    local session_status="" captured_status="" machine_status="" other_responses=0 other_detail=""
+    local expired_since
+    expired_since="$(date -u -d "@${removed_at}" +%Y-%m-%dT%H:%M:%SZ)"
     while :; do
       now="$(date +%s)"
       if [[ -z "$session_at" ]]; then
-        status="$(call_summary session "$session_jar" GET /items)"; [[ "$status" == 403* ]] && session_at="$now"
+        status="$(call_summary session "$session_jar" GET /items)"
+        case "$status" in
+          200) ;;
+          "403 insufficient_permissions") session_at="$now"; session_status="$status" ;;
+          *) other_responses=$((other_responses + 1)); other_detail="${other_detail} session:${status%% *}" ;;
+        esac
       fi
       if [[ -z "$captured_at" ]]; then
         status="$(call_summary bearer "$captured" GET /items)"
-        [[ "$status" != 200 ]] && captured_at="$now"
+        case "${status%% *}" in
+          200) ;;
+          401) captured_at="$now"; captured_status="$status" ;;
+          *) other_responses=$((other_responses + 1)); other_detail="${other_detail} captured:${status%% *}" ;;
+        esac
       fi
       if [[ -z "$machine_at" ]]; then
         status="$(call_summary bearer "$old_machine" GET /items)"
-        [[ "$status" != 200 ]] && machine_at="$now"
+        case "${status%% *}" in
+          200) ;;
+          401) machine_at="$now"; machine_status="$status" ;;
+          *) other_responses=$((other_responses + 1)); other_detail="${other_detail} machine:${status%% *}" ;;
+        esac
       fi
       [[ -n "$session_at" && -n "$captured_at" && -n "$machine_at" ]] && break
       (( now - removed_at > 420 )) && break
@@ -3108,13 +3129,21 @@ verify_authorization() {
       "${machine_at:+$(( machine_at - removed_at ))}" info
     record "$area" "existing machine token: computed exp + 30 s skew after removal (s)" "observe" \
       "$(( machine_exp + 30 - removed_at ))" info
-    expect "$area" "captured browser token accepted until its expiry" "yes" \
+    record "$area" "responses that were neither success nor the expected rejection (not counted as revocation)" "observe" \
+      "${other_responses}${other_detail:+ (${other_detail# })}" info
+    expect "$area" "browser session: rejection status" "403 insufficient_permissions" "${session_status:-none}"
+    expect "$area" "captured browser token: rejection status" "401 unauthenticated" "${captured_status:-none}"
+    expect "$area" "existing machine token: rejection status" "401 unauthenticated" "${machine_status:-none}"
+    # Expiry evidence for both pre-removal tokens: rejected no earlier than
+    # their exp, and the API logged exactly two expired rejections in the
+    # window (one per token; the session's rejection is a 403, not logged as
+    # an authentication failure).
+    expect "$area" "captured browser token: rejected at or after its exp" "yes" \
       "$([[ -n "$captured_at" && "$captured_at" -ge "$captured_exp" ]] && echo yes || echo no)"
-    expect "$area" "existing machine token accepted until its expiry" "yes" \
+    expect "$area" "existing machine token: rejected at or after its exp" "yes" \
       "$([[ -n "$machine_at" && "$machine_at" -ge "$machine_exp" ]] && echo yes || echo no)"
-    expect "$area" "all three eventually refused" "yes" \
-      "$([[ -n "$session_at" && -n "$captured_at" && -n "$machine_at" ]] && echo yes || echo no)"
-    expect "$area" "captured token refused as expired (401), not by role" "401" "$(call_summary bearer "$captured" GET /items | cut -d' ' -f1)"
+    sleep 1
+    expect "$area" "API authentication rejections since removal" "expired=2" "$(api_categories_since "$expired_since")"
 
     expect "$area" "restore lab-user editor mapping" "204" "$(admin_role_mapping POST "$user_id" "$api_client" editor)"
     expect "$area" "restore work-items-automation items.read mapping" "204" "$(admin_role_mapping POST "$machine_id" "$api_client" items.read)"
