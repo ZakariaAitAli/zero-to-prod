@@ -12,12 +12,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/authz"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jwt"
@@ -129,6 +131,8 @@ type claims struct {
 	expiresIn time.Duration
 	notBefore time.Duration
 	noExpiry  bool
+	// resourceAccess, when set, becomes the resource_access claim.
+	resourceAccess any
 }
 
 func validClaims() claims {
@@ -149,6 +153,9 @@ func sign(t *testing.T, key jwk.Key, algorithm jwa.SignatureAlgorithm, c claims)
 	}
 	if c.notBefore != 0 {
 		builder = builder.NotBefore(now.Add(c.notBefore))
+	}
+	if c.resourceAccess != nil {
+		builder = builder.Claim("resource_access", c.resourceAccess)
 	}
 	token, err := builder.Build()
 	if err != nil {
@@ -183,6 +190,44 @@ func TestValidateAcceptsValidToken(t *testing.T) {
 	}
 	if principal.Subject != "user-1" || principal.AuthorizedParty != "work-items-gateway" {
 		t.Fatalf("unexpected principal %+v", principal)
+	}
+}
+
+func TestValidateReadsPermissionsFromSignedClaim(t *testing.T) {
+	key := newSigningKey(t, "k1")
+	server := newJWKSServer(t, key.public)
+	validator := newTestValidator(t, server.server.URL)
+
+	tests := []struct {
+		name           string
+		resourceAccess any
+		want           []string
+		state          authz.Claim
+	}{
+		{"granted", map[string]any{"work-items-api": map[string]any{"roles": []any{"items.read", "items.process"}}},
+			[]string{"items.process", "items.read"}, authz.ClaimPresent},
+		{"non-string entry grants nothing", map[string]any{"work-items-api": map[string]any{"roles": []any{"items.read", 1}}},
+			[]string{}, authz.ClaimMalformed},
+		{"other client only", map[string]any{"work-items-gateway": map[string]any{"roles": []any{"items.create"}}},
+			[]string{}, authz.ClaimAbsent},
+		{"no claim", nil, []string{}, authz.ClaimAbsent},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := validClaims()
+			c.resourceAccess = test.resourceAccess
+			principal, err := validator.Validate(context.Background(), sign(t, key.private, jwa.RS256(), c))
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if principal.RoleClaim != test.state {
+				t.Fatalf("role claim = %s, want %s", principal.RoleClaim, test.state)
+			}
+			if got := principal.Permissions.Names(); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("permissions = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 
