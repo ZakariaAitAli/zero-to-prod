@@ -1716,11 +1716,28 @@ try:
     token = json.loads(sys.stdin.read() or "{}").get("access_token", "")
     payload = token.split(".")[1]
     claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-    roles = claims.get("resource_access", {}).get("work-items-api", {}).get("roles", [])
 except Exception:
     print("unreadable"); sys.exit(0)
-roles = [r for r in roles if isinstance(r, str)] if isinstance(roles, list) else []
-print(" ".join(p for p in expected if p not in roles))
+# Same rules as the API (internal/authz): only
+# resource_access["work-items-api"].roles counts, and any malformed shape,
+# including a single non-string entry, grants no permissions at all.
+roles, malformed = [], False
+access = claims.get("resource_access")
+if access is not None:
+    if not isinstance(access, dict):
+        malformed = True
+    elif "work-items-api" in access:
+        entry = access["work-items-api"]
+        if not isinstance(entry, dict):
+            malformed = True
+        elif "roles" in entry:
+            listed = entry["roles"]
+            if not isinstance(listed, list) or any(not isinstance(r, str) for r in listed):
+                malformed = True
+            else:
+                roles = listed
+missing = " ".join(p for p in expected if p not in roles)
+print(("malformed " + missing) if malformed else missing)
 ' "${MACHINE_EXPECTED_PERMISSIONS[@]}")"
   [[ -z "$missing" ]] && return 0
   echo >&2
@@ -1728,6 +1745,11 @@ print(" ".join(p for p in expected if p not in roles))
     echo "warning: no readable work-items-automation access token was obtained, so its" >&2
     echo "         permissions could not be checked." >&2
   else
+    if [[ "$missing" == malformed* ]]; then
+      missing="${missing#malformed }"
+      echo "warning: the work-items-automation access token's work-items-api role data is" >&2
+      echo "         malformed, so it grants no permissions." >&2
+    fi
     echo "warning: the work-items-automation access token lacks: ${missing// /, }." >&2
     echo "         Its requests that need these permissions will be refused (403)." >&2
   fi

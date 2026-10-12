@@ -51,8 +51,15 @@ check "no work-items-api entry" "$(response '{"account":{"roles":["view-profile"
 check "one permission missing" "$(response '{"work-items-api":{"roles":["items.read"]}}')" "lacks: items.process."
 check "permission names only in another client" \
   "$(response '{"work-items-gateway":{"roles":["items.read","items.process"]}}')" "lacks: items.read, items.process"
-check "non-string role entries ignored" \
-  "$(response '{"work-items-api":{"roles":["items.read",7]}}')" "lacks: items.process."
+# As in the API parser, any non-string entry invalidates the whole list.
+check "non-string entry invalidates the list" \
+  "$(response '{"work-items-api":{"roles":["items.read",7]}}')" "lacks: items.read, items.process"
+check "both expected permissions plus a non-string entry" \
+  "$(response '{"work-items-api":{"roles":["items.read","items.process",null]}}')" "role data is"
+check "both expected permissions plus a non-string entry: all missing" \
+  "$(response '{"work-items-api":{"roles":["items.read","items.process",{"name":"x"}]}}')" "lacks: items.read, items.process"
+check "roles not a list" "$(response '{"work-items-api":{"roles":"items.read items.process"}}')" "role data is"
+check "resource_access not an object" "$(response '["work-items-api"]')" "lacks: items.read, items.process"
 check "empty response (token request failed)" "" "could not be checked"
 check "error response" '{"error":"unauthorized_client"}' "could not be checked"
 check "not a JWT" '{"access_token":"opaque-value"}' "could not be checked"
