@@ -214,8 +214,9 @@ func runHTTPServer(
 	}
 }
 
-// newHandler builds the handler without authentication. Production uses
-// newApplicationHandler with the middleware chosen from configuration.
+// newHandler builds the handler without authentication or authorization.
+// Production uses newApplicationHandler with the guard chosen from
+// configuration.
 func newHandler(
 	appVersion string,
 	readiness *readinessState,
@@ -228,7 +229,7 @@ func newApplicationHandler(
 	appVersion string,
 	readiness *readinessState,
 	store applicationStore,
-	authenticate middleware,
+	protect guard,
 ) http.Handler {
 	if appVersion == "" {
 		appVersion = "dev"
@@ -274,7 +275,10 @@ func newApplicationHandler(
 		})
 	})
 
-	business := authenticatedRoutes{mux: mux, authenticate: authenticate}
+	// The operational routes above are the only ones registered on the mux
+	// directly. Business routes go through protectedRoutes, which requires a
+	// permission for each.
+	business := protectedRoutes{mux: mux, guard: protect}
 	registerWorkItemHandlers(business, store)
 	registerProcessingHandlers(business, store)
 

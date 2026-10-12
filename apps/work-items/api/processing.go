@@ -6,14 +6,17 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/authz"
 )
 
 func registerProcessingHandlers(
 	mux routes,
 	store applicationStore,
 ) {
-	mux.HandleFunc(
+	mux.Handle(
 		"GET /processing-jobs/{id}",
+		authz.ItemsRead,
 		func(w http.ResponseWriter, r *http.Request) {
 			jobID, err := strconv.ParseInt(
 				r.PathValue("id"),
@@ -61,8 +64,9 @@ func registerProcessingHandlers(
 		},
 	)
 
-	mux.HandleFunc(
+	mux.Handle(
 		"POST /items/{id}/process",
+		authz.ItemsProcess,
 		func(w http.ResponseWriter, r *http.Request) {
 			workItemID, err := strconv.ParseInt(
 				r.PathValue("id"),
