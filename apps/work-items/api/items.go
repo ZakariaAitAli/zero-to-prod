@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/authz"
 	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/workitems"
 )
 
@@ -34,7 +35,7 @@ func registerWorkItemHandlers(
 	mux routes,
 	store applicationStore,
 ) {
-	mux.HandleFunc("POST /items", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /items", authz.ItemsCreate, func(w http.ResponseWriter, r *http.Request) {
 		var request createWorkItemRequest
 
 		decoder := json.NewDecoder(r.Body)
@@ -102,7 +103,7 @@ func registerWorkItemHandlers(
 		writeJSON(w, http.StatusCreated, item)
 	})
 
-	mux.HandleFunc("GET /items", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /items", authz.ItemsRead, func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(
 			r.Context(),
 			databaseOperationTimeout,

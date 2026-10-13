@@ -7,9 +7,11 @@ Items reference workload behind one HTTPS entry point with private backends.
 **Status:** intermediate. Ingress, network isolation, a private lab CA,
 file-based runtime secrets, and authentication (Keycloak, oauth2-proxy with a
 Valkey session store, and token validation in the API;
-[ADR 0004](../adr/0004-security-lab-authentication.md), Proposed) exist.
-Authorization, datastore TLS, rate limiting, and secret rotation do not. The
-lab must stay on host loopback.
+[ADR 0004](../adr/0004-security-lab-authentication.md), Proposed), and
+role-based authorization in the API
+([ADR 0005](../adr/0005-security-lab-authorization.md), Proposed) exist.
+Datastore TLS, rate limiting, and secret rotation do not. The lab must stay
+on host loopback.
 
 Operating procedures are in the [security lab guide](../guides/local-security-lab.md);
 measurements are in the [first-slice experiment record](../experiments/issue-121-local-https-ingress.md),
@@ -65,7 +67,7 @@ lab's projects and volumes.
 | Client → ingress | Host loopback into the lab | TLS 1.2/1.3 | Server certificate from the lab CA for both lab names; other names and IP addresses fail the handshake. No TLS client authentication |
 | Browser → API (session path) | edge/app | TLS to the ingress | Session ticket cookie checked by oauth2-proxy (`auth_request`); nginx forwards the session's access token and drops the cookie; CSRF checks on state changes |
 | Machine client → API (bearer path) | edge/app | TLS to the ingress | Client-credentials access token, passed unchanged |
-| Ingress → API | edge/app | None | Access token in `Authorization`, validated by the API (signature, algorithm, issuer, audience, expiry) |
+| Ingress → API | edge/app | None | Access token in `Authorization`, validated by the API (signature, algorithm, issuer, audience, expiry); then the route's permission from `resource_access["work-items-api"].roles` (403 without it) |
 | API, oauth2-proxy → issuer | app, through the ingress | TLS 1.2/1.3 | Lab CA certificate file |
 | Ingress → oauth2-proxy, ingress → Keycloak | app, idp | None | None |
 | oauth2-proxy → Valkey | session | None | Valkey password |
@@ -102,10 +104,14 @@ privileges to fixed names. Only the credentials differ.
 | Principal | Keycloak (`work-items` realm) |
 | --- | --- |
 | Browser gateway | `work-items-gateway`: confidential client, authorization code with PKCE S256 |
-| Machine client | `work-items-automation`: confidential client, client credentials only |
-| Lab user | `lab-user`; no administrative user exists |
+| Machine client | `work-items-automation`: confidential client, client credentials only; `items.read`, `items.process` |
+| Permission roles | `work-items-api`: no flows; client roles `items.read`, `items.create`, `items.process`, composites `editor` and `viewer` |
+| People | `lab-user` (`editor`), `lab-viewer` (`viewer`), `lab-outsider` (no Work Items role; permission names only as a realm role and a gateway-client role) |
+| Role management | `work-items-lab-admin`: service account with `realm-management` roles `view-clients` and `manage-users`, used only by `verify-realm` and `verify-authorization`; admin API reachable only from the `idp` network |
 
-Both clients add the `work-items-api` audience to their access tokens.
+The gateway and machine clients add the `work-items-api` audience to their
+access tokens. The API enforces the route permissions; the edge does not
+authorize.
 
 `tools/security-lab-local init` generates random passwords and derives the
 connection URLs and RabbitMQ definitions from them in a state directory
@@ -140,6 +146,8 @@ automated checks, or an operator-managed browser trust store.
 | `verify`, `verify-failures`, `verify-renewal` | Reachability, missing-secret, and renewal checks with optional JSON evidence |
 | `verify-authentication` | Sign-in, both API paths, token rejection, CSRF, sign-out, replay, and dependency outages; stops and restarts services |
 | `verify-log-hygiene` | Search ingress and gateway logs for the codes, state, cookies, tokens, and secrets of a sign-in, failed callbacks, and a session refresh, with positive controls |
+| `verify-realm`, `verify-authorization` | Realm readiness through the admin API; the permission matrix, claims, ordering, logs, role removal, outage, and a control against the pinned pre-authorization API |
+| `verify-admin-permissions` | Minimum role set of the role-management client, in a throwaway `*-probe` project |
 | `stop` | Stop containers, keep volumes and state |
 | `destroy` | Remove this project's containers, networks, and volumes |
 | `purge-state --yes` | Delete the marked state directory |
@@ -157,7 +165,7 @@ in the development lab. See the [Work Items architecture](work-items.md).
 
 ## Not covered
 
-- Authorization and rate limiting.
+- Per-item or ownership authorization, and rate limiting.
 - Revocation of access tokens before expiry (validation is local).
 - Encryption of internal hops.
 - Access from other containers on the same Docker engine: in the measured

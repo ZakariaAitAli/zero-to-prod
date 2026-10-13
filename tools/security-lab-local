@@ -73,9 +73,26 @@ SOURCE_SECRETS=(
   gateway-client-secret
   automation-client-secret
   lab-user-password
+  lab-viewer-password
+  lab-outsider-password
+  lab-admin-client-secret
   valkey-password
   oauth2-proxy-cookie-secret
 )
+
+# realm-management roles of the lab's role-management client
+# (work-items-lab-admin), used only by verify-realm and verify-authorization
+# to read the authorization configuration and add or remove role mappings.
+# verify-admin-permissions checks that this set suffices and that no role in
+# it can be dropped; it reduced the candidate set to these two (query-clients,
+# view-users, and query-users were not needed).
+LAB_ADMIN_ROLES=(view-clients manage-users)
+# Candidate set verify-admin-permissions reduces from.
+LAB_ADMIN_CANDIDATE_ROLES=(view-clients query-clients view-users query-users manage-users)
+
+# Pre-authorization commit (main after #134), used as the old-baseline API in
+# verify-authorization's control.
+AUTHORIZATION_BASELINE_COMMIT=0682b5275998d08c88476429ba6558ebf945417f
 
 usage() {
   cat <<EOF_USAGE
@@ -87,7 +104,11 @@ Usage:
   ./tools/security-lab-local verify-failures [--evidence <file>]
   ./tools/security-lab-local verify-authentication [--evidence <file>] [--skip-slow]
   ./tools/security-lab-local verify-log-hygiene [--evidence <file>]
+  ./tools/security-lab-local verify-realm [--evidence <file>]
+  ./tools/security-lab-local verify-authorization [--evidence <file>] [--skip-slow]
+  ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab-probe ./tools/security-lab-local verify-admin-permissions [--evidence <file>]
   ./tools/security-lab-local lab-user
+  ./tools/security-lab-local check-machine-permissions < token-response.json
   ./tools/security-lab-local status
   ./tools/security-lab-local logs [service]
   ./tools/security-lab-local issue-certificate
@@ -125,7 +146,23 @@ Commands:
                      and search the logs for
                      the codes, state, cookie, tokens, and secrets used.
                      Stops and restarts Keycloak and oauth2-proxy.
-  lab-user           Show the lab user's name and the path of its password.
+  verify-realm       Read the realm's authorization configuration through the
+                     admin API and compare it with the expected model.
+  verify-authorization
+                     Check the permission matrix on both paths, claims and
+                     401/403 ordering, logs, role removal, an identity-provider
+                     outage, and a control against the pinned
+                     pre-authorization API. Stops and restarts services and
+                     changes role mappings temporarily.
+  verify-admin-permissions
+                     In a throwaway *-probe project, find an
+                     irreducible role set for the role-management client;
+                     removes that project and its state afterwards.
+  lab-user           Show the lab users, their permissions, and password paths.
+  check-machine-permissions
+                     Read a client-credentials token response on standard
+                     input and warn about missing work-items-automation
+                     permissions (start runs this against the live client).
   status             Show lab containers.
   logs               Show lab logs.
   issue-certificate  Issue a new ingress certificate, reload the ingress, and
@@ -164,6 +201,12 @@ check_configuration() {
     zero-to-prod-security-lab | zero-to-prod-security-lab-*) ;;
     *) die "ZTP_SECURITY_LAB_PROJECT must start with zero-to-prod-security-lab: ${PROJECT}" ;;
   esac
+
+  # The lab CA's common name embeds the project, and X.509 limits a common
+  # name to 64 characters.
+  if (( ${#PROJECT} > 33 )); then
+    die "ZTP_SECURITY_LAB_PROJECT is too long for the lab CA's name (at most 33 characters): ${PROJECT}"
+  fi
 
   check_state_dir
 
@@ -533,15 +576,53 @@ proxy-headers=xforwarded
 health-enabled=true
 EOF_CONF
 
-  # One browser client (the gateway) and one machine client; no
-  # administrative client or user is defined.
+  # Clients: the gateway (browser), the automation machine client, the
+  # work-items-api client that owns the permission roles (no flows), and the
+  # lab's role-management client (see LAB_ADMIN_ROLES).
+  #
+  # Permissions are client roles of work-items-api; the API reads only
+  # resource_access["work-items-api"].roles. editor and viewer are composite
+  # roles for people. lab-outsider holds permission names only where they
+  # must grant nothing (a realm role and a gateway-client role).
+  local admin_roles
+  admin_roles="$(printf '"%s",' "${LAB_ADMIN_ROLES[@]}")"
+  admin_roles="${admin_roles%,}"
   cat <<EOF_REALM | write_file "${SECRETS_DIR}/realm-work-items.json" 644
 {
   "realm": "work-items", "enabled": true, "sslRequired": "external",
   "accessTokenLifespan": ${ACCESS_TOKEN_SECONDS},
   "ssoSessionIdleTimeout": 1800, "ssoSessionMaxLifespan": 28800,
   "bruteForceProtected": true, "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "items.create", "description": "Misplaced-claim test: a realm role named like a permission; grants nothing" }
+    ],
+    "client": {
+      "work-items-api": [
+        { "name": "items.read", "description": "List Work Items and read processing jobs" },
+        { "name": "items.create", "description": "Create Work Items" },
+        { "name": "items.process", "description": "Request processing of a Work Item" },
+        { "name": "editor", "description": "People who create and process Work Items", "composite": true,
+          "composites": { "client": { "work-items-api": ["items.read", "items.create", "items.process"] } } },
+        { "name": "viewer", "description": "People who only read Work Items", "composite": true,
+          "composites": { "client": { "work-items-api": ["items.read"] } } }
+      ],
+      "work-items-gateway": [
+        { "name": "items.create", "description": "Misplaced-claim test: another client's role named like a permission; grants nothing" }
+      ]
+    }
+  },
   "clients": [
+    { "clientId": "work-items-api", "enabled": true, "protocol": "openid-connect",
+      "publicClient": true, "standardFlowEnabled": false, "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false, "serviceAccountsEnabled": false,
+      "description": "Owns the Work Items permission roles; no flows" },
+    { "clientId": "work-items-lab-admin", "enabled": true, "protocol": "openid-connect",
+      "publicClient": false, "clientAuthenticatorType": "client-secret",
+      "secret": "$(secret lab-admin-client-secret)",
+      "standardFlowEnabled": false, "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false, "serviceAccountsEnabled": true,
+      "description": "Lab role management for verify-realm and verify-authorization; internal network only" },
     { "clientId": "work-items-gateway", "enabled": true, "protocol": "openid-connect",
       "publicClient": false, "clientAuthenticatorType": "client-secret",
       "secret": "$(secret gateway-client-secret)",
@@ -561,7 +642,23 @@ EOF_CONF
   "users": [
     { "username": "lab-user", "enabled": true, "email": "lab-user@${LAB_HOSTNAME}",
       "emailVerified": true, "firstName": "Lab", "lastName": "User",
-      "credentials": [ { "type": "password", "value": "$(secret lab-user-password)", "temporary": false } ] }
+      "credentials": [ { "type": "password", "value": "$(secret lab-user-password)", "temporary": false } ],
+      "clientRoles": { "work-items-api": ["editor"] } },
+    { "username": "lab-viewer", "enabled": true, "email": "lab-viewer@${LAB_HOSTNAME}",
+      "emailVerified": true, "firstName": "Lab", "lastName": "Viewer",
+      "credentials": [ { "type": "password", "value": "$(secret lab-viewer-password)", "temporary": false } ],
+      "clientRoles": { "work-items-api": ["viewer"] } },
+    { "username": "lab-outsider", "enabled": true, "email": "lab-outsider@${LAB_HOSTNAME}",
+      "emailVerified": true, "firstName": "Lab", "lastName": "Outsider",
+      "credentials": [ { "type": "password", "value": "$(secret lab-outsider-password)", "temporary": false } ],
+      "realmRoles": ["items.create"],
+      "clientRoles": { "work-items-gateway": ["items.create"] } },
+    { "username": "service-account-work-items-automation", "enabled": true,
+      "serviceAccountClientId": "work-items-automation",
+      "clientRoles": { "work-items-api": ["items.read", "items.process"] } },
+    { "username": "service-account-work-items-lab-admin", "enabled": true,
+      "serviceAccountClientId": "work-items-lab-admin",
+      "clientRoles": { "realm-management": [${admin_roles}] } }
   ]
 }
 EOF_REALM
@@ -771,6 +868,10 @@ start_lab() {
   compose up -d --wait --force-recreate api worker ingress
   compose up -d --wait --force-recreate oauth2-proxy
 
+  # Read-only check of the machine client's permissions; describes only what
+  # it observes and points to verify-realm for the realm itself.
+  client_credentials_response | check_machine_permissions
+
   echo
   echo "Security lab running: ${APP_URL}/"
   echo "Sign in as lab-user; show the password path with: $0 lab-user"
@@ -778,9 +879,16 @@ start_lab() {
 
 show_lab_user() {
   [[ -s "${SECRETS_DIR}/lab-user-password" ]] || die "lab user password missing; run: $0 init"
-  echo "Lab user:      lab-user"
-  echo "Password file: ${SECRETS_DIR}/lab-user-password"
-  echo "The password is not printed; read the file when signing in."
+  local user role
+  for user in lab-user lab-viewer lab-outsider; do
+    case "$user" in
+      lab-user) role="editor: read, create, process" ;;
+      lab-viewer) role="viewer: read" ;;
+      lab-outsider) role="no Work Items permission" ;;
+    esac
+    printf '%-13s %-32s password file: %s\n' "$user" "($role)" "${SECRETS_DIR}/${user}-password"
+  done
+  echo "Passwords are not printed; read the file when signing in."
 }
 
 issue_certificate_command() {
@@ -1560,6 +1668,10 @@ if kind == "tampered":
 elif kind == "none":
     header = dec(h64); header["alg"] = "none"
     print(enc(header) + "." + p64 + ".")
+elif kind == "elevate":
+    access = payload.setdefault("resource_access", {}).setdefault("work-items-api", {})
+    access["roles"] = sorted(set(access.get("roles", [])) | {"items.create"})
+    print(h64 + "." + enc(payload) + "." + s64)
 ' "$1"
 }
 
@@ -1572,13 +1684,76 @@ curl_config() {
   printf '%s = "%s"\n' "$1" "$value"
 }
 
-client_credentials() {
-  local field="${1:-access_token}" scope="${2:-}"
+# The machine client's token endpoint response (JSON), or nothing on failure.
+client_credentials_response() {
+  local scope="${1:-}"
   local args=(-d grant_type=client_credentials)
   [[ -n "$scope" ]] && args+=(-d "scope=${scope}")
-  { curl_config user "work-items-automation:$(secret automation-client-secret)" \
-      | lab_curl -K - "${args[@]}" "${ISSUER}/protocol/openid-connect/token" 2>/dev/null || true; } \
-    | json_field "$field"
+  curl_config user "work-items-automation:$(secret automation-client-secret)" \
+    | lab_curl -K - "${args[@]}" "${ISSUER}/protocol/openid-connect/token" 2>/dev/null || true
+}
+
+client_credentials() {
+  local field="${1:-access_token}" scope="${2:-}"
+  client_credentials_response "$scope" | json_field "$field"
+}
+
+# Permissions the work-items-automation client is configured to hold.
+MACHINE_EXPECTED_PERMISSIONS=(items.read items.process)
+
+# Reads a client-credentials token response on standard input and warns
+# when the access token lacks the machine client's expected permissions.
+# It reports only what the token shows: a missing permission can come from
+# realm configuration, a changed role mapping, or a failed token request,
+# so it recommends verify-realm rather than concluding a cause. Prints
+# nothing when every expected permission is present.
+check_machine_permissions() {
+  local missing
+  missing="$(python3 -I -c '
+import base64, json, sys
+expected = sys.argv[1:]
+try:
+    token = json.loads(sys.stdin.read() or "{}").get("access_token", "")
+    payload = token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+except Exception:
+    print("unreadable"); sys.exit(0)
+# Same rules as the API (internal/authz): only
+# resource_access["work-items-api"].roles counts, and any malformed shape,
+# including a single non-string entry, grants no permissions at all.
+roles, malformed = [], False
+access = claims.get("resource_access")
+if access is not None:
+    if not isinstance(access, dict):
+        malformed = True
+    elif "work-items-api" in access:
+        entry = access["work-items-api"]
+        if not isinstance(entry, dict):
+            malformed = True
+        elif "roles" in entry:
+            listed = entry["roles"]
+            if not isinstance(listed, list) or any(not isinstance(r, str) for r in listed):
+                malformed = True
+            else:
+                roles = listed
+missing = " ".join(p for p in expected if p not in roles)
+print(("malformed " + missing) if malformed else missing)
+' "${MACHINE_EXPECTED_PERMISSIONS[@]}")"
+  [[ -z "$missing" ]] && return 0
+  echo >&2
+  if [[ "$missing" == unreadable ]]; then
+    echo "warning: no readable work-items-automation access token was obtained, so its" >&2
+    echo "         permissions could not be checked." >&2
+  else
+    if [[ "$missing" == malformed* ]]; then
+      missing="${missing#malformed }"
+      echo "warning: the work-items-automation access token's work-items-api role data is" >&2
+      echo "         malformed, so it grants no permissions." >&2
+    fi
+    echo "warning: the work-items-automation access token lacks: ${missing// /, }." >&2
+    echo "         Its requests that need these permissions will be refused (403)." >&2
+  fi
+  echo "         To inspect the realm's authorization configuration, run: $0 verify-realm" >&2
 }
 
 # Config line carrying a bearer token, for: bearer_header "$token" | <curl wrapper> -K - ...
@@ -1594,7 +1769,9 @@ bearer_status() {
 # Scripted browser sign-in: follow the gateway to Keycloak's login form and
 # submit it. Prints the final page.
 browser_login() {
-  local jar="$1" page action
+  # $2: lab-user (default), lab-viewer, or lab-outsider; the password is in
+  # the matching <user>-password secret file.
+  local jar="$1" user="${2:-lab-user}" page action
   page="$(lab_curl -L -c "$jar" -b "$jar" "${APP_URL}/oauth2/start?rd=%2F" 2>/dev/null || true)"
   action="$(grep -o 'id="kc-form-login"[^>]*action="[^"]*"' <<< "$page" | sed 's/.*action="//; s/"$//; s/&amp;/\&/g' || true)"
   if [[ -z "$action" ]]; then
@@ -1603,9 +1780,9 @@ browser_login() {
   fi
   # The login action URL carries Keycloak's session code; it goes in the
   # config with the password.
-  { curl_config url "$action"; curl_config data-urlencode "password=$(secret lab-user-password)"; } \
+  { curl_config url "$action"; curl_config data-urlencode "password=$(secret "${user}-password")"; } \
     | lab_curl -K - -L -c "$jar" -b "$jar" \
-        --data-urlencode "username=lab-user" --data "credentialId=" 2>/dev/null || true
+        --data-urlencode "username=${user}" --data "credentialId=" 2>/dev/null || true
 }
 
 # Whether starting a new sign-in with this browser's cookies shows Keycloak's
@@ -1792,9 +1969,17 @@ verify_authentication() {
   expect "$area" "client-credentials token issued" "yes" "$([[ -n "$machine_token" ]] && echo yes || echo no)"
   record "$area" "token summary" "observe" "$(token_claims alg,iss,aud,azp,typ,lifetime <<< "$machine_token")" info
   expect "$area" "GET /api/items with bearer token" "200" "$(bearer_status "$machine_token" "${APP_URL}/api/items")"
-  auth_work_items "$area" bearer "$machine_token"
-  expect "$area" "state change without CSRF header (no ambient credential)" "201" \
-    "$(bearer_status "$machine_token" -H 'Content-Type: application/json' -d '{"title":"no csrf header"}' "${APP_URL}/api/items")"
+  # The automation client may read and process but not create (ADR 0005);
+  # the editor creates its fixtures through a browser session.
+  local editor_jar="${AUTH_WORK}/editor" fixture fixture_without_header
+  browser_login "$editor_jar" lab-user >/dev/null
+  fixture="$(editor_create "$editor_jar" "machine client fixture")"
+  fixture_without_header="$(editor_create "$editor_jar" "machine client fixture, no CSRF header")"
+  machine_work_items "$area" "$machine_token" "$fixture"
+  expect "$area" "state change without CSRF header (no ambient credential)" "202" \
+    "$(bearer_status "$machine_token" -X POST "${APP_URL}/api/items/${fixture_without_header}/process")"
+  expect "$area" "create is not permitted (authorization, not CSRF)" "403 insufficient_permissions" \
+    "$(call_summary bearer "$machine_token" POST /items '{"title":"machine create"}')"
 
   # --- Token validation through the ingress ---------------------------------
   area="token validation"
@@ -2247,7 +2432,8 @@ verify_log_hygiene() {
 
   # Long-lived secrets the gateway and identity provider hold.
   local name
-  for name in gateway-client-secret automation-client-secret oauth2-proxy-cookie-secret valkey-password lab-user-password; do
+  for name in gateway-client-secret automation-client-secret oauth2-proxy-cookie-secret valkey-password \
+              lab-user-password lab-viewer-password lab-outsider-password lab-admin-client-secret; do
     add_value "$values" secret "$(secret "$name")"
   done
 
@@ -2255,7 +2441,7 @@ verify_log_hygiene() {
   local kinds value_count
   kinds="$(awk -F'\t' '$2 != "" && $1 !~ /\+encoded$/ {n[$1]++} END {for (k in n) printf "%s=%d ", k, n[k]}' "$values" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
   expect "$area" "values collected per kind" \
-    "code=3 machine-access-token=1 secret=5 session-access-token=1 session-cookie=2 state=4" "$kinds"
+    "code=3 machine-access-token=1 secret=8 session-access-token=1 session-cookie=2 state=4" "$kinds"
   record "$area" "percent-encoded forms also searched" "observe" \
     "$(awk -F'\t' '$1 ~ /\+encoded$/' "$values" | wc -l)" info
   value_count="$(awk -F'\t' '$2 != ""' "$values" | wc -l)"
@@ -2319,6 +2505,771 @@ verify_log_hygiene() {
   echo "Log hygiene verification passed (${#RESULTS[@]} checks)."
 }
 
+# ---------------------------------------------------------------------------
+# Authorization verification
+# ---------------------------------------------------------------------------
+
+# "<status> <body>" for a Work Items request. kind: session (a cookie jar;
+# state-changing requests carry the UI's CSRF headers) or bearer (a token,
+# passed on standard input).
+api_call() {
+  local kind="$1" credential="$2" method="$3" path="$4" body="${5:-}"
+  local args=(-X "$method")
+  [[ -n "$body" ]] && args+=(-H "Content-Type: application/json" -d "$body")
+  if [[ "$kind" == session ]]; then
+    [[ "$method" != GET ]] && args+=("${ui_headers[@]}")
+    http_status_body -b "$credential" "${args[@]}" "${APP_URL}/api${path}"
+  else
+    bearer_header "$credential" | http_status_body -K - "${args[@]}" "${APP_URL}/api${path}"
+  fi
+}
+
+# "<status>" or "<status> <error code>" for a Work Items request.
+call_summary() {
+  local out status error
+  out="$(api_call "$@")"
+  status="${out%% *}"
+  error="$(json_field error <<< "${out#* }")"
+  if [[ -n "$error" ]]; then echo "$status $error"; else echo "$status"; fi
+}
+
+# Fixtures are created by the editor (lab-user) through its browser session.
+editor_create() {
+  local out
+  out="$(api_call session "$1" POST /items "{\"title\":\"$2\"}")"
+  [[ "${out%% *}" == 201 ]] || die "editor could not create a fixture: ${out%% *}"
+  json_field id <<< "${out#* }"
+}
+
+# Prints the processing job id after a 202.
+start_processing() {
+  local out
+  out="$(api_call "$@")"
+  [[ "${out%% *}" == 202 ]] && json_field id <<< "${out#* }"
+}
+
+wait_job_state() {
+  local kind="$1" credential="$2" job="$3" state="" out _
+  for _ in $(seq 1 40); do
+    out="$(api_call "$kind" "$credential" GET "/processing-jobs/${job}")"
+    state="$(json_field state <<< "${out#* }")"
+    [[ -n "$state" && "$state" != accepted ]] && break
+    sleep 0.5
+  done
+  echo "$state"
+}
+
+# Status of one item, or the number of items, from the editor's list.
+items_query() {
+  local out
+  out="$(api_call session "$1" GET /items)"
+  python3 -I -c '
+import json, sys
+items = json.loads(sys.stdin.read() or "[]")
+if sys.argv[1] == "count":
+    print(len(items))
+else:
+    print(next((i["status"] for i in items if str(i["id"]) == sys.argv[1]), "missing"))
+' "$2" <<< "${out#* }"
+}
+
+# The machine client processes an editor-created item: 202, poll until
+# succeeded, then 409 when processed again.
+machine_work_items() {
+  local area="$1" token="$2" item="$3" job
+  job="$(start_processing bearer "$token" POST "/items/${item}/process")"
+  expect "$area" "POST /api/items/{id}/process accepts a job" "yes" "$([[ -n "$job" ]] && echo yes || echo no)"
+  expect "$area" "polled processing job reaches succeeded" "succeeded" "$(wait_job_state bearer "$token" "$job")"
+  expect "$area" "processing a done Work Item again" "409 work_item_already_done" \
+    "$(call_summary bearer "$token" POST "/items/${item}/process")"
+}
+
+# One claim of a JWT read from standard input (claims only, never the token).
+json_query_token() {
+  python3 -I -c '
+import base64, json, sys
+parts = sys.stdin.read().strip().split(".")
+try:
+    c = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    print(c.get(sys.argv[1], ""))
+except Exception:
+    print("")
+' "$1"
+}
+
+# Work Items roles in a token (claims only, no token material): the API's
+# own roles, realm roles, and other clients' roles.
+token_roles() {
+  python3 -I -c '
+import base64, json, sys
+parts = sys.stdin.read().strip().split(".")
+if len(parts) != 3:
+    print("not-a-jwt"); sys.exit(0)
+c = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+api = sorted(c.get("resource_access", {}).get("work-items-api", {}).get("roles", []))
+realm = sorted(r for r in c.get("realm_access", {}).get("roles", []) if r.startswith("items."))
+other = sorted(f"{k}:{r}" for k, v in c.get("resource_access", {}).items() if k != "work-items-api"
+               for r in v.get("roles", []) if r.startswith("items."))
+print("api=" + ",".join(api) + " realm=" + ",".join(realm) + " other=" + ",".join(other))
+'
+}
+
+# A Keycloak admin REST request as the role-management client, from a probe
+# on the internal idp network (the ingress does not route /admin). The
+# client secret reaches the probe on standard input. Prints "<status>\t<body>".
+admin_request() {
+  local method="$1" path="$2" body="${3:-}"
+  { secret lab-admin-client-secret; printf '\n'; } \
+    | docker run --rm -i --network "${PROJECT}_idp" --entrypoint sh "$PROBE_IMAGE" -c '
+        IFS= read -r secret
+        kc=http://keycloak:8080
+        token=$(printf "user = \"work-items-lab-admin:%s\"\n" "$secret" \
+          | curl -sS -K - -d grant_type=client_credentials "$kc/realms/work-items/protocol/openid-connect/token" \
+          | sed -n "s/.*\"access_token\":\"\([^\"]*\)\".*/\1/p")
+        if [ -z "$token" ]; then printf "token-failed\t\n"; exit 0; fi
+        if [ -n "$3" ]; then
+          status=$(printf "header = \"Authorization: Bearer %s\"\n" "$token" | curl -sS -K - -X "$1" \
+            -H "Content-Type: application/json" --data "$3" -o /tmp/body -w "%{http_code}" "$kc/admin/realms/work-items$2")
+        else
+          status=$(printf "header = \"Authorization: Bearer %s\"\n" "$token" | curl -sS -K - -X "$1" \
+            -o /tmp/body -w "%{http_code}" "$kc/admin/realms/work-items$2")
+        fi
+        printf "%s\t%s\n" "$status" "$(tr -d "\n" < /tmp/body 2>/dev/null)"
+      ' admin "$method" "$path" "$body" 2>/dev/null || printf 'probe-failed\t\n'
+}
+
+# Evaluates a Python expression over JSON read from standard input ("d"),
+# printing an empty line if it does not apply.
+json_query() {
+  python3 -I -c '
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    v = eval(sys.argv[1], {"__builtins__": {"sorted": sorted, "len": len}}, {"d": d})
+    print(v if v is not None else "")
+except Exception:
+    print("")
+' "$1"
+}
+
+admin_status() { cut -f1 <<< "$1"; }
+admin_body() { cut -f2- <<< "$1"; }
+
+admin_client_id() {
+  json_query 'd[0]["id"]' <<< "$(admin_body "$(admin_request GET "/clients?clientId=$1")")"
+}
+
+admin_user_id() {
+  json_query 'd[0]["id"]' <<< "$(admin_body "$(admin_request GET "/users?username=$1&exact=true")")"
+}
+
+admin_service_account_id() {
+  local client
+  client="$(admin_client_id "$1")"
+  [[ -n "$client" ]] || { echo ""; return 0; }
+  json_query 'd["id"]' <<< "$(admin_body "$(admin_request GET "/clients/${client}/service-account-user")")"
+}
+
+# Sorted, comma-separated role names from a list of role representations.
+role_names() {
+  json_query '",".join(sorted(r["name"] for r in d))'
+}
+
+# Adds (POST) or removes (DELETE) one client role mapping; prints the status.
+admin_role_mapping() {
+  local method="$1" user="$2" client="$3" role="$4" representation
+  representation="$(admin_body "$(admin_request GET "/clients/${client}/roles/${role}")")"
+  admin_status "$(admin_request "$method" "/users/${user}/role-mappings/clients/${client}" "[${representation}]")"
+}
+
+# Realm readiness: compares the realm's actual authorization configuration
+# with the expected model, through the admin API. One principal's token is
+# not taken as proof.
+verify_realm_checks() {
+  local area="realm readiness" api user id expected client_id
+  api="$(admin_client_id work-items-api)"
+  expect "$area" "client work-items-api exists" "yes" "$([[ -n "$api" ]] && echo yes || echo no)"
+  [[ -n "$api" ]] || return 0
+  expect "$area" "work-items-api roles" "editor,items.create,items.process,items.read,viewer" \
+    "$(role_names <<< "$(admin_body "$(admin_request GET "/clients/${api}/roles")")")"
+  expect "$area" "editor composite" "items.create,items.process,items.read" \
+    "$(role_names <<< "$(admin_body "$(admin_request GET "/clients/${api}/roles/editor/composites")")")"
+  expect "$area" "viewer composite" "items.read" \
+    "$(role_names <<< "$(admin_body "$(admin_request GET "/clients/${api}/roles/viewer/composites")")")"
+
+  for user in lab-user lab-viewer lab-outsider; do
+    case "$user" in
+      lab-user) expected="editor,items.create,items.process,items.read" ;;
+      lab-viewer) expected="items.read,viewer" ;;
+      lab-outsider) expected="" ;;
+    esac
+    id="$(admin_user_id "$user")"
+    expect "$area" "${user}: effective work-items-api roles" "${expected:-none}" \
+      "$(names="$(role_names <<< "$(admin_body "$(admin_request GET "/users/${id}/role-mappings/clients/${api}/composite")")")"; echo "${names:-none}")"
+  done
+
+  id="$(admin_service_account_id work-items-automation)"
+  expect "$area" "work-items-automation: effective work-items-api roles" "items.process,items.read" \
+    "$(role_names <<< "$(admin_body "$(admin_request GET "/users/${id}/role-mappings/clients/${api}/composite")")")"
+
+  # The misplaced-claim setup: permission names where they must grant nothing.
+  id="$(admin_user_id lab-outsider)"
+  expect "$area" "lab-outsider: realm role named items.create" "yes" \
+    "$(role_names <<< "$(admin_body "$(admin_request GET "/users/${id}/role-mappings/realm")")" | tr ',' '\n' | grep -qx items.create && echo yes || echo no)"
+  client_id="$(admin_client_id work-items-gateway)"
+  expect "$area" "lab-outsider: work-items-gateway role named items.create" "items.create" \
+    "$(role_names <<< "$(admin_body "$(admin_request GET "/users/${id}/role-mappings/clients/${client_id}")")")"
+
+  client_id="$(admin_client_id realm-management)"
+  id="$(admin_service_account_id work-items-lab-admin)"
+  expect "$area" "work-items-lab-admin: realm-management roles" \
+    "$(printf '%s\n' "${LAB_ADMIN_ROLES[@]}" | sort | paste -sd, -)" \
+    "$(role_names <<< "$(admin_body "$(admin_request GET "/users/${id}/role-mappings/clients/${client_id}")")")"
+}
+
+write_auth_evidence() {
+  local file="$1" started="$2" description="$3"
+  {
+    printf '{\n  "project": "%s",\n  "started_at": "%s",\n  "recorded_at": "%s",\n' \
+      "$PROJECT" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '  "description": %s,\n  "results": [\n' "$(json_string "$description")"
+    local index
+    for index in "${!RESULTS[@]}"; do
+      printf '    %s' "${RESULTS[$index]}"
+      [[ "$index" -lt $(( ${#RESULTS[@]} - 1 )) ]] && printf ','
+      printf '\n'
+    done
+    printf '  ]\n}\n'
+  } > "$file"
+  echo "Evidence written: ${file}"
+}
+
+finish_checks() {
+  echo
+  if [[ "$FAILED" -ne 0 ]]; then
+    echo "$1 failed: ${FAILED} check(s)." >&2
+    return 1
+  fi
+  echo "$1 passed (${#RESULTS[@]} checks)."
+}
+
+verify_realm() {
+  local evidence_file="" started
+  [[ "${1:-}" == "--evidence" ]] && evidence_file="${2:?--evidence requires a file}"
+  [[ -n "$(compose ps -q --status running keycloak 2>/dev/null)" ]] || die "Keycloak is not running; run: $0 start"
+  RESULTS=(); FAILED=0
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  verify_realm_checks
+  [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
+    "Realm readiness: the work-items realm's authorization configuration read through the admin API by the role-management client."
+  finish_checks "Realm readiness verification"
+}
+
+# --- Role-management client: minimum permissions ----------------------------
+
+# The operations verify-realm and verify-authorization perform, in order.
+# Prints "<operation> <status>"; an operation whose input is missing is
+# "skipped".
+admin_permission_operations() {
+  local out="" api="" user="" machine="" service_account="" representation="" status=""
+  out="$(admin_request GET '/clients?clientId=work-items-api')"
+  api="$(json_query 'd[0]["id"]' <<< "$(admin_body "$out")")"
+  echo "client-lookup $(admin_status "$out")"
+  if [[ -n "$api" ]]; then
+    echo "client-roles $(admin_status "$(admin_request GET "/clients/${api}/roles")")"
+    echo "composite-roles $(admin_status "$(admin_request GET "/clients/${api}/roles/editor/composites")")"
+    out="$(admin_request GET "/clients/${api}/roles/items.read")"
+    representation="$(admin_body "$out")"
+    echo "role-lookup $(admin_status "$out")"
+  else
+    echo "client-roles skipped"; echo "composite-roles skipped"; echo "role-lookup skipped"
+  fi
+
+  out="$(admin_request GET '/users?username=lab-user&exact=true')"
+  user="$(json_query 'd[0]["id"]' <<< "$(admin_body "$out")")"
+  echo "user-lookup $(admin_status "$out")"
+  if [[ -n "$user" && -n "$api" ]]; then
+    echo "user-effective-roles $(admin_status "$(admin_request GET "/users/${user}/role-mappings/clients/${api}/composite")")"
+  else
+    echo "user-effective-roles skipped"
+  fi
+
+  out="$(admin_request GET '/clients?clientId=work-items-automation')"
+  machine="$(json_query 'd[0]["id"]' <<< "$(admin_body "$out")")"
+  echo "machine-client-lookup $(admin_status "$out")"
+  if [[ -n "$machine" ]]; then
+    out="$(admin_request GET "/clients/${machine}/service-account-user")"
+    service_account="$(json_query 'd["id"]' <<< "$(admin_body "$out")")"
+    echo "service-account-lookup $(admin_status "$out")"
+  else
+    echo "service-account-lookup skipped"
+  fi
+
+  if [[ -n "$service_account" && -n "$api" && "$representation" == \{* ]]; then
+    status="$(admin_status "$(admin_request DELETE "/users/${service_account}/role-mappings/clients/${api}" "[${representation}]")")"
+    echo "remove-role-mapping $status"
+    echo "add-role-mapping $(admin_status "$(admin_request POST "/users/${service_account}/role-mappings/clients/${api}" "[${representation}]")")"
+  else
+    echo "remove-role-mapping skipped"; echo "add-role-mapping skipped"
+  fi
+}
+
+admin_operations_pass() {
+  awk '
+    $1 ~ /^(remove|add)-role-mapping$/ { if ($2 != "204") bad = 1; next }
+    { if ($2 != "200") bad = 1 }
+    END { exit bad }' <<< "$1"
+}
+
+# Fresh identity database with the given realm-management roles for the
+# role-management client; then the operations.
+admin_probe_run() {
+  python3 -I - "${SECRETS_DIR}/realm-work-items.json" "$@" <<'PY'
+import json, sys
+path, roles = sys.argv[1], sys.argv[2:]
+realm = json.load(open(path))
+for user in realm["users"]:
+    if user.get("serviceAccountClientId") == "work-items-lab-admin":
+        user["clientRoles"] = {"realm-management": roles}
+open(path, "w").write(json.dumps(realm, indent=1))
+PY
+  compose rm -sfv keycloak keycloak-postgres >/dev/null 2>&1 || true
+  docker volume rm -f "${PROJECT}_identity_postgres_data" >/dev/null 2>&1 || true
+  compose up -d --wait keycloak-postgres keycloak >/dev/null 2>&1 || die "Keycloak did not start in ${PROJECT}"
+  admin_permission_operations
+}
+
+# Determines an irreducible realm-management role set for the role-management
+# client in a throwaway project: starts from the candidate set, drops each
+# role whose removal keeps every operation working, then confirms that
+# dropping any remaining role breaks an operation. Removes the throwaway
+# project and its state afterwards.
+verify_admin_permissions() {
+  local evidence_file=""
+  [[ "${1:-}" == "--evidence" ]] && evidence_file="${2:?--evidence requires a file}"
+  case "$PROJECT" in
+    *-probe) ;;
+    *) die "verify-admin-permissions recreates Keycloak's database; run it with ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab-probe" ;;
+  esac
+
+  RESULTS=(); FAILED=0
+  local started runs=() current=("${LAB_ADMIN_CANDIDATE_ROLES[@]}") trial role ops
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  init_state >/dev/null
+  trap 'compose --profile tools down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
+
+  run_set() {
+    local label="$1"; shift
+    ops="$(admin_probe_run "$@")"
+    runs+=("{\"label\":$(json_string "$label"),\"roles\":[$(printf '"%s",' "$@" | sed 's/,$//')],\"operations\":{$(awk '{printf "%s\"%s\":\"%s\"", (n++ ? "," : ""), $1, $2}' <<< "$ops")},\"all_pass\":$(admin_operations_pass "$ops" && echo true || echo false)}")
+    printf '  %-34s %s\n' "$label" "$(tr '\n' ' ' <<< "$ops")"
+    admin_operations_pass "$ops"
+  }
+
+  echo "Candidate set: ${current[*]}"
+  run_set "candidate set" "${current[@]}" || die "the candidate set does not cover the operations"
+  for role in "${LAB_ADMIN_CANDIDATE_ROLES[@]}"; do
+    trial=()
+    for r in "${current[@]}"; do [[ "$r" != "$role" ]] && trial+=("$r"); done
+    if run_set "without ${role}" "${trial[@]}"; then
+      current=("${trial[@]}")
+    fi
+  done
+  run_set "final set" "${current[@]}" >/dev/null
+  expect "minimum permissions" "final set covers every operation" "yes" \
+    "$(admin_operations_pass "$ops" && echo yes || echo no)"
+  local breaks
+  for role in "${current[@]}"; do
+    trial=()
+    for r in "${current[@]}"; do [[ "$r" != "$role" ]] && trial+=("$r"); done
+    # Not in a command substitution: run_set records each run.
+    if run_set "final set without ${role}" "${trial[@]}" >/dev/null; then breaks=no; else breaks=yes; fi
+    expect "minimum permissions" "dropping ${role} from the final set breaks an operation" "yes" "$breaks"
+  done
+  expect "minimum permissions" "configured LAB_ADMIN_ROLES equal the final set" \
+    "$(printf '%s\n' "${current[@]}" | sort | paste -sd, -)" \
+    "$(printf '%s\n' "${LAB_ADMIN_ROLES[@]}" | sort | paste -sd, -)"
+
+  compose --profile tools down -v --remove-orphans >/dev/null 2>&1 || true
+  trap - EXIT
+  require_owned_state
+  rm -rf --one-file-system -- "$STATE_DIR"
+  echo "Removed the throwaway project ${PROJECT} and its state."
+
+  if [[ -n "$evidence_file" ]]; then
+    {
+      printf '{\n  "project": "%s",\n  "started_at": "%s",\n  "recorded_at": "%s",\n' \
+        "$PROJECT" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf '  "method": "Each run imports the realm into a fresh identity database with the given realm-management roles for work-items-lab-admin, then performs the admin operations verify-realm and verify-authorization need (statuses: 200 for reads, 204 for role-mapping changes). Roles are dropped greedily from the candidate set when every operation still passes; each remaining role is then dropped alone to confirm it is needed.",\n'
+      printf '  "runs": [\n    %s\n  ],\n' "$(IFS=$'\n'; printf '%s' "${runs[*]}" | sed ':a;N;$!ba;s/\n/,\n    /g')"
+      printf '  "results": [\n'
+      local index
+      for index in "${!RESULTS[@]}"; do
+        printf '    %s' "${RESULTS[$index]}"
+        [[ "$index" -lt $(( ${#RESULTS[@]} - 1 )) ]] && printf ','
+        printf '\n'
+      done
+      printf '  ]\n}\n'
+    } > "$evidence_file"
+    echo "Evidence written: ${evidence_file}"
+  fi
+  finish_checks "Role-management permission verification"
+}
+
+# --- The authorization matrix -------------------------------------------------
+
+# One run of the reviewed matrix. mode new: the current API (denied rows
+# expect 403 and no side effect). mode baseline: the pinned pre-authorization
+# API (the same rows must succeed, showing the checks detect missing
+# authorization). Every row uses a fixture that makes the old API succeed.
+authorization_rows() {
+  local mode="$1" area="authorization matrix (${1} API)"
+  local editor="$2" viewer="$3" outsider="$4" machine="$5"
+  local p1 p2 p3 p4 q job before after
+  p1="$(editor_create "$editor" "${mode} P1")"
+  p2="$(editor_create "$editor" "${mode} P2")"
+  p3="$(editor_create "$editor" "${mode} P3")"
+  p4="$(editor_create "$editor" "${mode} P4")"
+  q="$(editor_create "$editor" "${mode} Q")"
+  job="$(start_processing session "$editor" POST "/items/${q}/process")"
+  [[ "$(wait_job_state session "$editor" "$job")" == succeeded ]] || die "fixture job did not succeed"
+
+  deny() {
+    # $1 label, $2 baseline status, rest: api_call arguments
+    local label="$1" baseline="$2"; shift 2
+    if [[ "$mode" == new ]]; then
+      expect "$area" "denied: ${label}" "403 insufficient_permissions" "$(call_summary "$@")"
+    else
+      expect "$area" "control: ${label} succeeds without authorization" "$baseline" "$(call_summary "$@")"
+    fi
+  }
+
+  before="$(items_query "$editor" count)"
+  deny "lab-viewer POST /items" 201 session "$viewer" POST /items '{"title":"viewer create"}'
+  after="$(items_query "$editor" count)"
+  [[ "$mode" == new ]] && expect "$area" "denied create left the item count unchanged" "$before" "$after"
+
+  deny "lab-viewer POST /items/{pending}/process" 202 session "$viewer" POST "/items/${p1}/process"
+  deny "lab-outsider GET /items" 200 session "$outsider" GET /items
+  deny "lab-outsider GET /processing-jobs/{existing}" 200 session "$outsider" GET "/processing-jobs/${job}"
+  deny "lab-outsider POST /items/{pending}/process" 202 session "$outsider" POST "/items/${p2}/process"
+
+  before="$(items_query "$editor" count)"
+  deny "work-items-automation POST /items" 201 bearer "$machine" POST /items '{"title":"machine create"}'
+  after="$(items_query "$editor" count)"
+  [[ "$mode" == new ]] && expect "$area" "denied machine create left the item count unchanged" "$before" "$after"
+
+  if [[ "$mode" == new ]]; then
+    sleep 5
+    expect "$area" "denied process left P1 pending (no job ran)" "pending" "$(items_query "$editor" "$p1")"
+    expect "$area" "denied process left P2 pending (no job ran)" "pending" "$(items_query "$editor" "$p2")"
+  fi
+
+  # Allowed rows: the same outcome on both APIs.
+  expect "$area" "allowed: lab-user POST /items" "201" "$(call_summary session "$editor" POST /items '{"title":"editor create"}')"
+  local editor_job machine_job
+  editor_job="$(start_processing session "$editor" POST "/items/${p3}/process")"
+  expect "$area" "allowed: lab-user processes and polls" "succeeded" "$(wait_job_state session "$editor" "$editor_job")"
+  expect "$area" "allowed: lab-viewer GET /items" "200" "$(call_summary session "$viewer" GET /items)"
+  expect "$area" "allowed: lab-viewer GET /processing-jobs/{existing}" "200" "$(call_summary session "$viewer" GET "/processing-jobs/${job}")"
+  machine_job="$(start_processing bearer "$machine" POST "/items/${p4}/process")"
+  expect "$area" "allowed: work-items-automation processes and polls" "succeeded" "$(wait_job_state bearer "$machine" "$machine_job")"
+  expect "$area" "allowed: work-items-automation GET /processing-jobs/{existing}" "200" "$(call_summary bearer "$machine" GET "/processing-jobs/${job}")"
+}
+
+# The API image built from the pinned pre-authorization commit.
+build_baseline_api_image() {
+  local short="${AUTHORIZATION_BASELINE_COMMIT:0:7}" source image="zero-to-prod-security-lab-api:authz-baseline-${AUTHORIZATION_BASELINE_COMMIT:0:7}"
+  source="$(mktemp -d)"
+  git -C "$ROOT_DIR" archive "$AUTHORIZATION_BASELINE_COMMIT" apps/work-items | tar -x -C "$source" \
+    || die "cannot read the baseline commit ${AUTHORIZATION_BASELINE_COMMIT}"
+  docker build -q -f "${source}/apps/work-items/api/Dockerfile" --build-arg "VERSION=baseline-${short}" \
+    -t "$image" "${source}/apps/work-items" >/dev/null || die "baseline image build failed"
+  rm -rf -- "$source"
+  echo "$image"
+}
+
+api_version() {
+  compose exec -T ingress wget -q -O - http://api:8080/version 2>/dev/null | json_field version
+}
+
+verify_authorization() {
+  local evidence_file="" skip_slow=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --evidence) evidence_file="${2:?--evidence requires a file}"; shift 2 ;;
+      --skip-slow) skip_slow=true; shift ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  require_command python3
+  [[ -n "$(compose ps -q --status running oauth2-proxy 2>/dev/null)" ]] || die "the lab is not running; run: $0 start"
+
+  RESULTS=(); FAILED=0
+  AUTH_WORK="$(mktemp -d)"
+  trap 'rm -rf -- "$AUTH_WORK"' EXIT
+  set_ui_headers
+  local started area
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  wait_for_issuer || die "the issuer is not reachable: ${ISSUER}"
+
+  verify_realm_checks
+  [[ "$FAILED" -eq 0 ]] || die "the realm does not match the authorization model; see the failures above"
+
+  local editor="${AUTH_WORK}/editor" viewer="${AUTH_WORK}/viewer" outsider="${AUTH_WORK}/outsider" machine
+  browser_login "$editor" lab-user >/dev/null
+  browser_login "$viewer" lab-viewer >/dev/null
+  browser_login "$outsider" lab-outsider >/dev/null
+  machine="$(client_credentials access_token)"
+
+  area="principals"
+  record "$area" "lab-user token roles" "observe" "$(session_access_token "$editor" | token_roles)" info
+  record "$area" "lab-viewer token roles" "observe" "$(session_access_token "$viewer" | token_roles)" info
+  record "$area" "lab-outsider token roles (misplaced only)" "observe" "$(session_access_token "$outsider" | token_roles)" info
+  record "$area" "work-items-automation token roles" "observe" "$(token_roles <<< "$machine")" info
+
+  authorization_rows new "$editor" "$viewer" "$outsider" "$machine"
+
+  # --- Claims, ordering, and business errors ---------------------------------
+  area="claims and ordering"
+  local since done_item
+  expect "$area" "misplaced permission names only (realm role, gateway role)" "403 insufficient_permissions" \
+    "$(call_summary session "$outsider" POST /items '{"title":"outsider create"}')"
+  expect "$area" "issuer-signed ID token for another audience" "401" \
+    "$(bearer_status "$(client_credentials id_token openid)" "${APP_URL}/api/items")"
+  expect "$area" "viewer token with items.create added under its signature" "401" \
+    "$(bearer_status "$(session_access_token "$viewer" | token_variant elevate)" -X POST -H 'Content-Type: application/json' -d '{"title":"x"}' "${APP_URL}/api/items")"
+  done_item="$(editor_create "$editor" "done item")"
+  wait_job_state session "$editor" "$(start_processing session "$editor" POST "/items/${done_item}/process")" >/dev/null
+  expect "$area" "control: editor processing the done item" "409 work_item_already_done" \
+    "$(call_summary session "$editor" POST "/items/${done_item}/process")"
+  expect "$area" "viewer processing the done item: 403 before 409" "403 insufficient_permissions" \
+    "$(call_summary session "$viewer" POST "/items/${done_item}/process")"
+  expect "$area" "control: editor processing an unknown item" "404 work_item_not_found" \
+    "$(call_summary session "$editor" POST /items/999999999/process)"
+  expect "$area" "viewer processing an unknown item: 403 before 404" "403 insufficient_permissions" \
+    "$(call_summary session "$viewer" POST /items/999999999/process)"
+  expect "$area" "outsider reading an unknown job: 403 before 404" "403 insufficient_permissions" \
+    "$(call_summary session "$outsider" GET /processing-jobs/999999999)"
+
+  # --- Logs: authorization decisions versus ingress CSRF rejections ----------
+  area="logs"
+  local headers rid before_lines after_lines
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  sleep 1
+  before_lines="$(compose logs --no-color --since "$since" api 2>/dev/null | grep -c 'authorization denied' || true)"
+  headers="$(lab_curl -o /dev/null -D - -b "$viewer" "${ui_headers[@]}" -H 'Content-Type: application/json' \
+    -d '{"title":"logged denial"}' "${APP_URL}/api/items" 2>/dev/null | tr -d '\r')"
+  rid="$(awk 'tolower($1)=="x-request-id:"{print $2}' <<< "$headers")"
+  sleep 1
+  after_lines="$(compose logs --no-color --since "$since" api 2>/dev/null | grep -c 'authorization denied' || true)"
+  expect "$area" "authorization denial: one API decision line" "1" "$(( after_lines - before_lines ))"
+  expect "$area" "authorization denial: ingress shows the API's 403 (upstream=403)" "yes" \
+    "$(compose logs --no-color --since "$since" ingress 2>/dev/null | grep -F "rid=${rid}" | grep -q '" 403 .*upstream=403' && echo yes || echo no)"
+  before_lines="$after_lines"
+  headers="$(lab_curl -o /dev/null -D - -b "$editor" -H "Origin: ${APP_URL}" -H 'Sec-Fetch-Site: same-origin' \
+    -H 'Content-Type: application/json' -d '{"title":"csrf"}' "${APP_URL}/api/items" 2>/dev/null | tr -d '\r')"
+  rid="$(awk 'tolower($1)=="x-request-id:"{print $2}' <<< "$headers")"
+  sleep 1
+  after_lines="$(compose logs --no-color --since "$since" api 2>/dev/null | grep -c 'authorization' || true)"
+  expect "$area" "CSRF rejection: 403 from the ingress" "403" "$(awk 'NR==1{print $2}' <<< "$headers")"
+  expect "$area" "CSRF rejection: no API authorization line" "0" "$(( after_lines - before_lines ))"
+  expect "$area" "CSRF rejection: ingress shows no upstream (upstream=-)" "yes" \
+    "$(compose logs --no-color --since "$since" ingress 2>/dev/null | grep -F "rid=${rid}" | grep -q '" 403 .*upstream=- ' && echo yes || echo no)"
+  record "$area" "API authorization log lines contain a JWT" "observe" \
+    "$(compose logs --no-color --since "$since" api 2>/dev/null | grep 'authorization' | grep -c 'eyJ' || true)" info
+
+  # The denied principals' actual credentials must not appear in the API log
+  # for this run: passwords, session cookies, the access tokens their
+  # sessions forwarded, and the machine token used for denials (plus their
+  # percent-encoded forms). Values are searched as fixed strings from a file
+  # and never printed or recorded.
+  local values="${AUTH_WORK}/denial-values" api_log="${AUTH_WORK}/api.log" principal jar counts kinds
+  : > "$values"
+  for principal in lab-viewer lab-outsider; do
+    case "$principal" in
+      lab-viewer) jar="$viewer" ;;
+      lab-outsider) jar="$outsider" ;;
+    esac
+    add_value "$values" password "$(secret "${principal}-password")"
+    add_value "$values" session-cookie "$(session_cookie "$jar")"
+    add_value "$values" session-access-token "$(session_access_token "$jar")"
+  done
+  add_value "$values" machine-access-token "$machine"
+  kinds="$(awk -F'\t' '$2 != "" && $1 !~ /\+encoded$/ {n[$1]++} END {for (k in n) printf "%s=%d ", k, n[k]}' "$values" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+  expect "$area" "denied principals' credentials collected per kind" \
+    "machine-access-token=1 password=2 session-access-token=2 session-cookie=2" "$kinds"
+  sleep 1
+  compose logs --no-color --since "$started" api > "$api_log" 2>&1 || true
+  counts="$(count_values "$api_log" "$values")"
+  expect "$area" "API log: occurrences of the denied principals' credentials" "0" "${counts%% *}"
+  record "$area" "API log: credential kinds found" "observe" "$(kinds_found "$api_log" "$values")" info
+  # Controls: the scanner finds every searched string when present, and the
+  # captured API log holds this run's denial lines for both principals.
+  local synthetic="${AUTH_WORK}/synthetic.log" searched subject
+  searched="$(awk -F'\t' '$2 != ""' "$values" | wc -l)"
+  awk -F'\t' '$2 != "" {print "authorization denied: subject=x token=" $2}' "$values" > "$synthetic"
+  counts="$(count_values "$synthetic" "$values")"
+  expect "positive control" "scanner finds each searched string in a synthetic API log" "$searched" "${counts#* }"
+  for principal in lab-viewer lab-outsider; do
+    case "$principal" in
+      lab-viewer) jar="$viewer" ;;
+      lab-outsider) jar="$outsider" ;;
+    esac
+    subject="$(session_access_token "$jar" | json_query_token sub)"
+    expect "positive control" "captured API log has ${principal}'s denial lines" "yes" \
+      "$([[ -n "$subject" ]] && grep -F "authorization denied: subject=${subject} " "$api_log" | grep -q . && echo yes || echo no)"
+  done
+
+  # --- Role removal: existing versus newly issued tokens ----------------------
+  # Remove lab-user's editor role and the automation client's items.read at
+  # the same moment; then poll the browser session, a browser token captured
+  # before removal, and a machine token issued before removal until each is
+  # refused. Tokens are accepted until exp plus 30 s of skew; the gateway
+  # refreshes a session older than 1 min on its next request.
+  area="role removal"
+  local api_client user_id machine_id session_jar="${AUTH_WORK}/removal" login_at
+  local captured old_machine removed_at captured_exp machine_exp
+  api_client="$(admin_client_id work-items-api)"
+  user_id="$(admin_user_id lab-user)"
+  machine_id="$(admin_service_account_id work-items-automation)"
+  browser_login "$session_jar" lab-user >/dev/null
+  login_at="$(date +%s)"
+  captured="$(session_access_token "$session_jar")"
+  old_machine="$(client_credentials access_token)"
+  captured_exp="$(token_exp "$captured")"
+  machine_exp="$(token_exp "$old_machine")"
+  expect "$area" "before removal: session, captured token, machine token" "200 200 200" \
+    "$(call_summary session "$session_jar" GET /items) $(call_summary bearer "$captured" GET /items) $(call_summary bearer "$old_machine" GET /items)"
+
+  if [[ "$skip_slow" == false ]]; then
+    sleep 20
+    removed_at="$(date +%s)"
+    expect "$area" "remove lab-user editor mapping" "204" "$(admin_role_mapping DELETE "$user_id" "$api_client" editor)"
+    expect "$area" "remove work-items-automation items.read mapping" "204" "$(admin_role_mapping DELETE "$machine_id" "$api_client" items.read)"
+    local new_machine
+    new_machine="$(client_credentials access_token)"
+    record "$area" "machine token issued after removal: roles" "observe" "$(token_roles <<< "$new_machine")" info
+    expect "$area" "machine token issued after removal: GET /items" "403 insufficient_permissions" "$(call_summary bearer "$new_machine" GET /items)"
+
+    # A credential counts as rejected only on its expected status: 403
+    # insufficient_permissions for the session (its refreshed token lacks the
+    # role), 401 for the tokens issued before removal (at expiry). Timeouts,
+    # 5xx, and any other status are not revocation: they are counted
+    # separately and polling continues.
+    local session_at="" captured_at="" machine_at="" now status
+    local session_status="" captured_status="" machine_status="" other_responses=0 other_detail=""
+    local expired_since
+    expired_since="$(date -u -d "@${removed_at}" +%Y-%m-%dT%H:%M:%SZ)"
+    while :; do
+      now="$(date +%s)"
+      if [[ -z "$session_at" ]]; then
+        status="$(call_summary session "$session_jar" GET /items)"
+        case "$status" in
+          200) ;;
+          "403 insufficient_permissions") session_at="$now"; session_status="$status" ;;
+          *) other_responses=$((other_responses + 1)); other_detail="${other_detail} session:${status%% *}" ;;
+        esac
+      fi
+      if [[ -z "$captured_at" ]]; then
+        status="$(call_summary bearer "$captured" GET /items)"
+        case "${status%% *}" in
+          200) ;;
+          401) captured_at="$now"; captured_status="$status" ;;
+          *) other_responses=$((other_responses + 1)); other_detail="${other_detail} captured:${status%% *}" ;;
+        esac
+      fi
+      if [[ -z "$machine_at" ]]; then
+        status="$(call_summary bearer "$old_machine" GET /items)"
+        case "${status%% *}" in
+          200) ;;
+          401) machine_at="$now"; machine_status="$status" ;;
+          *) other_responses=$((other_responses + 1)); other_detail="${other_detail} machine:${status%% *}" ;;
+        esac
+      fi
+      [[ -n "$session_at" && -n "$captured_at" && -n "$machine_at" ]] && break
+      (( now - removed_at > 420 )) && break
+      sleep 5
+    done
+    # First observed rejections are poll times: the change happened between
+    # that poll and the last successful request, one cycle earlier (a 5 s
+    # sleep plus unmeasured request time). Boundaries are computed from the
+    # tokens' exp and the API's 30 s skew; they are not measured.
+    record "$area" "session age at removal (s)" "observe" "$(( removed_at - login_at ))" info
+    record "$area" "browser session: first observed rejection after removal (s, 5 s polling)" "observe" \
+      "${session_at:+$(( session_at - removed_at ))}" info
+    record "$area" "captured browser token: first observed rejection after removal (s, 5 s polling)" "observe" \
+      "${captured_at:+$(( captured_at - removed_at ))}" info
+    record "$area" "captured browser token: computed exp + 30 s skew after removal (s)" "observe" \
+      "$(( captured_exp + 30 - removed_at ))" info
+    record "$area" "existing machine token: first observed rejection after removal (s, 5 s polling)" "observe" \
+      "${machine_at:+$(( machine_at - removed_at ))}" info
+    record "$area" "existing machine token: computed exp + 30 s skew after removal (s)" "observe" \
+      "$(( machine_exp + 30 - removed_at ))" info
+    record "$area" "responses that were neither success nor the expected rejection (not counted as revocation)" "observe" \
+      "${other_responses}${other_detail:+ (${other_detail# })}" info
+    expect "$area" "browser session: rejection status" "403 insufficient_permissions" "${session_status:-none}"
+    expect "$area" "captured browser token: rejection status" "401 unauthenticated" "${captured_status:-none}"
+    expect "$area" "existing machine token: rejection status" "401 unauthenticated" "${machine_status:-none}"
+    # Expiry evidence for both pre-removal tokens: rejected no earlier than
+    # their exp, and the API logged exactly two expired rejections in the
+    # window (one per token; the session's rejection is a 403, not logged as
+    # an authentication failure).
+    expect "$area" "captured browser token: rejected at or after its exp" "yes" \
+      "$([[ -n "$captured_at" && "$captured_at" -ge "$captured_exp" ]] && echo yes || echo no)"
+    expect "$area" "existing machine token: rejected at or after its exp" "yes" \
+      "$([[ -n "$machine_at" && "$machine_at" -ge "$machine_exp" ]] && echo yes || echo no)"
+    sleep 1
+    expect "$area" "API authentication rejections since removal" "expired=2" "$(api_categories_since "$expired_since")"
+
+    expect "$area" "restore lab-user editor mapping" "204" "$(admin_role_mapping POST "$user_id" "$api_client" editor)"
+    expect "$area" "restore work-items-automation items.read mapping" "204" "$(admin_role_mapping POST "$machine_id" "$api_client" items.read)"
+    browser_login "${AUTH_WORK}/restored" lab-user >/dev/null
+    expect "$area" "after restore: new lab-user session creates" "201" \
+      "$(call_summary session "${AUTH_WORK}/restored" POST /items '{"title":"after restore"}')"
+    expect "$area" "after restore: new machine token reads" "200" "$(call_summary bearer "$(client_credentials access_token)" GET /items)"
+  else
+    record "$area" "role removal measurement" "run" "--skip-slow" skip
+  fi
+
+  # --- Identity provider down, signing keys cached ---------------------------
+  area="idp outage"
+  local outage_editor="${AUTH_WORK}/outage-editor" outage_viewer="${AUTH_WORK}/outage-viewer" outage_machine
+  browser_login "$outage_editor" lab-user >/dev/null
+  browser_login "$outage_viewer" lab-viewer >/dev/null
+  outage_machine="$(client_credentials access_token)"
+  compose stop keycloak >/dev/null 2>&1
+  expect "$area" "lab-viewer GET /items" "200" "$(call_summary session "$outage_viewer" GET /items)"
+  expect "$area" "lab-viewer POST /items" "403 insufficient_permissions" "$(call_summary session "$outage_viewer" POST /items '{"title":"x"}')"
+  expect "$area" "lab-user POST /items" "201" "$(call_summary session "$outage_editor" POST /items '{"title":"during outage"}')"
+  expect "$area" "work-items-automation GET /items" "200" "$(call_summary bearer "$outage_machine" GET /items)"
+  expect "$area" "work-items-automation POST /items" "403 insufficient_permissions" "$(call_summary bearer "$outage_machine" POST /items '{"title":"x"}')"
+  restore_service keycloak
+  wait_for_issuer || die "Keycloak did not return"
+
+  # --- Old-baseline control (pinned pre-authorization API) --------------------
+  area="baseline control"
+  local baseline_image
+  baseline_image="$(build_baseline_api_image)"
+  ZTP_SECURITY_LAB_API_IMAGE="$baseline_image" compose up -d --wait --force-recreate --no-deps api >/dev/null 2>&1 \
+    || die "the baseline API did not start"
+  expect "$area" "API version is the pinned baseline" "baseline-${AUTHORIZATION_BASELINE_COMMIT:0:7}" "$(api_version)"
+  local base_editor="${AUTH_WORK}/base-editor" base_viewer="${AUTH_WORK}/base-viewer" base_outsider="${AUTH_WORK}/base-outsider"
+  browser_login "$base_editor" lab-user >/dev/null
+  browser_login "$base_viewer" lab-viewer >/dev/null
+  browser_login "$base_outsider" lab-outsider >/dev/null
+  authorization_rows baseline "$base_editor" "$base_viewer" "$base_outsider" "$(client_credentials access_token)"
+  compose up -d --wait --force-recreate --no-deps api >/dev/null 2>&1 || die "the current API did not start"
+  area="baseline control"
+  expect "$area" "current API restored" "no" "$([[ "$(api_version)" == baseline-* ]] && echo yes || echo no)"
+  expect "$area" "after restore: lab-viewer POST /items" "403 insufficient_permissions" \
+    "$(call_summary session "$base_viewer" POST /items '{"title":"x"}')"
+
+  [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
+    "Authorization: realm readiness, the principal x action matrix on the browser and machine paths with side-effect checks, claims and 401/403 ordering, logs, role removal (existing versus newly issued tokens), identity-provider outage, and a control against the API built from ${AUTHORIZATION_BASELINE_COMMIT}. Scripted clients (curl with cookie jars); no browser."
+  finish_checks "Authorization verification"
+}
+
 check_configuration
 
 case "${1:-}" in
@@ -2355,8 +3306,27 @@ case "${1:-}" in
     shift
     verify_log_hygiene "$@"
     ;;
+  verify-realm)
+    require_command docker
+    shift
+    verify_realm "$@"
+    ;;
+  verify-authorization)
+    require_command docker
+    require_command git
+    shift
+    verify_authorization "$@"
+    ;;
+  verify-admin-permissions)
+    require_command docker
+    shift
+    verify_admin_permissions "$@"
+    ;;
   lab-user)
     show_lab_user
+    ;;
+  check-machine-permissions)
+    check_machine_permissions
     ;;
   status)
     compose --profile tools ps -a

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/authz"
 	"github.com/lestrrat-go/httprc/v3"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jws"
@@ -48,6 +49,10 @@ type Principal struct {
 	Subject string
 	// AuthorizedParty is the client the token was issued to (azp).
 	AuthorizedParty string
+	// Permissions come only from resource_access["work-items-api"].roles.
+	Permissions authz.Set
+	// RoleClaim describes that role data (absent, malformed, or present).
+	RoleClaim authz.Claim
 }
 
 // Validator verifies access tokens against the issuer's published keys.
@@ -164,6 +169,9 @@ func (v *Validator) Validate(ctx context.Context, raw string) (Principal, error)
 	if err := token.Get("azp", &azp); err == nil {
 		principal.AuthorizedParty = azp
 	}
+	var resourceAccess any
+	present := token.Has("resource_access") && token.Get("resource_access", &resourceAccess) == nil
+	principal.Permissions, principal.RoleClaim = authz.Parse(resourceAccess, present)
 	return principal, nil
 }
 
