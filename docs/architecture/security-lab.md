@@ -9,14 +9,20 @@ file-based runtime secrets, and authentication (Keycloak, oauth2-proxy with a
 Valkey session store, and token validation in the API;
 [ADR 0004](../adr/0004-security-lab-authentication.md), Proposed), and
 role-based authorization in the API
-([ADR 0005](../adr/0005-security-lab-authorization.md), Proposed) exist.
-Datastore TLS, rate limiting, and secret rotation do not. The lab must stay
-on host loopback.
+([ADR 0005](../adr/0005-security-lab-authorization.md), Proposed), and
+verified TLS to PostgreSQL and RabbitMQ on the data network from a separate
+internal CA ([ADR 0006](../adr/0006-security-lab-internal-transport.md),
+Proposed) exist. The other internal hops stay plaintext by decision; rate
+limiting and secret rotation do not exist. The lab must stay on host
+loopback.
 
 Operating procedures are in the [security lab guide](../guides/local-security-lab.md);
+the transport threats are in the [threat model](security-lab-threat-model.md);
 measurements are in the [first-slice experiment record](../experiments/issue-121-local-https-ingress.md),
 the [authentication comparison](../experiments/issue-121-authentication-comparison.md),
-and the [authentication integration record](../experiments/issue-121-authentication-integration.md).
+the [authentication integration record](../experiments/issue-121-authentication-integration.md),
+the [authorization record](../experiments/issue-121-authorization.md), and the
+[internal TLS record](../experiments/issue-121-internal-tls.md).
 
 ## Structure
 
@@ -36,23 +42,23 @@ app network (internal)         idp network (internal)
   oauth2-proxy ── session network (internal) ── valkey
   │
   ▼
-data network (internal)
-  api, worker (user app, read-only), PostgreSQL, RabbitMQ,
-  migrate (on demand)
+data network (internal)            TLS only, server verified (internal CA)
+  api, worker, migrate (on demand) ──► PostgreSQL :5432 (hostssl only)
+  api, worker                      ──► RabbitMQ   :5671 (no plaintext listener)
 ```
 
 | Component | Image | Networks | Published | Runtime inputs |
 | --- | --- | --- | --- | --- |
 | ingress | `infra/security-lab/ingress/Dockerfile` (nginx 1.30.5 with the built Web UI) | edge, app (aliases for both lab names), idp | `127.0.0.1:9443` → 8443 | Directory mount `ingress-tls/` (key and certificate in `tls.pem`) |
-| api | `apps/work-items/api/Dockerfile` | app, data | none | `DATABASE_URL_FILE`, `RABBITMQ_PUBLISHER_URL_FILE`, `AUTHENTICATION=oidc`, `OIDC_*` settings, lab CA certificate |
+| api | `apps/work-items/api/Dockerfile` | app, data | none | `DATABASE_URL_FILE`, `RABBITMQ_PUBLISHER_URL_FILE`, `AUTHENTICATION=oidc`, `OIDC_*` settings, lab CA and internal CA certificates |
 | keycloak | Keycloak 26.8.0 (digest-pinned), production mode | idp, idp-data | none | Generated `keycloak.conf` and realm file |
 | keycloak-postgres | PostgreSQL 18.6 (digest-pinned) | idp-data | none | Database password file |
 | oauth2-proxy | oauth2-proxy 7.15.5 (digest-pinned), read-only | app, session | none | Generated configuration file; lab CA certificate |
 | valkey | Valkey 9.1.2 (digest-pinned), no persistence | session | none | Generated configuration file |
-| worker | `apps/work-items/worker/Dockerfile` | data | none | `DATABASE_URL_FILE`, `RABBITMQ_WORKER_URL_FILE` |
-| postgres | PostgreSQL 18.6 (digest-pinned) | data | none | `POSTGRES_PASSWORD_FILE` and the migrator, app, and worker password files |
-| rabbitmq | RabbitMQ 4.3.6 (digest-pinned), plugins disabled | data | none | Generated definitions file loaded at boot |
-| migrate | `tools/migrate/Dockerfile` | data | none | Migrator connection-URL file |
+| worker | `apps/work-items/worker/Dockerfile` | data | none | `DATABASE_URL_FILE`, `RABBITMQ_WORKER_URL_FILE`, internal CA certificate |
+| postgres | PostgreSQL 18.6 (digest-pinned); `ssl=on`, repository `pg_hba.conf` | data | none | `POSTGRES_PASSWORD_FILE` and the migrator, app, and worker password files; directory mount `internal-tls/postgres/` (copied to a tmpfs by `postgres/tls.sh`) |
+| rabbitmq | RabbitMQ 4.3.6 (digest-pinned), plugins disabled, TLS listener only | data | none | Generated definitions file loaded at boot; directory mount `internal-tls/rabbitmq/` |
+| migrate | `tools/migrate/Dockerfile` | data | none | Migrator connection-URL file; internal CA certificate |
 
 All networks but `edge` are Docker `internal` networks. `edge` is the only
 network with external connectivity, which Docker requires for port
@@ -69,12 +75,15 @@ lab's projects and volumes.
 | Machine client → API (bearer path) | edge/app | TLS to the ingress | Client-credentials access token, passed unchanged |
 | Ingress → API | edge/app | None | Access token in `Authorization`, validated by the API (signature, algorithm, issuer, audience, expiry); then the route's permission from `resource_access["work-items-api"].roles` (403 without it) |
 | API, oauth2-proxy → issuer | app, through the ingress | TLS 1.2/1.3 | Lab CA certificate file |
-| Ingress → oauth2-proxy, ingress → Keycloak | app, idp | None | None |
-| oauth2-proxy → Valkey | session | None | Valkey password |
-| Keycloak → keycloak-postgres | idp-data | None | Database password |
-| API, worker, migrate → PostgreSQL | data | None (`sslmode=disable`) | Per-identity passwords |
-| API publisher, worker → RabbitMQ | data | None | Per-identity passwords and vhost permissions |
+| Ingress → oauth2-proxy, ingress → Keycloak | app, idp | None (ADR 0006: provisional) | None |
+| oauth2-proxy → Valkey | session | None (ADR 0006: two-member network) | Valkey password |
+| Keycloak → keycloak-postgres | idp-data | None (ADR 0006: two-member network) | Database password |
+| API, worker, migrate → PostgreSQL | data | TLS 1.2/1.3 (1.3 observed); non-TLS clients rejected by `pg_hba.conf` | Server certificate and name `postgres` verified against the internal CA (`sslmode=verify-full`); clients by per-identity passwords (SCRAM) |
+| API publisher, worker → RabbitMQ | data | TLS 1.2/1.3 (1.3 observed) on 5671; no plaintext listener | Server certificate and name `rabbitmq` verified against the internal CA (`amqps`, `cacertfile`); clients by per-identity passwords (`PLAIN` inside TLS) and vhost permissions |
 | Operator → containers | Docker socket | — | Docker access is root-equivalent and outside the model |
+
+The [threat model](security-lab-threat-model.md) explains, per network, why
+these hops are encrypted and the others are not yet.
 
 The ingress routes only `/api/items`, `/api/items/{id}/process`, and
 `/api/processing-jobs/{id}`; every other `/api` path, including the API's
@@ -132,10 +141,14 @@ containing the home directory. Destructive cleanup requires that marker.
 | --- | --- | --- | --- |
 | Lab CA | Lab operator (`init`) | 90 days; name-constrained to `work-items.localhost`; may not issue intermediates | Not automated; a new CA requires `purge-state` and `init` |
 | Ingress certificate | Lab operator (`issue-certificate`, or `init` near expiry) | 14 days | Replaces `ingress-tls/tls.pem` by rename, reloads nginx, and waits for consecutive new connections with the new serial |
+| Internal CA | Lab operator (`init`) | 90 days; name-constrained to `postgres` and `rabbitmq`; may not issue intermediates | Not automated; a new CA requires `purge-state` and `init`, and restarts of the API and worker (pgx reads the CA when the pool is created) |
+| PostgreSQL and RabbitMQ certificates | Lab operator (`issue-internal-certificate <service>`, or `init` near expiry or when the name does not verify) | 14 days | Replaces `internal-tls/<service>/tls.pem` by rename; PostgreSQL: copy to its tmpfs and `pg_ctl reload`; RabbitMQ: `ssl:clear_pem_cache()`; waits for five consecutive verified new connections with the new serial. Established connections keep their session |
 
 There is no revocation (CRL or OCSP) and no public-CA issuance. Clients trust
 the lab CA only where it is explicitly configured: `--cacert` for the
-automated checks, or an operator-managed browser trust store.
+automated checks, or an operator-managed browser trust store. The internal CA
+is mounted only into the API, worker, and migrator; it is never needed by a
+browser.
 
 ## Lifecycle
 
@@ -148,6 +161,7 @@ automated checks, or an operator-managed browser trust store.
 | `verify-log-hygiene` | Search ingress and gateway logs for the codes, state, cookies, tokens, and secrets of a sign-in, failed callbacks, and a session refresh, with positive controls |
 | `verify-realm`, `verify-authorization` | Realm readiness through the admin API; the permission matrix, claims, ordering, logs, role removal, outage, and a control against the pinned pre-authorization API |
 | `verify-admin-permissions` | Minimum role set of the role-management client, in a throwaway `*-probe` project |
+| `issue-internal-certificate`, `verify-internal-tls` | Renew a PostgreSQL or RabbitMQ certificate; exercise plaintext refusal, untrusted issuer, hostname mismatch, expiry, recovery, and renewal; restarts the API and worker |
 | `stop` | Stop containers, keep volumes and state |
 | `destroy` | Remove this project's containers, networks, and volumes |
 | `purge-state --yes` | Delete the marked state directory |
@@ -167,7 +181,10 @@ in the development lab. See the [Work Items architecture](work-items.md).
 
 - Per-item or ownership authorization, and rate limiting.
 - Revocation of access tokens before expiry (validation is local).
-- Encryption of internal hops.
+- Encryption of the ingress → API, oauth2-proxy, and Keycloak hops,
+  oauth2-proxy → Valkey, and Keycloak → its database (ADR 0006).
+- Client certificates (mTLS), certificate revocation, automated renewal, and
+  expiry monitoring.
 - Access from other containers on the same Docker engine: in the measured
   environment the published ingress port was reachable from them.
 - Secret rotation, revocation, CSP, and HSTS.
