@@ -128,6 +128,7 @@ Usage:
   ./tools/security-lab-local verify-renewal [--evidence <file>]
   ./tools/security-lab-local issue-internal-certificate <postgres|rabbitmq>
   ./tools/security-lab-local verify-internal-tls [--evidence <file>]
+  ./tools/security-lab-local check-serial-streak "<code> <serial>" [required] [attempts] < observations
   ./tools/security-lab-local ca-certificate
   ./tools/security-lab-local stop
   ./tools/security-lab-local destroy
@@ -190,11 +191,16 @@ Commands:
                      new connections verify the new serial.
   verify-internal-tls
                      Exercise internal TLS on the data network: plaintext
-                     refusal, an untrusted issuer, a hostname mismatch, and
-                     an expired certificate on PostgreSQL and RabbitMQ, with
+                     refusal, an untrusted issuer, a hostname mismatch, an
+                     expired certificate, and a certificate also naming an
+                     excluded subdomain on PostgreSQL and RabbitMQ, with
                      new versus established connections, recovery, and
                      renewal. Restarts the API and worker and installs bad
                      certificates temporarily.
+  check-serial-streak
+                     Test hook: apply the renewal confirmation rule (N
+                     consecutive equal observations within M attempts) to
+                     observations read from standard input.
   ca-certificate     Show the lab CA certificate paths and fingerprint.
   stop               Stop the lab, keeping its volumes.
   destroy            Remove only this lab's containers, networks, and volumes.
@@ -468,18 +474,50 @@ certificate_serial() {
 
 # A separate CA for service-to-service TLS (ADR 0006). Browsers and the
 # Windows trust store may trust the lab CA; the internal CA is trusted only by
-# the internal clients it is mounted into, and may issue only for the
+# the internal clients it is mounted into, and may issue only for the exact
 # internal service names.
+#
+# A permitted dNSName constraint "postgres" also permits every subdomain
+# ("extra.postgres"; RFC 5280). Excluding ".postgres" removes the subdomains
+# and keeps the name itself: OpenSSL (libpq) and Go's crypto/x509 (pgx,
+# amqp091-go) both read a leading dot as "proper subdomains only". RFC 5280
+# does not define the leading dot for dNSName, so other verifiers may differ.
+internal_ca_name_constraints() {
+  local service permitted="" excluded=""
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    permitted+="permitted;DNS:${service},"
+    excluded+="excluded;DNS:.${service},"
+  done
+  echo "${permitted}${excluded}excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
+}
+
+# True when the internal CA carries the current constraints: each service
+# name permitted and its subdomains excluded.
+internal_ca_constraints_ok() {
+  local text permitted excluded service
+  text="$(openssl x509 -noout -ext nameConstraints -in "${PKI_DIR}/internal-ca.crt" 2>/dev/null)" || return 1
+  permitted="$(sed -n '/Permitted:/,/Excluded:/p' <<< "$text" | tr -d ' ')"
+  excluded="$(sed -n '/Excluded:/,$p' <<< "$text" | tr -d ' ')"
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    grep -qx "DNS:${service}" <<< "$permitted" || return 1
+    grep -qx "DNS:\.${service}" <<< "$excluded" || return 1
+  done
+}
+
 init_internal_ca() {
   if [[ -f "${PKI_DIR}/internal-ca.key" ]]; then
-    echo "Internal CA exists: ${PKI_DIR}/internal-ca.crt"
-    return 0
+    if internal_ca_constraints_ok; then
+      echo "Internal CA exists: ${PKI_DIR}/internal-ca.crt"
+      return 0
+    fi
+    # An internal CA from before the subdomain exclusion. Only internal
+    # clients trust it, and start recreates them, so replace it; the
+    # certificates it issued no longer verify and are reissued below.
+    echo "Replacing the internal CA: its name constraints permit subdomains of the service names."
+    rm -f "${PKI_DIR}/internal-ca.key" "${PKI_DIR}/internal-ca.crt"
   fi
 
-  local permitted
-  permitted="$(printf 'permitted;DNS:%s,' "${INTERNAL_TLS_SERVICES[@]}")"
-
-  echo "Creating internal CA (${CA_DAYS} days, name-constrained to ${INTERNAL_TLS_SERVICES[*]})..."
+  echo "Creating internal CA (${CA_DAYS} days, name-constrained to exactly ${INTERNAL_TLS_SERVICES[*]})..."
 
   (
     umask 077
@@ -491,7 +529,7 @@ init_internal_ca() {
       -subj "/O=Zero-to-Prod security lab/CN=Zero-to-Prod internal CA (${PROJECT})" \
       -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
       -addext "keyUsage=critical,keyCertSign,cRLSign" \
-      -addext "nameConstraints=critical,${permitted}excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::" \
+      -addext "nameConstraints=critical,$(internal_ca_name_constraints)" \
       -addext "subjectKeyIdentifier=hash" \
       2>/dev/null
   )
@@ -508,11 +546,13 @@ init_internal_ca() {
 #   expired    internal CA, the right name, validity ended a day ago
 #   untrusted  the right name, signed by the CA in directory $3 (not the
 #              internal CA)
+#   subdomain  internal CA, the right name plus "extra.<service>", which the
+#              CA's constraints exclude
 issue_internal_certificate() {
   local service="$1" kind="${2:-valid}"
   local dir="${INTERNAL_TLS_DIR}/${service}"
   local ca_key="${PKI_DIR}/internal-ca.key" ca_cert="${PKI_DIR}/internal-ca.crt"
-  local name="$service" other
+  local name="$service" other san=""
   local validity=(-days "$CERT_DAYS")
 
   [[ -f "$ca_key" ]] || die "internal CA missing; run: $0 init"
@@ -533,6 +573,7 @@ issue_internal_certificate() {
       ca_key="${3:?untrusted requires a CA directory}/ca.key"
       ca_cert="${3}/ca.crt"
       ;;
+    subdomain) san=",DNS:extra.${service}" ;;
     *) die "unknown certificate kind: ${kind}" ;;
   esac
 
@@ -543,7 +584,7 @@ issue_internal_certificate() {
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:${name}
+subjectAltName=DNS:${name}${san}
 subjectKeyIdentifier=hash
 authorityKeyIdentifier=keyid
 EOF_EXT
@@ -994,6 +1035,9 @@ check_secrets() {
   if [[ ! -f "${PKI_DIR}/internal-ca.crt" ]]; then
     echo "error: internal CA certificate missing: ${PKI_DIR}/internal-ca.crt (run: $0 init)" >&2
     failures=$((failures + 1))
+  elif ! internal_ca_constraints_ok; then
+    echo "error: the internal CA's name constraints do not limit it to exactly ${INTERNAL_TLS_SERVICES[*]} (subdomains permitted); run: $0 init" >&2
+    failures=$((failures + 1))
   else
     for service in "${INTERNAL_TLS_SERVICES[@]}"; do
       file="${INTERNAL_TLS_DIR}/${service}/tls.pem"
@@ -1286,22 +1330,47 @@ internal_tls_probe() {
     echo "${code:-none} ${serial:-none}"' probe "$service" "$port" "$starttls"
 }
 
-# Wait until five consecutive new connections are served the given serial
-# (reloads are asynchronous, as for the ingress). Prints the last
-# observation, "<verify code> <serial>".
-wait_for_internal_serial() {
-  local service="$1" serial="$2" observed="" consecutive=0 _
-  for _ in $(seq 1 60); do
-    observed="$(internal_tls_probe "$service")"
-    if [[ "${observed#* }" == "$serial" ]]; then
+# Run "$@" up to $3 times, $4 seconds apart, until $2 consecutive outputs
+# equal $1. On success print the matching output. Otherwise fail and print
+# "timeout: …" with the streak at the end and the last output, which can
+# never equal $1, so a caller comparing outputs cannot mistake a timeout for
+# success. One match at the end, or matches interrupted by other outputs,
+# are not enough.
+await_observation_streak() {
+  local expected="$1" required="$2" attempts="$3" delay="$4" observed="" consecutive=0 attempt
+  shift 4
+  for (( attempt = 1; attempt <= attempts; attempt++ )); do
+    observed="$("$@")" || observed="error"
+    if [[ "$observed" == "$expected" ]]; then
       consecutive=$((consecutive + 1))
-      [[ "$consecutive" -ge 5 ]] && break
+      if (( consecutive >= required )); then
+        echo "$observed"
+        return 0
+      fi
     else
       consecutive=0
     fi
-    sleep 0.25
+    if (( attempt < attempts )); then sleep "$delay"; fi
   done
-  echo "$observed"
+  echo "timeout: ${consecutive} of ${required} consecutive '${expected}' after ${attempts} attempts; last '${observed:-none}'"
+  return 1
+}
+
+# Wait until five consecutive new connections to the service show the
+# expected observation, "<verify code> <serial>" (reloads are asynchronous,
+# as for the ingress). The code is part of the match: renewal needs five
+# verified (0) connections with the new serial; a failure case needs five
+# with its own nonzero code and the bad serial. Prints the matching
+# observation, or fails with a "timeout: …" line.
+wait_for_internal_serial() {
+  await_observation_streak "$2" 5 60 0.25 internal_tls_probe "$1"
+}
+
+# Reads one observation per line from standard input; "none none" at its end.
+read_observation() {
+  local line
+  IFS= read -r line || line="none none"
+  echo "$line"
 }
 
 issue_internal_certificate_command() {
@@ -1320,10 +1389,11 @@ issue_internal_certificate_command() {
 
   reload_internal_tls "$service"
   start_internal_probe
-  observed="$(wait_for_internal_serial "$service" "$expected")"
+  if ! observed="$(wait_for_internal_serial "$service" "0 ${expected}")"; then
+    stop_internal_probe
+    die "renewal of ${service} not confirmed: ${observed} (verify code, serial)"
+  fi
   stop_internal_probe
-  [[ "$observed" == "0 ${expected}" ]] ||
-    die "new connections to ${service} see '${observed}', expected '0 ${expected}' (verify code, serial)"
   echo "${service} reloaded; five consecutive new connections verified serial ${expected}."
 }
 
@@ -1400,7 +1470,7 @@ tls_flow() {
 # The Go TLS verification error in a service's log since $2.
 go_tls_reason() {
   { compose logs --no-log-prefix --since "$2" "$1" 2>/dev/null \
-      | grep -oE 'x509: certificate (signed by unknown authority|is valid for [a-z0-9.-]+, not [a-z0-9.-]+|has expired or is not yet valid)' \
+      | grep -oE 'x509: (certificate (signed by unknown authority|is valid for [a-z0-9.-]+, not [a-z0-9.-]+|has expired or is not yet valid)|a root or intermediate certificate is not authorized to sign for this name: DNS name "[a-z0-9.-]+" is excluded by constraint "[a-z0-9.-]+")' \
       || true; } | sort -u | paste -sd ';' -
 }
 
@@ -1436,6 +1506,7 @@ expected_openssl_code() {
     untrusted) echo 21 ;;  # unable to verify the first certificate
     mismatch) echo 62 ;;   # hostname mismatch
     expired) echo 10 ;;    # certificate has expired
+    subdomain) echo 48 ;;  # excluded subtree violation
   esac
 }
 
@@ -1444,6 +1515,8 @@ expected_go_reason() {
     untrusted) echo "x509: certificate signed by unknown authority" ;;
     mismatch) echo "x509: certificate is valid for ${3}, not ${2}" ;;
     expired) echo "x509: certificate has expired or is not yet valid" ;;
+    # Go 1.27's wording (the API and worker images build with it).
+    subdomain) echo "x509: a root or intermediate certificate is not authorized to sign for this name: DNS name \"extra.${2}\" is excluded by constraint \".${2}\"" ;;
   esac
 }
 
@@ -1468,7 +1541,8 @@ internal_tls_failure_case() {
   reload_internal_tls "$target"
 
   expect "$area" "new connection: openssl verify code, served serial" \
-    "$(expected_openssl_code "$kind") ${bad_serial}" "$(wait_for_internal_serial "$target" "$bad_serial")"
+    "$(expected_openssl_code "$kind") ${bad_serial}" \
+    "$(wait_for_internal_serial "$target" "$(expected_openssl_code "$kind") ${bad_serial}")"
 
   if [[ "$target" == postgres ]]; then
     since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1525,7 +1599,7 @@ internal_tls_failure_case() {
   good_serial="$(certificate_serial "${INTERNAL_TLS_DIR}/${target}/tls.pem")"
   reload_internal_tls "$target"
   expect "$area" "renewed: openssl verify code, served serial" "0 ${good_serial}" \
-    "$(wait_for_internal_serial "$target" "$good_serial")"
+    "$(wait_for_internal_serial "$target" "0 ${good_serial}")"
   if [[ "$target" == postgres ]]; then
     expect "$area" "renewed: same API process, GET /api/items" "200" "$(call_summary session "$jar" GET /items)"
   else
@@ -1546,7 +1620,7 @@ internal_tls_renewal_case() {
   reload_internal_tls "$target"
   record "$area" "before: openssl verify code, served serial" "observe" "$old_serial" info
   expect "$area" "after: openssl verify code, served serial" "0 ${new_serial}" \
-    "$(wait_for_internal_serial "$target" "$new_serial")"
+    "$(wait_for_internal_serial "$target" "0 ${new_serial}")"
   expect "$area" "served serial changed" "changed" \
     "$([[ "${old_serial#* }" != "$new_serial" ]] && echo changed || echo unchanged)"
   after="$(internal_connections "$target" | connection_ids "$target")"
@@ -1642,7 +1716,7 @@ verify_internal_tls() {
   for service in "${INTERNAL_TLS_SERVICES[@]}"; do
     expect "$area" "${service}: openssl verify code, served serial" \
       "0 $(certificate_serial "${INTERNAL_TLS_DIR}/${service}/tls.pem")" \
-      "$(wait_for_internal_serial "$service" "$(certificate_serial "${INTERNAL_TLS_DIR}/${service}/tls.pem")")"
+      "$(wait_for_internal_serial "$service" "0 $(certificate_serial "${INTERNAL_TLS_DIR}/${service}/tls.pem")")"
   done
   expect "$area" "postgres: libpq verify-full, internal CA (TLS accepted; authentication begins)" \
     "fe_sendauth: no password supplied" "$(libpq_probe verify-full)"
@@ -1666,7 +1740,9 @@ verify_internal_tls() {
   # --- Failure cases and recovery ------------------------------------------
   local kind
   for service in "${INTERNAL_TLS_SERVICES[@]}"; do
-    for kind in untrusted mismatch expired; do
+    # subdomain: the certificate names the right server, so only the CA's
+    # exclusion of "extra.<service>" can make the clients refuse it.
+    for kind in untrusted mismatch expired subdomain; do
       internal_tls_failure_case "$service" "$kind" "$editor" "$rogue"
     done
   done
@@ -1690,7 +1766,7 @@ verify_internal_tls() {
   record "$area" "secret values in recorded results" "observe" "none (${#SOURCE_SECRETS[@]} secrets searched)" info
 
   [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
-    "verify-internal-tls: internal CA and TLS on the data network; baseline, plaintext refusal, untrusted issuer, hostname mismatch, and expired certificate on PostgreSQL and RabbitMQ with new versus established connections and recovery by renewal; renewal; network inventory. Scripted clients only."
+    "verify-internal-tls: internal CA and TLS on the data network; baseline, plaintext refusal, untrusted issuer, hostname mismatch, expired certificate, and a certificate also naming an excluded subdomain on PostgreSQL and RabbitMQ with new versus established connections and recovery by renewal; renewal; network inventory. Scripted clients only."
   finish_checks "Internal TLS verification"
 }
 
@@ -4067,6 +4143,11 @@ case "${1:-}" in
     require_command docker
     shift
     issue_internal_certificate_command "$@"
+    ;;
+  check-serial-streak)
+    # Test hook for the renewal confirmation: observations on standard input.
+    shift
+    await_observation_streak "${1:?expected observation}" "${2:-5}" "${3:-60}" 0 read_observation
     ;;
   verify-internal-tls)
     require_command docker
