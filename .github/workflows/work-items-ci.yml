@@ -460,6 +460,7 @@ jobs:
           bash -n scripts/test-postgres-backup-validation.sh
           bash -n scripts/test-security-lab-state-safety.sh
           bash -n scripts/test-security-lab-startup-warning.sh
+          bash -n scripts/test-security-lab-internal-tls.sh
           bash -n tools/work-items-api-local
           bash -n tools/postgres-local
           bash -n scripts/test-async-result-recovery.sh
@@ -469,6 +470,7 @@ jobs:
           bash -n tools/security-lab-local
           bash -n infra/local/postgres/init/001-roles.sh
           bash -n infra/security-lab/postgres/init/001-security-lab-roles.sh
+          sh -n infra/security-lab/postgres/tls.sh
 
           docker compose -f infra/local/compose.yaml config --quiet
           docker compose -f infra/local/rabbitmq/compose.yaml config --quiet
@@ -477,7 +479,9 @@ jobs:
           ZTP_SECURITY_LAB_SECRETS_DIR=/nonexistent \
             ZTP_SECURITY_LAB_INGRESS_TLS_DIR=/nonexistent \
             ZTP_SECURITY_LAB_CA_FILE=/nonexistent \
-            docker compose -f infra/security-lab/compose.yaml config --quiet
+            ZTP_SECURITY_LAB_INTERNAL_CA_FILE=/nonexistent \
+            ZTP_SECURITY_LAB_INTERNAL_TLS_DIR=/nonexistent \
+            docker compose -f infra/security-lab/compose.yaml --profile tools config --quiet
 
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
@@ -485,6 +489,7 @@ jobs:
           bash scripts/test-postgres-backup-validation.sh
           bash scripts/test-security-lab-state-safety.sh
           bash scripts/test-security-lab-startup-warning.sh
+          bash scripts/test-security-lab-internal-tls.sh
 
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11

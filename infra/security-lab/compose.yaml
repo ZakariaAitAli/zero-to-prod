@@ -14,6 +14,12 @@
 # forwards the access token; machine clients send their own bearer token. The
 # API validates every token itself (AUTHENTICATION=oidc). The issuer URL
 # names the ingress, which internal clients reach through network aliases.
+#
+# Internal transport (ADR 0006, Proposed): on the shared data network,
+# PostgreSQL and RabbitMQ accept only TLS, with certificates from a separate
+# internal CA. The API, worker, and migrator verify the server and its name
+# (sslmode=verify-full; amqps with cacertfile). Hops on the other internal
+# networks stay plaintext; see the security lab architecture.
 
 name: zero-to-prod-security-lab
 
@@ -27,6 +33,21 @@ x-hardened: &hardened
 services:
   postgres:
     image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    # Installs the server key for the postgres user, then runs the image's
+    # entrypoint (infra/security-lab/postgres/tls.sh).
+    entrypoint: ["/opt/zero-to-prod/tls.sh"]
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/postgresql-tls/server.pem
+      - -c
+      - ssl_key_file=/run/postgresql-tls/server.pem
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     environment:
       POSTGRES_DB: zero_to_prod
       POSTGRES_USER: zero_to_prod_admin
@@ -43,6 +64,13 @@ services:
       - postgres_data:/var/lib/postgresql
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
       - ../local/postgres/init/001-roles.sh:/opt/zero-to-prod/001-roles.sh:ro
+      - ./postgres/tls.sh:/opt/zero-to-prod/tls.sh:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      # A directory mount, so a renewed file (replaced by rename) is visible.
+      - ${ZTP_SECURITY_LAB_INTERNAL_TLS_DIR:?set by tools/security-lab-local}/postgres:/run/internal-tls:ro
+    tmpfs:
+      # The key copy PostgreSQL reads (owner postgres, mode 600).
+      - /run/postgresql-tls
     networks:
       - data
     healthcheck:
@@ -61,6 +89,7 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
       - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
       - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ${ZTP_SECURITY_LAB_INTERNAL_TLS_DIR:?set by tools/security-lab-local}/rabbitmq:/run/internal-tls:ro
     networks:
       - data
     healthcheck:
@@ -86,6 +115,7 @@ services:
       - postgres-migrator-url
     volumes:
       - ../../apps/work-items/migrations:/migrations:ro
+      - ${ZTP_SECURITY_LAB_INTERNAL_CA_FILE:?set by tools/security-lab-local}:/internal-ca/ca.crt:ro
     networks:
       - data
     depends_on:
@@ -115,8 +145,11 @@ services:
       - api-database-url
       - api-rabbitmq-url
     volumes:
-      # Public CA certificate; replaced only by purge-state and init.
+      # Public CA certificates; replaced only by purge-state and init. The
+      # lab CA verifies the issuer; the internal CA verifies PostgreSQL and
+      # RabbitMQ (named in the connection-URL files).
       - ${ZTP_SECURITY_LAB_CA_FILE:?set by tools/security-lab-local}:/lab-ca/ca.crt:ro
+      - ${ZTP_SECURITY_LAB_INTERNAL_CA_FILE:?set by tools/security-lab-local}:/internal-ca/ca.crt:ro
     networks:
       - app
       - data
@@ -138,6 +171,8 @@ services:
     secrets:
       - worker-database-url
       - worker-rabbitmq-url
+    volumes:
+      - ${ZTP_SECURITY_LAB_INTERNAL_CA_FILE:?set by tools/security-lab-local}:/internal-ca/ca.crt:ro
     networks:
       - data
     depends_on:

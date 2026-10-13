@@ -12,9 +12,12 @@ clients use the client-credentials grant, and the API validates every access
 token itself ([ADR 0004](../adr/0004-security-lab-authentication.md),
 Proposed). The API also enforces **authorization**: per-route permissions
 from Keycloak client roles, deny by default
-([ADR 0005](../adr/0005-security-lab-authorization.md), Proposed). Datastore
-TLS, rate limiting, and secret rotation are not implemented yet. It does not
-complete Issue #121.
+([ADR 0005](../adr/0005-security-lab-authorization.md), Proposed). On the
+data network, PostgreSQL and RabbitMQ accept only **TLS**, and the API,
+worker, and migrator verify them against a separate internal CA
+([ADR 0006](../adr/0006-security-lab-internal-transport.md), Proposed); the
+other internal hops stay plaintext by decision. Rate limiting and secret
+rotation are not implemented yet. It does not complete Issue #121.
 
 The development lab ([local Work Items guide](local-work-items.md)) is
 unchanged and keeps its labelled development credentials. The security lab
@@ -43,11 +46,11 @@ Windows browser / WSL client / machine client
 | Component | Networks | Published | Runtime secrets (files) |
 | --- | --- | --- | --- |
 | ingress | edge, app, idp | `127.0.0.1:9443 → 8443` | TLS key and certificate (one file in a mounted directory) |
-| api | app, data | none | database URL, RabbitMQ publisher URL; lab CA certificate (public) |
-| worker | data | none | database URL, RabbitMQ worker URL |
-| postgres | data | none | admin, migrator, app, worker passwords |
-| rabbitmq | data | none | definitions (users with password hashes, permissions, queue) |
-| migrate (on demand) | data | none | migrator URL |
+| api | app, data | none | database URL, RabbitMQ publisher URL; lab CA and internal CA certificates (public) |
+| worker | data | none | database URL, RabbitMQ worker URL; internal CA certificate (public) |
+| postgres | data | none | admin, migrator, app, worker passwords; TLS key and certificate (one file in a mounted directory) |
+| rabbitmq | data | none | definitions (users with password hashes, permissions, queue); TLS key and certificate (one file in a mounted directory) |
+| migrate (on demand) | data | none | migrator URL; internal CA certificate (public) |
 | keycloak | idp, idp-data | none | `keycloak.conf` (database password), realm file (client secrets, lab-user password) |
 | keycloak-postgres | idp-data | none | Keycloak database password |
 | oauth2-proxy | app, session | none | `oauth2-proxy.cfg` (client secret, cookie secret, Valkey password); lab CA certificate |
@@ -62,21 +65,23 @@ default or administrative user; operators use `rabbitmqctl` through
 `docker compose exec`. Keycloak has no administrative user, and the ingress
 does not route its administration console or master realm.
 
-### Connections in this slice
+### Connections
 
 | Connection | Encryption | Verification |
 | --- | --- | --- |
 | Client → ingress | TLS 1.2/1.3 | Lab CA; certificate names `work-items.localhost` and `auth.work-items.localhost`; other names and IP addresses fail the handshake |
 | API, oauth2-proxy → issuer (through the ingress) | TLS 1.2/1.3 | Lab CA, mounted as a public certificate file |
+| API/worker/migrator → PostgreSQL | TLS 1.2/1.3 (internal `data` network); the server rejects non-TLS clients | Internal CA and the name `postgres` (`sslmode=verify-full`); password (SCRAM) |
+| API/worker → RabbitMQ | TLS 1.2/1.3 on 5671 (internal `data` network); no plaintext listener | Internal CA and the name `rabbitmq` (`amqps`); password inside TLS |
 | Ingress → API, ingress → oauth2-proxy | none (internal `app` network) | — |
 | Ingress → Keycloak | none (internal `idp` network) | — |
 | oauth2-proxy → Valkey | none (internal `session` network) | Valkey password |
 | Keycloak → its PostgreSQL | none (internal `idp-data` network) | Database password |
-| API/worker/migrator → PostgreSQL | none (`sslmode=disable`, internal `data` network) | — |
-| API/worker → RabbitMQ | none (internal `data` network) | — |
 
-The unencrypted internal hops are deliberate for this slice and are listed
-under [limitations](#limitations).
+Why the data network is encrypted and the other hops are not yet is in the
+[threat model](../architecture/security-lab-threat-model.md) and
+[ADR 0006](../adr/0006-security-lab-internal-transport.md); the plaintext hops
+are listed under [limitations](#limitations).
 
 ## Prerequisites
 
@@ -102,9 +107,12 @@ any other value.
 ```text
 ~/.local/state/zero-to-prod/zero-to-prod-security-lab/   (mode 700)
 ├── .zero-to-prod-security-lab   ownership marker
-├── pki/          lab CA key (600) and certificate; issued certificates
+├── pki/          lab CA and internal CA keys (600) and certificates
 ├── secrets/      runtime secret files (directory mode 700)
-└── ingress-tls/  tls.pem: ingress key and certificate (directory mode 711)
+├── ingress-tls/  tls.pem: ingress key and certificate (directory mode 711)
+└── internal-tls/
+    ├── postgres/  tls.pem: PostgreSQL key and certificate (directory mode 711)
+    └── rabbitmq/  tls.pem: RabbitMQ key and certificate (directory mode 711)
 ```
 
 Rerunning `init` keeps the existing lab CA and generated passwords, and leaves
@@ -113,6 +121,9 @@ remove:
 
 - the ingress certificate and key, when missing, within two days of expiry, or
   lacking the name `auth.work-items.localhost`;
+- the PostgreSQL or RabbitMQ certificate and key, when missing, within two
+  days of expiry, or not verifying for the service's name against the
+  internal CA;
 - the Keycloak, oauth2-proxy, and Valkey configuration files, if their content
   would change;
 - the RabbitMQ definitions, when missing or when a RabbitMQ password was just
@@ -137,6 +148,19 @@ refuses an existing directory that is not this lab's state.
   addresses excluded.
 - The ingress certificate is valid for 14 days. `init` reissues it when fewer
   than two days remain.
+- The **internal CA** is separate from the lab CA: it is valid for 90 days,
+  and may not issue intermediate CAs. Its name constraints permit exactly
+  `postgres` and `rabbitmq`: the names are permitted, and their subdomains
+  (`.postgres`, `.rabbitmq`) are excluded, because a permitted DNS
+  constraint alone would also allow names such as `extra.postgres`. Its
+  certificate is mounted only into the API, worker, and migrator; never
+  trust it in a browser. The PostgreSQL and RabbitMQ certificates are valid
+  for 14 days, with the Docker service name as their only name. Each client
+  also checks the specific name it connects to, so the RabbitMQ certificate
+  is refused at the PostgreSQL address.
+- `init` replaces an internal CA created before the subdomain exclusion
+  (`check-secrets` refuses one) and reissues both datastore certificates;
+  `start` then recreates the clients, which load the new CA.
 - Passwords and client secrets are random per lab. Connection URLs, the
   RabbitMQ definitions, and the Keycloak, oauth2-proxy, and Valkey
   configuration files are derived from them.
@@ -162,9 +186,15 @@ on the host it is protected by the mode-700 state directory.
 
 The files are **not** on tmpfs, **not** encrypted at rest, and **not** managed
 by a secret manager. Compose `secrets:` outside Swarm are plain read-only bind
-mounts. The CA key and the source passwords and client secrets (RabbitMQ,
+mounts. The CA keys and the source passwords and client secrets (RabbitMQ,
 client secrets, lab-user password, Valkey password, cookie secret) are never
 mounted and stay mode 600; the mounted configuration files embed them.
+
+The PostgreSQL and RabbitMQ keys follow the ingress layout: one `tls.pem` in
+a mode-711 directory, mounted read-only into that service only. PostgreSQL
+refuses a key it does not own with mode 600, so its entrypoint
+(`infra/security-lab/postgres/tls.sh`) copies the file into a tmpfs owned by
+the `postgres` user before starting the server.
 
 ## Start
 
@@ -398,7 +428,28 @@ logging.
 ./tools/security-lab-local verify-log-hygiene
 ./tools/security-lab-local verify-realm
 ./tools/security-lab-local verify-authorization
+./tools/security-lab-local verify-internal-tls
 ```
+
+`verify-internal-tls`:
+- records each container's networks and whether it can gain raw-socket
+  capability (the threat model's inventory);
+- checks that new connections to PostgreSQL and RabbitMQ verify against the
+  internal CA, that the lab CA does not verify them, that a non-TLS
+  PostgreSQL client and the AMQP plaintext port are refused, and that every
+  live client connection uses TLS;
+- for each service, installs a certificate from an untrusted CA, one for the
+  other service's name, an expired one, and one that also names an excluded
+  subdomain (`extra.<service>`), and observes new connections
+  (OpenSSL, libpq, and the Go clients after a restart of the API or worker),
+  established connections, the server's log, and recovery after renewal
+  without restarting clients;
+- renews each certificate once more and checks that established connections
+  survive.
+
+It restarts the API and worker and always leaves valid certificates
+installed, also when interrupted. The untrusted CA exists only in a temporary
+directory during the run.
 
 (For the separate authorization project, prefix each with
 `ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab-authz`.)
@@ -486,7 +537,7 @@ records the served and file serials before and after, whether the container
 sees the host's file, and a control showing that a single-file bind mount
 would have kept the old file.
 
-All five accept `--evidence <file>` to write machine-readable results.
+All of them accept `--evidence <file>` to write machine-readable results.
 
 ## Use it from the Windows browser (manual)
 
@@ -613,6 +664,103 @@ receive the old certificate for about a second after a reload.
 There is no revocation (no CRL or OCSP). Windows `curl.exe` therefore runs
 with `--ssl-revoke-best-effort`; chain and name checks stay on.
 
+## Internal TLS (PostgreSQL and RabbitMQ)
+
+On the data network both datastores accept only TLS:
+
+- PostgreSQL runs with `ssl=on` and the repository's
+  `infra/security-lab/postgres/pg_hba.conf`: network clients must use TLS and
+  SCRAM; a non-TLS client is rejected with `pg_hba.conf rejects connection …
+  no encryption`. The container's Unix socket keeps the image's `trust` rule
+  for initialization and the health check.
+- RabbitMQ listens only on 5671 (TLS 1.2/1.3); the plaintext listener on 5672
+  is disabled.
+
+The connection-URL files that `init` writes require verification:
+
+```text
+postgres://<user>:<password>@postgres:5432/zero_to_prod?sslmode=verify-full&sslrootcert=/internal-ca/ca.crt
+amqps://<user>:<password>@rabbitmq:5671/zero_to_prod?cacertfile=/internal-ca/ca.crt
+```
+
+`verify-full` checks the chain and the name `postgres` and never falls back
+to plaintext; `amqps` has no plaintext mode, and the driver checks the name
+`rabbitmq`. `check-secrets` (and so `start`) refuses any other form,
+including `sslmode=require`, which encrypts without verifying the server.
+
+### Renewing an internal certificate
+
+```bash
+./tools/security-lab-local issue-internal-certificate postgres
+./tools/security-lab-local issue-internal-certificate rabbitmq
+```
+
+The tool issues a certificate from the internal CA, replaces `tls.pem` by a
+rename, reloads the service (PostgreSQL: copy to its tmpfs and
+`pg_ctl reload`; RabbitMQ: `rabbitmqctl eval 'ssl:clear_pem_cache().'`). It
+succeeds only when five consecutive new connections verify (code 0) with the
+new serial within 60 attempts. Otherwise it exits with `renewal of <service>
+not confirmed: timeout: …`, even if the last connection matched; investigate
+before relying on the new certificate. No client is restarted:
+
+- **new connections** use the new certificate;
+- **established connections** (pooled PostgreSQL connections, the API's
+  publisher connection, the worker's consumer connection) keep the session
+  they negotiated and are not re-verified.
+
+Nothing renews automatically. `init` reissues a certificate within two days
+of expiry, and `check-secrets` refuses an expired one, so an expired
+certificate stops the next `start` rather than the running lab. A running
+lab with an expired certificate keeps its established connections and fails
+new ones (see below).
+
+### When a certificate is wrong
+
+Measured by `verify-internal-tls` (see the
+[experiment record](../experiments/issue-121-internal-tls.md)):
+
+| Situation | New connection | Established connection | Recovery |
+| --- | --- | --- | --- |
+| Untrusted issuer | Refused by the client: Go `x509: certificate signed by unknown authority`; libpq `certificate verify failed` | Continues | Renew; no restart |
+| Wrong name | Refused: Go `x509: certificate is valid for rabbitmq, not postgres`; libpq `server certificate for "rabbitmq" does not match host name "postgres"` | Continues | Renew; no restart |
+| Expired | Refused: Go `x509: certificate has expired or is not yet valid` | Continues | Renew; no restart |
+| Names the right server and also an excluded subdomain (`postgres` and `extra.postgres`) | Refused by the CA's constraints: OpenSSL code 48 (excluded subtree violation); Go `x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "extra.postgres" is excluded by constraint ".postgres"`; libpq `certificate verify failed` | Continues | Renew; no restart |
+
+What the workload does meanwhile:
+
+- **PostgreSQL:** a restarted API stays up and answers 503
+  (`list work items failed` in its log, with the TLS reason); it recovers on
+  the next request after renewal.
+- **RabbitMQ:** a restarted worker logs the reason and retries every second;
+  new processing jobs stay `accepted` until it reconnects after renewal, and
+  then complete.
+
+The client's log is the authoritative reason. The server's log shows only
+the alert the client sent: Go clients sent `bad certificate` in every case,
+and libpq sent no alert for a name mismatch.
+
+To diagnose by hand from the data network:
+
+```bash
+state="$(./tools/security-lab-local state-dir)"
+docker run --rm --network zero-to-prod-security-lab_data --cap-drop ALL \
+  -v "$state/pki/internal-ca.crt:/ca.crt:ro" --entrypoint /opt/openssl/bin/openssl \
+  rabbitmq:4.3.6-management@sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95 \
+  s_client -connect postgres:5432 -starttls postgres -verify_hostname postgres -CAfile /ca.crt -brief </dev/null
+```
+
+Use port 5671 without `-starttls` for RabbitMQ, and the project's own
+network name for another project.
+
+### Labs created before internal TLS
+
+Existing labs have no internal CA, no datastore certificates, and plaintext
+connection URLs, so `start` refuses them until you run `init`, which adds the
+internal material and rewrites the URLs; `start` then recreates the
+containers. Data volumes are kept: `pg_hba.conf` is read from the repository,
+not from the volume. This upgrade path was not exercised; the
+authorization-era labs were left untouched.
+
 ## Stop and remove
 
 ```bash
@@ -652,6 +800,10 @@ manually when no longer needed.
 | API or worker exits with `read DATABASE_URL_FILE` | A secret file is missing in the container | `check-secrets`; recreate with `init` |
 | `refusing to use a directory that is not security lab state` or `no security lab marker` | `ZTP_SECURITY_LAB_STATE_DIR` points at a directory the lab did not create | Choose an empty or new path below an allowed base |
 | `ingress TLS directory missing` or `must have mode 711` | State created by an earlier version of the tool | Run `init` |
+| `internal CA certificate missing`, `internal TLS file missing`, or `does not require verified TLS` from `check-secrets` | State created before internal TLS | Run `init` (see [labs created before internal TLS](#labs-created-before-internal-tls)) |
+| `the postgres certificate does not verify …` or `has expired` | Certificate expired or replaced by hand | `issue-internal-certificate postgres` (or `rabbitmq`) |
+| API answers 503 and logs `x509: …`, or the worker logs `x509: …` and retries | A datastore serves a certificate the clients do not accept | Renew it with `issue-internal-certificate`; no restart needed |
+| PostgreSQL exits with `PostgreSQL TLS file missing or empty` | The `internal-tls/postgres/` mount is empty | Run `init`, then `start` |
 
 ## Limitations
 
@@ -679,8 +831,17 @@ manually when no longer needed.
   self-service, MFA, or Keycloak administration access.
 - The HTTPS port is fixed at 9443.
 - Ingress → API, ingress → Keycloak and oauth2-proxy, oauth2-proxy → Valkey,
-  Keycloak → its database, and API/worker → PostgreSQL and RabbitMQ are
-  unencrypted on internal networks.
+  and Keycloak → its database are unencrypted on internal networks
+  (ADR 0006: provisional, with reconsideration conditions). Ingress →
+  Keycloak carries person passwords and is the first candidate.
+- Internal TLS authenticates servers only; clients still authenticate with
+  passwords (no mTLS). No automated renewal, expiry monitoring, or
+  revocation; a bad certificate goes unnoticed by established connections
+  until they reconnect. A new internal CA requires `purge-state`, `init`, and
+  client restarts.
+- PostgreSQL, RabbitMQ, and the migrator keep Docker's default capabilities
+  (including raw sockets) on the data network; TLS protects their traffic
+  but does not restrict them.
 - In the verified environment, Docker forwarded the published ingress port to
   the ingress container from any network on the same Docker engine, and
   Docker Desktop also exposed it through `host.docker.internal`. "Host

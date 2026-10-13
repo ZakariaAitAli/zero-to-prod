@@ -20,6 +20,12 @@ PKI_DIR="${STATE_DIR}/pki"
 # replaced inode, so a renewed certificate would never reach the container.
 INGRESS_TLS_DIR="${STATE_DIR}/ingress-tls"
 INGRESS_TLS_FILE="${INGRESS_TLS_DIR}/tls.pem"
+# Server key and certificate of each internal TLS service, one directory per
+# service, mounted like the ingress's (ADR 0006).
+INTERNAL_TLS_DIR="${STATE_DIR}/internal-tls"
+# Services on the data network that accept only TLS. Their Docker service
+# names are the certificate names and the internal CA's permitted names.
+INTERNAL_TLS_SERVICES=(postgres rabbitmq)
 # Fixed: the issuer URL, client registrations, and the ingress's internal
 # listener all carry it.
 HTTPS_PORT=9443
@@ -34,10 +40,17 @@ CA_DAYS="${ZTP_SECURITY_LAB_CA_DAYS:-90}"
 CERT_DAYS="${ZTP_SECURITY_LAB_CERT_DAYS:-14}"
 PROBE_IMAGE="curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777"
 PROBE_NETWORK="${PROJECT}-unrelated-probe"
+# Same digests as compose.yaml. The RabbitMQ image ships an openssl binary
+# (s_client, including -starttls postgres); the PostgreSQL image ships psql
+# (libpq). Both serve as TLS probe clients on the data network.
+POSTGRES_IMAGE="postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
+RABBITMQ_IMAGE="rabbitmq:4.3.6-management@sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95"
 
 LAB_SERVICES=(postgres rabbitmq api worker ingress keycloak-postgres keycloak valkey oauth2-proxy)
 
 POSTGRES_DB="zero_to_prod"
+# Where the API, worker, and migrator see the internal CA certificate.
+INTERNAL_CA_MOUNT=/internal-ca/ca.crt
 RABBITMQ_VHOST="zero_to_prod"
 RABBITMQ_QUEUE="work_item_processing"
 
@@ -113,6 +126,9 @@ Usage:
   ./tools/security-lab-local logs [service]
   ./tools/security-lab-local issue-certificate
   ./tools/security-lab-local verify-renewal [--evidence <file>]
+  ./tools/security-lab-local issue-internal-certificate <postgres|rabbitmq>
+  ./tools/security-lab-local verify-internal-tls [--evidence <file>]
+  ./tools/security-lab-local check-serial-streak "<code> <serial>" [required] [attempts] < observations
   ./tools/security-lab-local ca-certificate
   ./tools/security-lab-local stop
   ./tools/security-lab-local destroy
@@ -127,9 +143,10 @@ requires an access token (AUTHENTICATION=oidc); browsers sign in through
 oauth2-proxy and Keycloak, machine clients use client credentials.
 
 Commands:
-  init               Create the lab CA, ingress certificate, and runtime
-                     secrets outside the repository. Keeps an existing CA and
-                     passwords; reissues the certificate near expiry.
+  init               Create the lab CA, ingress certificate, internal CA,
+                     PostgreSQL and RabbitMQ certificates, and runtime secrets
+                     outside the repository. Keeps existing CAs and passwords;
+                     reissues certificates near expiry.
   check-secrets      Verify the required runtime secret files and certificate.
   start              Check secrets, build images, start the lab, apply
                      identities and migrations, and wait until healthy.
@@ -168,6 +185,22 @@ Commands:
   issue-certificate  Issue a new ingress certificate, reload the ingress, and
                      confirm a new connection receives the new serial.
   verify-renewal     Renew on the running lab and record before/after serials.
+  issue-internal-certificate
+                     Issue a new PostgreSQL or RabbitMQ server certificate
+                     from the internal CA, reload that service, and confirm
+                     new connections verify the new serial.
+  verify-internal-tls
+                     Exercise internal TLS on the data network: plaintext
+                     refusal, an untrusted issuer, a hostname mismatch, an
+                     expired certificate, and a certificate also naming an
+                     excluded subdomain on PostgreSQL and RabbitMQ, with
+                     new versus established connections, recovery, and
+                     renewal. Restarts the API and worker and installs bad
+                     certificates temporarily.
+  check-serial-streak
+                     Test hook: apply the renewal confirmation rule (N
+                     consecutive equal observations within M attempts) to
+                     observations read from standard input.
   ca-certificate     Show the lab CA certificate paths and fingerprint.
   stop               Stop the lab, keeping its volumes.
   destroy            Remove only this lab's containers, networks, and volumes.
@@ -264,10 +297,11 @@ check_state_dir() {
   PKI_DIR="${STATE_DIR}/pki"
   INGRESS_TLS_DIR="${STATE_DIR}/ingress-tls"
   INGRESS_TLS_FILE="${INGRESS_TLS_DIR}/tls.pem"
+  INTERNAL_TLS_DIR="${STATE_DIR}/internal-tls"
   STATE_MARKER="${STATE_DIR}/.zero-to-prod-security-lab"
 }
 
-STATE_ENTRIES=(.zero-to-prod-security-lab pki secrets ingress-tls)
+STATE_ENTRIES=(.zero-to-prod-security-lab pki secrets ingress-tls internal-tls)
 
 # Prints entries of the state directory that the lab does not create.
 unexpected_state_entries() {
@@ -323,6 +357,8 @@ compose() {
   ZTP_SECURITY_LAB_SECRETS_DIR="$SECRETS_DIR" \
     ZTP_SECURITY_LAB_INGRESS_TLS_DIR="$INGRESS_TLS_DIR" \
     ZTP_SECURITY_LAB_CA_FILE="${PKI_DIR}/ca.crt" \
+    ZTP_SECURITY_LAB_INTERNAL_CA_FILE="${PKI_DIR}/internal-ca.crt" \
+    ZTP_SECURITY_LAB_INTERNAL_TLS_DIR="$INTERNAL_TLS_DIR" \
     docker compose \
       --project-name "$PROJECT" \
       -f "$COMPOSE_FILE" \
@@ -436,6 +472,161 @@ certificate_serial() {
   openssl x509 -noout -serial -in "$1" | cut -d= -f2
 }
 
+# A separate CA for service-to-service TLS (ADR 0006). Browsers and the
+# Windows trust store may trust the lab CA; the internal CA is trusted only by
+# the internal clients it is mounted into, and may issue only for the exact
+# internal service names.
+#
+# A permitted dNSName constraint "postgres" also permits every subdomain
+# ("extra.postgres"; RFC 5280). Excluding ".postgres" removes the subdomains
+# and keeps the name itself: OpenSSL (libpq) and Go's crypto/x509 (pgx,
+# amqp091-go) both read a leading dot as "proper subdomains only". RFC 5280
+# does not define the leading dot for dNSName, so other verifiers may differ.
+internal_ca_name_constraints() {
+  local service permitted="" excluded=""
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    permitted+="permitted;DNS:${service},"
+    excluded+="excluded;DNS:.${service},"
+  done
+  echo "${permitted}${excluded}excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
+}
+
+# True when the internal CA carries the current constraints: each service
+# name permitted and its subdomains excluded.
+internal_ca_constraints_ok() {
+  local text permitted excluded service
+  text="$(openssl x509 -noout -ext nameConstraints -in "${PKI_DIR}/internal-ca.crt" 2>/dev/null)" || return 1
+  permitted="$(sed -n '/Permitted:/,/Excluded:/p' <<< "$text" | tr -d ' ')"
+  excluded="$(sed -n '/Excluded:/,$p' <<< "$text" | tr -d ' ')"
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    grep -qx "DNS:${service}" <<< "$permitted" || return 1
+    grep -qx "DNS:\.${service}" <<< "$excluded" || return 1
+  done
+}
+
+init_internal_ca() {
+  if [[ -f "${PKI_DIR}/internal-ca.key" ]]; then
+    if internal_ca_constraints_ok; then
+      echo "Internal CA exists: ${PKI_DIR}/internal-ca.crt"
+      return 0
+    fi
+    # An internal CA from before the subdomain exclusion. Only internal
+    # clients trust it, and start recreates them, so replace it; the
+    # certificates it issued no longer verify and are reissued below.
+    echo "Replacing the internal CA: its name constraints permit subdomains of the service names."
+    rm -f "${PKI_DIR}/internal-ca.key" "${PKI_DIR}/internal-ca.crt"
+  fi
+
+  echo "Creating internal CA (${CA_DAYS} days, name-constrained to exactly ${INTERNAL_TLS_SERVICES[*]})..."
+
+  (
+    umask 077
+    openssl req -x509 -new \
+      -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${PKI_DIR}/internal-ca.key" \
+      -out "${PKI_DIR}/internal-ca.crt" \
+      -days "$CA_DAYS" \
+      -subj "/O=Zero-to-Prod security lab/CN=Zero-to-Prod internal CA (${PROJECT})" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -addext "nameConstraints=critical,$(internal_ca_name_constraints)" \
+      -addext "subjectKeyIdentifier=hash" \
+      2>/dev/null
+  )
+
+  chmod 600 "${PKI_DIR}/internal-ca.key"
+  chmod 644 "${PKI_DIR}/internal-ca.crt"
+}
+
+# Issue a server certificate for an internal service and replace its
+# tls.pem (key and certificate) by a single rename. Only "valid" is used in
+# normal operation; the other kinds exist for verify-internal-tls:
+#   valid      internal CA, the service's own name, CERT_DAYS
+#   mismatch   internal CA, another internal service's name
+#   expired    internal CA, the right name, validity ended a day ago
+#   untrusted  the right name, signed by the CA in directory $3 (not the
+#              internal CA)
+#   subdomain  internal CA, the right name plus "extra.<service>", which the
+#              CA's constraints exclude
+issue_internal_certificate() {
+  local service="$1" kind="${2:-valid}"
+  local dir="${INTERNAL_TLS_DIR}/${service}"
+  local ca_key="${PKI_DIR}/internal-ca.key" ca_cert="${PKI_DIR}/internal-ca.crt"
+  local name="$service" other san=""
+  local validity=(-days "$CERT_DAYS")
+
+  [[ -f "$ca_key" ]] || die "internal CA missing; run: $0 init"
+  [[ -d "$dir" ]] || die "internal TLS directory missing: ${dir}; run: $0 init"
+
+  case "$kind" in
+    valid) ;;
+    mismatch)
+      for other in "${INTERNAL_TLS_SERVICES[@]}"; do
+        [[ "$other" != "$service" ]] && name="$other" && break
+      done
+      ;;
+    expired)
+      validity=(-not_before "$(date -u -d '-2 days' +%Y%m%d%H%M%SZ)"
+                -not_after "$(date -u -d '-1 day' +%Y%m%d%H%M%SZ)")
+      ;;
+    untrusted)
+      ca_key="${3:?untrusted requires a CA directory}/ca.key"
+      ca_cert="${3}/ca.crt"
+      ;;
+    subdomain) san=",DNS:extra.${service}" ;;
+    *) die "unknown certificate kind: ${kind}" ;;
+  esac
+
+  local work
+  work="$(mktemp -d "${PKI_DIR}/.issue.XXXXXX")"
+
+  cat > "${work}/ext" <<EOF_EXT
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:${name}${san}
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid
+EOF_EXT
+
+  (
+    umask 077
+    openssl req -new \
+      -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${work}/key" \
+      -out "${work}/csr" \
+      -subj "/CN=${name}" \
+      2>/dev/null
+
+    openssl x509 -req \
+      -in "${work}/csr" \
+      -CA "$ca_cert" \
+      -CAkey "$ca_key" \
+      -set_serial "0x$(openssl rand -hex 16)" \
+      "${validity[@]}" \
+      -extfile "${work}/ext" \
+      -out "${work}/crt" \
+      2>/dev/null
+  ) || { rm -rf -- "$work"; die "issuing the ${kind} certificate for ${service} failed"; }
+
+  # Same layout and permissions as the ingress (see "Secret file
+  # permissions" in the guide): one file, replaced by a single rename.
+  cat "${work}/key" "${work}/crt" > "${dir}/.tls.pem.tmp"
+  rm -rf -- "$work"
+  chmod 644 "${dir}/.tls.pem.tmp"
+  mv -f "${dir}/.tls.pem.tmp" "${dir}/tls.pem"
+}
+
+# True when the service's certificate verifies against the internal CA for
+# its own name and stays valid for at least $2 seconds.
+internal_certificate_ok() {
+  local service="$1" seconds="${2:-0}" file="${INTERNAL_TLS_DIR}/${1}/tls.pem"
+  [[ -s "$file" ]] &&
+    openssl verify -CAfile "${PKI_DIR}/internal-ca.crt" -verify_hostname "$service" \
+      -purpose sslserver "$file" >/dev/null 2>&1 &&
+    openssl x509 -checkend "$seconds" -noout -in "$file" >/dev/null 2>&1
+}
+
 # Serial of the certificate the ingress serves on a new, verified connection.
 served_serial() {
   openssl s_client \
@@ -479,17 +670,20 @@ derive_secrets() {
   publisher="$(secret rabbitmq-publisher-password)"
   rabbitmq_worker="$(secret rabbitmq-worker-password)"
 
-  # Datastore TLS is a later slice; these connections stay on internal
-  # networks and are explicitly unencrypted for now.
-  printf 'postgres://zero_to_prod_migrator:%s@postgres:5432/%s?sslmode=disable\n' "$migrator" "$POSTGRES_DB" \
+  # TLS with server and name verification against the internal CA (ADR
+  # 0006). verify-full never falls back to plaintext; the amqps scheme has no
+  # plaintext mode, and the drivers take the server name from the host.
+  local pg_tls="sslmode=verify-full&sslrootcert=${INTERNAL_CA_MOUNT}"
+  local amqp_tls="cacertfile=${INTERNAL_CA_MOUNT}"
+  printf 'postgres://zero_to_prod_migrator:%s@postgres:5432/%s?%s\n' "$migrator" "$POSTGRES_DB" "$pg_tls" \
     | write_file "${SECRETS_DIR}/postgres-migrator-url" 644
-  printf 'postgres://zero_to_prod_app:%s@postgres:5432/%s?sslmode=disable\n' "$app" "$POSTGRES_DB" \
+  printf 'postgres://zero_to_prod_app:%s@postgres:5432/%s?%s\n' "$app" "$POSTGRES_DB" "$pg_tls" \
     | write_file "${SECRETS_DIR}/api-database-url" 644
-  printf 'postgres://zero_to_prod_worker:%s@postgres:5432/%s?sslmode=disable\n' "$worker" "$POSTGRES_DB" \
+  printf 'postgres://zero_to_prod_worker:%s@postgres:5432/%s?%s\n' "$worker" "$POSTGRES_DB" "$pg_tls" \
     | write_file "${SECRETS_DIR}/worker-database-url" 644
-  printf 'amqp://zero_to_prod_publisher:%s@rabbitmq:5672/%s\n' "$publisher" "$RABBITMQ_VHOST" \
+  printf 'amqps://zero_to_prod_publisher:%s@rabbitmq:5671/%s?%s\n' "$publisher" "$RABBITMQ_VHOST" "$amqp_tls" \
     | write_file "${SECRETS_DIR}/api-rabbitmq-url" 644
-  printf 'amqp://zero_to_prod_worker:%s@rabbitmq:5672/%s\n' "$rabbitmq_worker" "$RABBITMQ_VHOST" \
+  printf 'amqps://zero_to_prod_worker:%s@rabbitmq:5671/%s?%s\n' "$rabbitmq_worker" "$RABBITMQ_VHOST" "$amqp_tls" \
     | write_file "${SECRETS_DIR}/worker-rabbitmq-url" 644
 
   derive_authentication_configs
@@ -720,6 +914,21 @@ init_state() {
   chmod 711 "$INGRESS_TLS_DIR"
 
   init_ca
+  init_internal_ca
+
+  # Mounted into PostgreSQL and RabbitMQ as their TLS directories; mode 711
+  # like ingress-tls. Reissue when missing, within two days of expiry, or
+  # when the file does not verify for the service's name against the internal
+  # CA (for example after an interrupted verify-internal-tls).
+  local service
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    (umask 077; mkdir -p "${INTERNAL_TLS_DIR}/${service}")
+    chmod 711 "$INTERNAL_TLS_DIR" "${INTERNAL_TLS_DIR}/${service}"
+    if ! internal_certificate_ok "$service" 172800; then
+      echo "Issuing internal certificate for ${service} (${CERT_DAYS} days)..."
+      issue_internal_certificate "$service" valid
+    fi
+  done
 
   # Earlier versions mounted the ingress key and certificate as single files.
   rm -f "${SECRETS_DIR}/ingress-tls-key" "${SECRETS_DIR}/ingress-tls-chain"
@@ -820,6 +1029,54 @@ check_secrets() {
     fi
   fi
 
+  # Internal TLS (ADR 0006): each server certificate verifies for its own
+  # name against the internal CA, is unexpired, and matches its key.
+  local service file
+  if [[ ! -f "${PKI_DIR}/internal-ca.crt" ]]; then
+    echo "error: internal CA certificate missing: ${PKI_DIR}/internal-ca.crt (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif ! internal_ca_constraints_ok; then
+    echo "error: the internal CA's name constraints do not limit it to exactly ${INTERNAL_TLS_SERVICES[*]} (subdomains permitted); run: $0 init" >&2
+    failures=$((failures + 1))
+  else
+    for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+      file="${INTERNAL_TLS_DIR}/${service}/tls.pem"
+      if [[ "$(stat -c '%a' "${INTERNAL_TLS_DIR}/${service}" 2>/dev/null)" != "711" ]]; then
+        echo "error: ${INTERNAL_TLS_DIR}/${service} missing or not mode 711 (run: $0 init)" >&2
+        failures=$((failures + 1))
+      elif [[ ! -s "$file" ]]; then
+        echo "error: required internal TLS file missing or empty: ${file} (run: $0 init)" >&2
+        failures=$((failures + 1))
+      elif ! internal_certificate_ok "$service" 0; then
+        echo "error: the ${service} certificate does not verify for the name ${service} against the internal CA, or has expired; run: $0 issue-internal-certificate ${service}" >&2
+        failures=$((failures + 1))
+      elif [[ "$(openssl x509 -noout -pubkey -in "$file" | openssl sha256)" != \
+              "$(openssl pkey -pubout -in "$file" | openssl sha256)" ]]; then
+        echo "error: the ${service} key does not match its certificate" >&2
+        failures=$((failures + 1))
+      fi
+    done
+  fi
+
+  # Every internal connection URL requests verified TLS; a plaintext or
+  # unverified URL (for example from an older init) is refused here rather
+  # than discovered at runtime.
+  local url_file
+  for url_file in postgres-migrator-url api-database-url worker-database-url; do
+    if [[ -s "${SECRETS_DIR}/${url_file}" ]] &&
+       ! grep -qE '^postgres://[^?]*@postgres:5432/[^?]+\?sslmode=verify-full&sslrootcert=/internal-ca/ca\.crt$' "${SECRETS_DIR}/${url_file}"; then
+      echo "error: ${url_file} does not require verified TLS (sslmode=verify-full with the internal CA); run: $0 init" >&2
+      failures=$((failures + 1))
+    fi
+  done
+  for url_file in api-rabbitmq-url worker-rabbitmq-url; do
+    if [[ -s "${SECRETS_DIR}/${url_file}" ]] &&
+       ! grep -qE '^amqps://[^?]*@rabbitmq:5671/[^?]+\?cacertfile=/internal-ca/ca\.crt$' "${SECRETS_DIR}/${url_file}"; then
+      echo "error: ${url_file} does not require verified TLS (amqps with the internal CA); run: $0 init" >&2
+      failures=$((failures + 1))
+    fi
+  done
+
   if [[ "$failures" -ne 0 ]]; then
     echo "Security lab secret check failed (${failures} problem(s))." >&2
     return 1
@@ -828,6 +1085,11 @@ check_secrets() {
   echo "Security lab secrets present; ingress certificate valid until $(
     openssl x509 -noout -enddate -in "$INGRESS_TLS_FILE" | cut -d= -f2
   )."
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    echo "Internal ${service} certificate valid until $(
+      openssl x509 -noout -enddate -in "${INTERNAL_TLS_DIR}/${service}/tls.pem" | cut -d= -f2
+    )."
+  done
 }
 
 show_ca_certificate() {
@@ -843,6 +1105,8 @@ show_ca_certificate() {
   echo "  SHA-1:        $(openssl x509 -noout -fingerprint -sha1 -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
   echo "  Valid until:  $(openssl x509 -noout -enddate -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
   echo "The CA private key never leaves ${PKI_DIR}."
+  echo "The internal CA (${PKI_DIR}/internal-ca.crt) is for service-to-service TLS"
+  echo "inside the lab only; browsers and Windows do not need it."
 }
 
 # ---------------------------------------------------------------------------
@@ -1002,6 +1266,508 @@ EOF_EVIDENCE
   fi
 
   [[ "$result" == pass ]]
+}
+
+# ---------------------------------------------------------------------------
+# Internal TLS (ADR 0006)
+# ---------------------------------------------------------------------------
+
+INTERNAL_PROBE="${PROJECT}-tls-probe"
+
+is_internal_tls_service() {
+  local service
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    [[ "$1" == "$service" ]] && return 0
+  done
+  return 1
+}
+
+# Make a running service use its current tls.pem for new connections.
+# Established connections keep the session they negotiated.
+reload_internal_tls() {
+  case "$1" in
+    postgres)
+      compose exec -T -u root postgres /opt/zero-to-prod/tls.sh
+      compose exec -T -u postgres postgres pg_ctl reload >/dev/null
+      ;;
+    rabbitmq)
+      # The Erlang TLS stack caches PEM files; clearing the cache makes the
+      # next handshake read the replaced file.
+      compose exec -T rabbitmq rabbitmqctl -q eval 'ssl:clear_pem_cache().' >/dev/null
+      ;;
+  esac
+}
+
+# A TLS client on the data network for observing new connections. It holds
+# no secret: only the internal CA certificate is mounted.
+start_internal_probe() {
+  docker rm -f "$INTERNAL_PROBE" >/dev/null 2>&1 || true
+  docker run -d --rm --name "$INTERNAL_PROBE" --network "${PROJECT}_data" \
+    --cap-drop ALL --security-opt no-new-privileges:true --read-only --user 999:999 \
+    -v "${PKI_DIR}/internal-ca.crt:/internal-ca/ca.crt:ro" \
+    --entrypoint sleep "$RABBITMQ_IMAGE" infinity >/dev/null
+}
+
+stop_internal_probe() {
+  docker rm -f "$INTERNAL_PROBE" >/dev/null 2>&1 || true
+}
+
+# "<verify code> <served serial>" for one new TLS connection to the service,
+# verified against the internal CA for the service's name. OpenSSL completes
+# the handshake despite a verification failure, so the served certificate's
+# serial is known either way.
+internal_tls_probe() {
+  local service="$1" port starttls=""
+  case "$service" in
+    postgres) port=5432; starttls="-starttls postgres" ;;
+    rabbitmq) port=5671 ;;
+  esac
+  docker exec "$INTERNAL_PROBE" sh -c '
+    out="$(/opt/openssl/bin/openssl s_client -connect "$1:$2" -servername "$1" -verify_hostname "$1" \
+      -CAfile /internal-ca/ca.crt $3 </dev/null 2>&1)"
+    code="$(printf "%s\n" "$out" | sed -n "s/^ *Verify return code: \([0-9]*\).*/\1/p" | tail -n 1)"
+    serial="$(printf "%s\n" "$out" | /opt/openssl/bin/openssl x509 -noout -serial 2>/dev/null | cut -d= -f2)"
+    echo "${code:-none} ${serial:-none}"' probe "$service" "$port" "$starttls"
+}
+
+# Run "$@" up to $3 times, $4 seconds apart, until $2 consecutive outputs
+# equal $1. On success print the matching output. Otherwise fail and print
+# "timeout: …" with the streak at the end and the last output, which can
+# never equal $1, so a caller comparing outputs cannot mistake a timeout for
+# success. One match at the end, or matches interrupted by other outputs,
+# are not enough.
+await_observation_streak() {
+  local expected="$1" required="$2" attempts="$3" delay="$4" observed="" consecutive=0 attempt
+  shift 4
+  for (( attempt = 1; attempt <= attempts; attempt++ )); do
+    observed="$("$@")" || observed="error"
+    if [[ "$observed" == "$expected" ]]; then
+      consecutive=$((consecutive + 1))
+      if (( consecutive >= required )); then
+        echo "$observed"
+        return 0
+      fi
+    else
+      consecutive=0
+    fi
+    if (( attempt < attempts )); then sleep "$delay"; fi
+  done
+  echo "timeout: ${consecutive} of ${required} consecutive '${expected}' after ${attempts} attempts; last '${observed:-none}'"
+  return 1
+}
+
+# Wait until five consecutive new connections to the service show the
+# expected observation, "<verify code> <serial>" (reloads are asynchronous,
+# as for the ingress). The code is part of the match: renewal needs five
+# verified (0) connections with the new serial; a failure case needs five
+# with its own nonzero code and the bad serial. Prints the matching
+# observation, or fails with a "timeout: …" line.
+wait_for_internal_serial() {
+  await_observation_streak "$2" 5 60 0.25 internal_tls_probe "$1"
+}
+
+# Reads one observation per line from standard input; "none none" at its end.
+read_observation() {
+  local line
+  IFS= read -r line || line="none none"
+  echo "$line"
+}
+
+issue_internal_certificate_command() {
+  local service="${1:-}" expected observed
+  is_internal_tls_service "$service" ||
+    die "usage: $0 issue-internal-certificate <$(IFS='|'; echo "${INTERNAL_TLS_SERVICES[*]}")>"
+  require_owned_state
+
+  issue_internal_certificate "$service" valid
+  expected="$(certificate_serial "${INTERNAL_TLS_DIR}/${service}/tls.pem")"
+
+  if [[ -z "$(compose ps -q --status running "$service" 2>/dev/null)" ]]; then
+    echo "Issued ${service} serial ${expected}; ${service} is not running."
+    return 0
+  fi
+
+  reload_internal_tls "$service"
+  start_internal_probe
+  if ! observed="$(wait_for_internal_serial "$service" "0 ${expected}")"; then
+    stop_internal_probe
+    die "renewal of ${service} not confirmed: ${observed} (verify code, serial)"
+  fi
+  stop_internal_probe
+  echo "${service} reloaded; five consecutive new connections verified serial ${expected}."
+}
+
+# libpq's verdict on one new connection to PostgreSQL as a role that does
+# not exist, without a password: "fe_sendauth: no password supplied" means
+# TLS and the server's identity were accepted and authentication began.
+# $1: sslmode; $2: CA file to trust (default: the internal CA).
+libpq_probe() {
+  local sslmode="$1" ca="${2:-${PKI_DIR}/internal-ca.crt}" out
+  out="$(docker run --rm --network "${PROJECT}_data" --cap-drop ALL \
+    --security-opt no-new-privileges:true --user 70:70 -e HOME=/tmp \
+    -v "${ca}:/probe-ca/ca.crt:ro" --entrypoint psql "$POSTGRES_IMAGE" -X -w \
+    "host=postgres port=5432 dbname=${POSTGRES_DB} user=tls_probe sslmode=${sslmode} sslrootcert=/probe-ca/ca.crt connect_timeout=5" \
+    -c 'SELECT 1' 2>&1 || true)"
+  printf '%s\n' "$out" | tail -n 1 \
+    | sed -E 's/.* failed: //; s/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/<address>/g; s/[[:space:]]+/ /g; s/ $//'
+}
+
+pg_admin_query() {
+  compose exec -T postgres psql -X -q -t -A -U zero_to_prod_admin -d "$POSTGRES_DB" -c "$1" 2>/dev/null
+}
+
+# Network client connections of each side, one per line: PostgreSQL backends
+# as "<pid>:<user>:<ssl>:<version>", RabbitMQ connections as
+# "<user>:<peer port>:<ssl>:<protocol>".
+internal_connections() {
+  case "$1" in
+    postgres)
+      pg_admin_query "SELECT a.pid || ':' || a.usename || ':' || s.ssl || ':' || coalesce(s.version, '-')
+                      FROM pg_stat_activity a JOIN pg_stat_ssl s USING (pid)
+                      WHERE a.backend_type = 'client backend' AND a.client_addr IS NOT NULL
+                      ORDER BY a.pid"
+      ;;
+    rabbitmq)
+      compose exec -T rabbitmq rabbitmqctl -q list_connections --no-table-headers \
+        user peer_port ssl ssl_protocol 2>/dev/null | tr '\t' ':' | sort
+      ;;
+  esac
+}
+
+# Connection identities only (PostgreSQL pid, RabbitMQ user and peer port).
+connection_ids() {
+  case "$1" in
+    postgres) cut -d: -f1,2 ;;
+    rabbitmq) cut -d: -f1,2 ;;
+  esac
+}
+
+# "kept" when every connection in $1 is still in $2; otherwise what was lost.
+connections_kept() {
+  local before="$1" after="$2" lost
+  [[ -n "$before" ]] || { echo "none-before"; return 0; }
+  lost="$(comm -23 <(sort <<< "$before") <(sort <<< "$after") | tr '\n' ' ')"
+  if [[ -z "$lost" ]]; then echo kept; else echo "lost: ${lost% }"; fi
+}
+
+# Count of lines in $2 that are not in $1.
+new_connection_count() {
+  comm -13 <(sort <<< "$1") <(sort <<< "$2") | grep -c . || true
+}
+
+# Create a Work Item as the editor and process it. Prints the job's final
+# state, or the step that failed.
+tls_flow() {
+  local jar="$1" label="$2" out item job
+  out="$(api_call session "$jar" POST /items "{\"title\":\"${label}\"}")"
+  [[ "${out%% *}" == 201 ]] || { echo "create:${out%% *}"; return 0; }
+  item="$(json_field id <<< "${out#* }")"
+  job="$(start_processing session "$jar" POST "/items/${item}/process" || true)"
+  [[ -n "$job" ]] || { echo "process:not-accepted"; return 0; }
+  wait_job_state session "$jar" "$job"
+}
+
+# The Go TLS verification error in a service's log since $2.
+go_tls_reason() {
+  { compose logs --no-log-prefix --since "$2" "$1" 2>/dev/null \
+      | grep -oE 'x509: (certificate (signed by unknown authority|is valid for [a-z0-9.-]+, not [a-z0-9.-]+|has expired or is not yet valid)|a root or intermediate certificate is not authorized to sign for this name: DNS name "[a-z0-9.-]+" is excluded by constraint "[a-z0-9.-]+")' \
+      || true; } | sort -u | paste -sd ';' -
+}
+
+# The server's own record of rejected handshakes since $2 (empty when the
+# client sent no alert the server logged).
+server_tls_log() {
+  case "$1" in
+    postgres)
+      { compose logs --no-log-prefix --since "$2" postgres 2>/dev/null \
+          | grep -oE 'could not accept SSL connection: .*' || true; } \
+        | sed 's/[[:space:]]*$//' | sort -u | paste -sd ';' -
+      ;;
+    rabbitmq)
+      { compose logs --no-log-prefix --since "$2" rabbitmq 2>/dev/null \
+          | grep -oE 'received CLIENT ALERT: [A-Za-z -]+' || true; } \
+        | sed 's/[[:space:]]*$//' | sort -u | paste -sd ';' -
+      ;;
+  esac
+}
+
+wait_for_worker_connection() {
+  local _
+  for _ in $(seq 1 60); do
+    internal_connections rabbitmq | grep -q '^zero_to_prod_worker:' && { echo present; return 0; }
+    sleep 1
+  done
+  echo absent
+}
+
+# Expected client-side outcomes per certificate kind.
+expected_openssl_code() {
+  case "$1" in
+    untrusted) echo 21 ;;  # unable to verify the first certificate
+    mismatch) echo 62 ;;   # hostname mismatch
+    expired) echo 10 ;;    # certificate has expired
+    subdomain) echo 48 ;;  # excluded subtree violation
+  esac
+}
+
+expected_go_reason() {
+  case "$1" in
+    untrusted) echo "x509: certificate signed by unknown authority" ;;
+    mismatch) echo "x509: certificate is valid for ${3}, not ${2}" ;;
+    expired) echo "x509: certificate has expired or is not yet valid" ;;
+    # Go 1.27's wording (the API and worker images build with it).
+    subdomain) echo "x509: a root or intermediate certificate is not authorized to sign for this name: DNS name \"extra.${2}\" is excluded by constraint \".${2}\"" ;;
+  esac
+}
+
+expected_libpq_error() {
+  case "$1" in
+    mismatch) echo "server certificate for \"rabbitmq\" does not match host name \"postgres\"" ;;
+    *) echo "SSL error: certificate verify failed" ;;
+  esac
+}
+
+# One failure case: install a bad certificate on one service, observe new
+# and established connections, then renew with a valid certificate and
+# observe recovery without restarting the clients again.
+internal_tls_failure_case() {
+  local target="$1" kind="$2" jar="$3" rogue="$4"
+  local area="${target}: ${kind}" before after bad_serial good_serial observed since other
+  other="$( [[ "$target" == postgres ]] && echo rabbitmq || echo postgres )"
+
+  before="$(internal_connections "$target" | connection_ids "$target")"
+  issue_internal_certificate "$target" "$kind" "$rogue"
+  bad_serial="$(certificate_serial "${INTERNAL_TLS_DIR}/${target}/tls.pem")"
+  reload_internal_tls "$target"
+
+  expect "$area" "new connection: openssl verify code, served serial" \
+    "$(expected_openssl_code "$kind") ${bad_serial}" \
+    "$(wait_for_internal_serial "$target" "$(expected_openssl_code "$kind") ${bad_serial}")"
+
+  if [[ "$target" == postgres ]]; then
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    expect "$area" "new connection: libpq sslmode=verify-full" "$(expected_libpq_error "$kind")" \
+      "$(libpq_probe verify-full)"
+    sleep 1
+    observed="$(server_tls_log postgres "$since")"
+    record "$area" "server log: libpq handshake" "observe" "${observed:-none}" info
+  fi
+
+  # Established connections: negotiated before the change, unaffected by it.
+  # A request that succeeds now cannot have used a new connection to the
+  # target, because every new connection fails.
+  after="$(internal_connections "$target" | connection_ids "$target")"
+  expect "$area" "established connections after the change" "kept" "$(connections_kept "$before" "$after")"
+  local flow_before flow_after
+  flow_before="$(internal_connections "$target" | connection_ids "$target")"
+  expect "$area" "established: create and process" "succeeded" "$(tls_flow "$jar" "tls ${target} ${kind} established")"
+  flow_after="$(internal_connections "$target" | connection_ids "$target")"
+  record "$area" "established: new ${target} connections during the flow" "observe" \
+    "$(new_connection_count "$flow_before" "$flow_after")" info
+
+  # New connections from the workload itself.
+  local pending_job="" out
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$target" == postgres ]]; then
+    compose restart api >/dev/null 2>&1
+    compose up -d --wait --no-recreate api >/dev/null 2>&1 || die "the API did not become healthy after restart"
+    observed="$(call_summary session "$jar" GET /items)"
+    expect "$area" "restarted API: GET /api/items" "503" "${observed%% *}"
+    sleep 1
+    expect "$area" "restarted API: Go TLS error" "$(expected_go_reason "$kind" postgres "$other")" \
+      "$(go_tls_reason api "$since")"
+  else
+    compose restart worker >/dev/null 2>&1
+    sleep 5
+    expect "$area" "restarted worker: Go TLS error" "$(expected_go_reason "$kind" rabbitmq "$other")" \
+      "$(go_tls_reason worker "$since")"
+    expect "$area" "restarted worker: broker connection" "absent" \
+      "$(internal_connections rabbitmq | grep -q '^zero_to_prod_worker:' && echo present || echo absent)"
+    # Published through the API's established connection, but nobody can
+    # consume it.
+    out="$(api_call session "$jar" POST /items "{\"title\":\"tls rabbitmq ${kind} pending\"}")"
+    pending_job="$(start_processing session "$jar" POST "/items/$(json_field id <<< "${out#* }")/process" || true)"
+    sleep 5
+    expect "$area" "job while no worker can connect" "accepted" \
+      "$(json_field state <<< "$(api_call session "$jar" GET "/processing-jobs/${pending_job}" | cut -d' ' -f2-)")"
+  fi
+  observed="$(server_tls_log "$target" "$since")"
+  record "$area" "server log: workload handshakes" "observe" "${observed:-none}" info
+
+  # Recovery: renew with a valid certificate; clients are not restarted.
+  issue_internal_certificate "$target" valid
+  good_serial="$(certificate_serial "${INTERNAL_TLS_DIR}/${target}/tls.pem")"
+  reload_internal_tls "$target"
+  expect "$area" "renewed: openssl verify code, served serial" "0 ${good_serial}" \
+    "$(wait_for_internal_serial "$target" "0 ${good_serial}")"
+  if [[ "$target" == postgres ]]; then
+    expect "$area" "renewed: same API process, GET /api/items" "200" "$(call_summary session "$jar" GET /items)"
+  else
+    expect "$area" "renewed: worker reconnects by itself" "present" "$(wait_for_worker_connection)"
+    expect "$area" "renewed: pending job completes" "succeeded" "$(wait_job_state session "$jar" "$pending_job")"
+  fi
+  expect "$area" "renewed: create and process" "succeeded" "$(tls_flow "$jar" "tls ${target} ${kind} recovered")"
+}
+
+# Renewal with a valid certificate: new connections get the new serial,
+# established ones continue.
+internal_tls_renewal_case() {
+  local target="$1" jar="$2" area="${1}: renewal" before after old_serial new_serial
+  before="$(internal_connections "$target" | connection_ids "$target")"
+  old_serial="$(internal_tls_probe "$target")"
+  issue_internal_certificate "$target" valid
+  new_serial="$(certificate_serial "${INTERNAL_TLS_DIR}/${target}/tls.pem")"
+  reload_internal_tls "$target"
+  record "$area" "before: openssl verify code, served serial" "observe" "$old_serial" info
+  expect "$area" "after: openssl verify code, served serial" "0 ${new_serial}" \
+    "$(wait_for_internal_serial "$target" "0 ${new_serial}")"
+  expect "$area" "served serial changed" "changed" \
+    "$([[ "${old_serial#* }" != "$new_serial" ]] && echo changed || echo unchanged)"
+  after="$(internal_connections "$target" | connection_ids "$target")"
+  expect "$area" "established connections after renewal" "kept" "$(connections_kept "$before" "$after")"
+  expect "$area" "create and process" "succeeded" "$(tls_flow "$jar" "tls ${target} renewal")"
+}
+
+# Containers of this project, their networks, and whether their first
+# process could capture or forge traffic (CAP_NET_RAW) now or after gaining
+# root (bounding set).
+internal_network_inventory() {
+  local area="network inventory" service id status networks uid eff bnd nnp
+  for service in "${LAB_SERVICES[@]}"; do
+    id="$(compose ps -q "$service")"
+    [[ -n "$id" ]] || continue
+    networks="$(docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}' "$id" \
+      | tr ' ' '\n' | sed "s/^${PROJECT}_//" | grep . | sort | paste -sd, -)"
+    nnp="$(docker inspect --format '{{range .HostConfig.SecurityOpt}}{{.}} {{end}}' "$id" | grep -q 'no-new-privileges' && echo yes || echo no)"
+    status="$(docker exec "$id" cat /proc/1/status 2>/dev/null || true)"
+    if grep -q '^CapEff:' <<< "$status"; then
+      uid="$(awk '/^Uid:/ {print $2}' <<< "$status")"
+      eff="$(awk '/^CapEff:/ {print $2}' <<< "$status")"
+      bnd="$(awk '/^CapBnd:/ {print $2}' <<< "$status")"
+      record "$area" "$service" "observe" \
+        "networks=${networks} pid1_uid=${uid} net_raw_effective=$(( (16#${eff} >> 13) & 1 )) net_raw_bounding=$(( (16#${bnd} >> 13) & 1 )) no_new_privileges=${nnp}" info
+    else
+      # No cat in the image (distroless): report the configuration instead.
+      record "$area" "$service" "observe" \
+        "networks=${networks} user=$(docker inspect --format '{{.Config.User}}' "$id") cap_drop=$(docker inspect --format '{{range .HostConfig.CapDrop}}{{.}} {{end}}' "$id" | xargs | tr ' ' ,) no_new_privileges=${nnp} (no /proc reader in the image)" info
+    fi
+  done
+  record "$area" "migrate (on demand)" "observe" \
+    "$(compose --profile tools config --format json 2>/dev/null | python3 -I -c '
+import json, sys
+s = json.load(sys.stdin)["services"]["migrate"]
+print("networks=" + ",".join(sorted(s.get("networks", {}))) + " user=" + (s.get("user") or "image-default") +
+      " cap_drop=" + (",".join(s.get("cap_drop", [])) or "none") +
+      " no_new_privileges=" + ("yes" if any("no-new-privileges" in o for o in s.get("security_opt", [])) else "no"))
+')" info
+}
+
+verify_internal_tls() {
+  local evidence_file="" started service
+  [[ "${1:-}" == "--evidence" ]] && evidence_file="${2:?--evidence requires a file}"
+  require_command python3
+  require_owned_state
+  for service in postgres rabbitmq api worker oauth2-proxy; do
+    [[ -n "$(compose ps -q --status running "$service" 2>/dev/null)" ]] || die "${service} is not running; run: $0 start"
+  done
+  openssl x509 -help 2>&1 | grep -q -- '-not_after' ||
+    die "openssl $(openssl version | cut -d' ' -f2) cannot issue the expired test certificate (-not_after needs 3.4 or later)"
+
+  RESULTS=(); FAILED=0
+  AUTH_WORK="$(mktemp -d)"
+  TLS_ROGUE_DIR="$(mktemp -d)"
+  local rogue="$TLS_ROGUE_DIR"
+  # Always leave valid certificates, the probe removed, and the untrusted
+  # CA's key deleted, also after a failure.
+  trap '
+    stop_internal_probe
+    for tls_service in "${INTERNAL_TLS_SERVICES[@]}"; do
+      if ! internal_certificate_ok "$tls_service" 0; then
+        issue_internal_certificate "$tls_service" valid
+      fi
+      reload_internal_tls "$tls_service" >/dev/null 2>&1 || true
+    done
+    compose up -d --no-recreate api worker >/dev/null 2>&1 || true
+    rm -rf -- "$AUTH_WORK" "$TLS_ROGUE_DIR"
+  ' EXIT
+  set_ui_headers
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  wait_for_issuer || die "the issuer is not reachable: ${ISSUER}"
+
+  # A CA the clients do not trust, for the untrusted-issuer cases; its key
+  # exists only in a temporary directory for the duration of the run.
+  (
+    umask 077
+    openssl req -x509 -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${rogue}/ca.key" -out "${rogue}/ca.crt" -days 1 \
+      -subj "/CN=Untrusted test CA (verify-internal-tls)" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign" 2>/dev/null
+  )
+
+  local editor="${AUTH_WORK}/editor"
+  browser_login "$editor" lab-user >/dev/null
+
+  internal_network_inventory
+  start_internal_probe
+
+  # --- Baseline -------------------------------------------------------------
+  local area="baseline" plaintext
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    expect "$area" "${service}: openssl verify code, served serial" \
+      "0 $(certificate_serial "${INTERNAL_TLS_DIR}/${service}/tls.pem")" \
+      "$(wait_for_internal_serial "$service" "0 $(certificate_serial "${INTERNAL_TLS_DIR}/${service}/tls.pem")")"
+  done
+  expect "$area" "postgres: libpq verify-full, internal CA (TLS accepted; authentication begins)" \
+    "fe_sendauth: no password supplied" "$(libpq_probe verify-full)"
+  expect "$area" "postgres: libpq verify-full, lab CA instead of internal CA" \
+    "SSL error: certificate verify failed" "$(libpq_probe verify-full "${PKI_DIR}/ca.crt")"
+  expect "$area" "postgres: libpq sslmode=disable (plaintext)" \
+    'FATAL: pg_hba.conf rejects connection for host "<address>", user "tls_probe", database "zero_to_prod", no encryption' \
+    "$(libpq_probe disable)"
+  expect "$area" "rabbitmq: plaintext AMQP port 5672" "refused connects=0 exit=7" \
+    "$(probe_tcp_detail "${PROJECT}_data" "rabbitmq:5672")"
+  expect "$area" "create and process" "succeeded" "$(tls_flow "$editor" "tls baseline")"
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    record "$area" "${service}: client connections" "observe" \
+      "$(internal_connections "$service" | cut -d: -f2- | sort | uniq -c | sed 's/^ *//' | paste -sd ';' -)" info
+  done
+  plaintext="$(internal_connections postgres | grep -vc ':true:' || true)"
+  expect "$area" "postgres: network client backends without TLS" "0" "$plaintext"
+  plaintext="$(internal_connections rabbitmq | grep -vc ':true:' || true)"
+  expect "$area" "rabbitmq: connections without TLS" "0" "$plaintext"
+
+  # --- Failure cases and recovery ------------------------------------------
+  local kind
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    # subdomain: the certificate names the right server, so only the CA's
+    # exclusion of "extra.<service>" can make the clients refuse it.
+    for kind in untrusted mismatch expired subdomain; do
+      internal_tls_failure_case "$service" "$kind" "$editor" "$rogue"
+    done
+  done
+
+  # --- Renewal --------------------------------------------------------------
+  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
+    internal_tls_renewal_case "$service" "$editor"
+  done
+
+  area="final state"
+  expect "$area" "check-secrets" "pass" "$(check_secrets >/dev/null 2>&1 && echo pass || echo fail)"
+
+  # Nothing recorded may contain a secret value.
+  local name joined
+  joined="$(printf '%s\n' "${RESULTS[@]}")"
+  for name in "${SOURCE_SECRETS[@]}"; do
+    if grep -qFf <(secret "$name") <<< "$joined"; then
+      die "a recorded result contains the value of ${name}; no evidence written"
+    fi
+  done
+  record "$area" "secret values in recorded results" "observe" "none (${#SOURCE_SECRETS[@]} secrets searched)" info
+
+  [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
+    "verify-internal-tls: internal CA and TLS on the data network; baseline, plaintext refusal, untrusted issuer, hostname mismatch, expired certificate, and a certificate also naming an excluded subdomain on PostgreSQL and RabbitMQ with new versus established connections and recovery by renewal; renewal; network inventory. Scripted clients only."
+  finish_checks "Internal TLS verification"
 }
 
 destroy_lab() {
@@ -1275,7 +2041,7 @@ verify_lab() {
   expect "wsl" "API version not routed" "404 0" "$(https_status --cacert "$ca" "${base}/api/version")"
 
   local port
-  for port in 8080 5432 55432 5672 15672; do
+  for port in 8080 5432 55432 5671 5672 15672; do
     expect "wsl" "127.0.0.1:${port}" "refused connects=0 exit=7" "$(probe_tcp_host_detail "127.0.0.1:${port}")"
   done
 
@@ -1297,7 +2063,7 @@ verify_lab() {
 
   expect_unreachable "wsl" "api container IP :8080" "$(probe_tcp_host_detail "${api_ip}:8080")"
   expect_unreachable "wsl" "postgres container IP :5432" "$(probe_tcp_host_detail "${postgres_ip}:5432")"
-  expect_unreachable "wsl" "rabbitmq container IP :5672" "$(probe_tcp_host_detail "${rabbitmq_ip}:5672")"
+  expect_unreachable "wsl" "rabbitmq container IP :5671" "$(probe_tcp_host_detail "${rabbitmq_ip}:5671")"
 
   # --- Windows host through WSL interop ------------------------------------
   local curl_exe=""
@@ -1366,7 +2132,7 @@ verify_lab() {
         "not meaningful: Windows trusts the lab CA" skip
     fi
 
-    for port in 8080 5432 55432 5672 15672; do
+    for port in 8080 5432 55432 5671 5672 15672; do
       expect "windows-curl" "127.0.0.1:${port}" "refused connects=0 exit=7" "$(windows_tcp_detail "127.0.0.1:${port}")"
     done
 
@@ -1383,7 +2149,7 @@ verify_lab() {
     local listeners
     listeners="$(
       powershell.exe -NoProfile -Command \
-        "Get-NetTCPConnection -State Listen -LocalPort ${HTTPS_PORT},8080,5432,55432,5672,15672 -ErrorAction SilentlyContinue | ForEach-Object { \"\$(\$_.LocalAddress):\$(\$_.LocalPort)\" } | Sort-Object -Unique" \
+        "Get-NetTCPConnection -State Listen -LocalPort ${HTTPS_PORT},8080,5432,55432,5671,5672,15672 -ErrorAction SilentlyContinue | ForEach-Object { \"\$(\$_.LocalAddress):\$(\$_.LocalPort)\" } | Sort-Object -Unique" \
         2>/dev/null | tr -d '\r' | tr '\n' ';'
     )"
     expect "windows" "listening sockets on lab ports" "127.0.0.1:${HTTPS_PORT};" "$listeners"
@@ -1427,12 +2193,12 @@ verify_lab() {
     "$(probe_tcp_detail "${PROJECT}_app" "${keycloak_postgres_ip}:5432")"
   expect_unreachable "edge-network client" "api container IP :8080" "$(probe_tcp_detail "$edge" "${api_ip}:8080")"
   expect_unreachable "edge-network client" "postgres container IP :5432" "$(probe_tcp_detail "$edge" "${postgres_ip}:5432")"
-  expect_unreachable "edge-network client" "rabbitmq container IP :5672" "$(probe_tcp_detail "$edge" "${rabbitmq_ip}:5672")"
+  expect_unreachable "edge-network client" "rabbitmq container IP :5671" "$(probe_tcp_detail "$edge" "${rabbitmq_ip}:5671")"
 
   expect "unrelated container" "resolve api" "unresolved" "$(probe_dns "$PROBE_NETWORK" api)"
   expect_unreachable "unrelated container" "api container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${api_ip}:8080")"
   expect_unreachable "unrelated container" "postgres container IP :5432" "$(probe_tcp_detail "$PROBE_NETWORK" "${postgres_ip}:5432")"
-  expect_unreachable "unrelated container" "rabbitmq container IP :5672" "$(probe_tcp_detail "$PROBE_NETWORK" "${rabbitmq_ip}:5672")"
+  expect_unreachable "unrelated container" "rabbitmq container IP :5671" "$(probe_tcp_detail "$PROBE_NETWORK" "${rabbitmq_ip}:5671")"
   expect_unreachable "unrelated container" "keycloak container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${keycloak_ip}:8080")"
   expect_unreachable "unrelated container" "valkey container IP :6379" "$(probe_tcp_detail "$PROBE_NETWORK" "${valkey_ip}:6379")"
   expect_unreachable "unrelated container" "oauth2-proxy container IP :4180" "$(probe_tcp_detail "$PROBE_NETWORK" "${oauth2_proxy_ip}:4180")"
@@ -1456,7 +2222,10 @@ verify_lab() {
   expect "app-network control" "resolve api" "resolved" "$(probe_dns "${PROJECT}_app" api)"
   expect "app-network control" "api:8080" "connected" "$(probe_tcp "${PROJECT}_app" "api:8080")"
   expect "data-network control" "postgres:5432" "connected" "$(probe_tcp "${PROJECT}_data" "postgres:5432")"
-  expect "data-network control" "rabbitmq:5672" "connected" "$(probe_tcp "${PROJECT}_data" "rabbitmq:5672")"
+  expect "data-network control" "rabbitmq:5671" "connected" "$(probe_tcp "${PROJECT}_data" "rabbitmq:5671")"
+  # ADR 0006: RabbitMQ has no plaintext listener, even on its own network.
+  expect "data-network client" "rabbitmq:5672 (plaintext AMQP)" "refused connects=0 exit=7" \
+    "$(probe_tcp_detail "${PROJECT}_data" "rabbitmq:5672")"
   expect "app-network control" "oauth2-proxy:4180" "connected" "$(probe_tcp "${PROJECT}_app" "oauth2-proxy:4180")"
   expect "idp-network control" "keycloak:8080" "connected" "$(probe_tcp "${PROJECT}_idp" "keycloak:8080")"
   expect "session-network control" "valkey:6379" "connected" "$(probe_tcp "${PROJECT}_session" "valkey:6379")"
@@ -1529,6 +2298,9 @@ verify_failures() {
 
     # The temporary preflight path varies per run; record a stable form.
     local stable_message="${expected_message/#required secret file missing: *\//required secret file missing: <state>/secrets/}"
+    if [[ -n "${partial:-}" ]]; then
+      stable_message="${stable_message//"$partial"/<state>}"
+    fi
     failure_results+=("{\"case\":$(json_string "$name"),\"exit_code\":${rc},\"expected_message\":$(json_string "$stable_message"),\"secret_value_in_output\":$([[ -n "$leaked" ]] && echo true || echo false),\"result\":\"${result}\"}")
   }
 
@@ -1537,14 +2309,38 @@ verify_failures() {
   partial="$(mktemp -d)"
   mkdir -m 700 "${partial}/secrets" "${partial}/pki"
   cp -p "${SECRETS_DIR}"/* "${partial}/secrets/"
-  cp -p "${PKI_DIR}/ca.crt" "${partial}/pki/"
+  cp -p "${PKI_DIR}/ca.crt" "${PKI_DIR}/internal-ca.crt" "${partial}/pki/"
+  cp -a "$INGRESS_TLS_DIR" "$INTERNAL_TLS_DIR" "${partial}/"
   rm -f "${partial}/secrets/api-database-url"
 
   check_failure "preflight: missing api-database-url" \
     "required secret file missing: ${partial}/secrets/api-database-url" \
     env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
 
+  # ADR 0006: a missing internal server certificate, and a connection URL
+  # that does not require verified TLS, stop the lab before it starts.
+  cp -p "${SECRETS_DIR}/api-database-url" "${partial}/secrets/"
+  rm -f "${partial}/internal-tls/postgres/tls.pem"
+  check_failure "preflight: missing PostgreSQL TLS file" \
+    "required internal TLS file missing or empty: ${partial}/internal-tls/postgres/tls.pem" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+  cp -p "${INTERNAL_TLS_DIR}/postgres/tls.pem" "${partial}/internal-tls/postgres/"
+
+  sed -i 's/sslmode=verify-full&sslrootcert=[^&]*$/sslmode=disable/' "${partial}/secrets/worker-database-url"
+  sed -i 's#^amqps://\(.*\)@rabbitmq:5671/\([^?]*\)?.*$#amqp://\1@rabbitmq:5672/\2#' "${partial}/secrets/api-rabbitmq-url"
+  check_failure "preflight: plaintext database URL" \
+    "worker-database-url does not require verified TLS" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+  check_failure "preflight: plaintext AMQP URL" \
+    "api-rabbitmq-url does not require verified TLS" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+
   rm -rf "$partial"
+
+  check_failure "postgres: TLS file missing" "PostgreSQL TLS file missing or empty" \
+    docker run --rm --network none \
+      -v "${ROOT_DIR}/infra/security-lab/postgres/tls.sh:/opt/zero-to-prod/tls.sh:ro" \
+      --entrypoint /opt/zero-to-prod/tls.sh "$POSTGRES_IMAGE" postgres
 
   check_failure "api: DATABASE_URL_FILE missing" "read DATABASE_URL_FILE" \
     compose run --rm --no-deps -e DATABASE_URL_FILE=/run/secrets/absent api
@@ -3342,6 +4138,21 @@ case "${1:-}" in
     require_command docker
     shift
     verify_renewal "$@"
+    ;;
+  issue-internal-certificate)
+    require_command docker
+    shift
+    issue_internal_certificate_command "$@"
+    ;;
+  check-serial-streak)
+    # Test hook for the renewal confirmation: observations on standard input.
+    shift
+    await_observation_streak "${1:?expected observation}" "${2:-5}" "${3:-60}" 0 read_observation
+    ;;
+  verify-internal-tls)
+    require_command docker
+    shift
+    verify_internal_tls "$@"
     ;;
   ca-certificate)
     show_ca_certificate
