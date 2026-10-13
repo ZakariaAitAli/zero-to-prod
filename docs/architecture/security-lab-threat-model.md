@@ -77,14 +77,14 @@ process gains it by running as root in that container.
 
 | Threat | After ADR 0006 | Remaining |
 | --- | --- | --- |
-| T1, T2 on `data` | TLS with server and name verification against a CA that may issue only for `postgres` and `rabbitmq`; a spoofing member has no valid certificate | Client identity is still a password, readable by any process in the client's container |
+| T1, T2 on `data` | TLS. Each client verifies the server's certificate against the internal CA and checks the one name it dialed (`postgres` or `rabbitmq`). The CA's constraints allow exactly those two names (subdomains excluded). A spoofing member has no certificate for the name dialed | Client identity is still a password, readable by any process in the client's container |
 | T1, T2 on `app` | Not encrypted. Every member is `cap_drop: ALL`, `no-new-privileges`, read-only, so raw sockets require a kernel escape | Tokens and session tickets in plaintext on the bridge |
 | T1, T2 on two-member networks (`idp`, `idp-data`, `session`) | Not encrypted. The only other party on each network is the peer itself | Person passwords and client secrets in plaintext between ingress and Keycloak |
 | T3 | `data` is protected by TLS; other networks are not | No policy check of network membership |
 | T4 | `data` hops already verified | Every other hop must be encrypted before any move |
 | T5 | Failure is closed and observable (measured); renewal restores new connections without restarting clients | No automated renewal, alerting, or revocation |
 | T6 | `verify-full` and `amqps` in the generated URLs; `check-secrets` refuses any other form; PostgreSQL rejects non-TLS clients and RabbitMQ has no plaintext listener | — |
-| T7 | Name constraints limit a stolen internal CA key to the two internal names; it is separate from the browser-trusted lab CA | No HSM, no revocation, single tier |
+| T7 | Name constraints limit certificates from a stolen internal CA key to exactly `postgres` and `rabbitmq`: permitted names, with their subdomains excluded. Enforced as intended by OpenSSL and Go's `crypto/x509`, the verifiers used here. The CA is separate from the browser-trusted lab CA | The key can still impersonate both datastores. No HSM, no revocation, single tier. Another verifier may read the leading-dot exclusion differently (RFC 5280 leaves it undefined) |
 | T8 | Out of scope | — |
 
 The plaintext hops are a provisional, measured decision, not an oversight;

@@ -149,11 +149,18 @@ refuses an existing directory that is not this lab's state.
 - The ingress certificate is valid for 14 days. `init` reissues it when fewer
   than two days remain.
 - The **internal CA** is separate from the lab CA: it is valid for 90 days,
-  may not issue intermediate CAs, and is name-constrained to `postgres` and
-  `rabbitmq`. Its certificate is mounted only into the API, worker, and
-  migrator; never trust it in a browser. The PostgreSQL and RabbitMQ
-  certificates are valid for 14 days, with the Docker service name as their
-  only name.
+  and may not issue intermediate CAs. Its name constraints permit exactly
+  `postgres` and `rabbitmq`: the names are permitted, and their subdomains
+  (`.postgres`, `.rabbitmq`) are excluded, because a permitted DNS
+  constraint alone would also allow names such as `extra.postgres`. Its
+  certificate is mounted only into the API, worker, and migrator; never
+  trust it in a browser. The PostgreSQL and RabbitMQ certificates are valid
+  for 14 days, with the Docker service name as their only name. Each client
+  also checks the specific name it connects to, so the RabbitMQ certificate
+  is refused at the PostgreSQL address.
+- `init` replaces an internal CA created before the subdomain exclusion
+  (`check-secrets` refuses one) and reissues both datastore certificates;
+  `start` then recreates the clients, which load the new CA.
 - Passwords and client secrets are random per lab. Connection URLs, the
   RabbitMQ definitions, and the Keycloak, oauth2-proxy, and Valkey
   configuration files are derived from them.
@@ -432,7 +439,8 @@ logging.
   PostgreSQL client and the AMQP plaintext port are refused, and that every
   live client connection uses TLS;
 - for each service, installs a certificate from an untrusted CA, one for the
-  other service's name, and an expired one, and observes new connections
+  other service's name, an expired one, and one that also names an excluded
+  subdomain (`extra.<service>`), and observes new connections
   (OpenSSL, libpq, and the Go clients after a restart of the API or worker),
   established connections, the server's log, and recovery after renewal
   without restarting clients;
@@ -689,9 +697,11 @@ including `sslmode=require`, which encrypts without verifying the server.
 
 The tool issues a certificate from the internal CA, replaces `tls.pem` by a
 rename, reloads the service (PostgreSQL: copy to its tmpfs and
-`pg_ctl reload`; RabbitMQ: `rabbitmqctl eval 'ssl:clear_pem_cache().'`), and
-requires five consecutive new connections that verify the new serial. No
-client is restarted:
+`pg_ctl reload`; RabbitMQ: `rabbitmqctl eval 'ssl:clear_pem_cache().'`). It
+succeeds only when five consecutive new connections verify (code 0) with the
+new serial within 60 attempts. Otherwise it exits with `renewal of <service>
+not confirmed: timeout: …`, even if the last connection matched; investigate
+before relying on the new certificate. No client is restarted:
 
 - **new connections** use the new certificate;
 - **established connections** (pooled PostgreSQL connections, the API's
@@ -714,6 +724,7 @@ Measured by `verify-internal-tls` (see the
 | Untrusted issuer | Refused by the client: Go `x509: certificate signed by unknown authority`; libpq `certificate verify failed` | Continues | Renew; no restart |
 | Wrong name | Refused: Go `x509: certificate is valid for rabbitmq, not postgres`; libpq `server certificate for "rabbitmq" does not match host name "postgres"` | Continues | Renew; no restart |
 | Expired | Refused: Go `x509: certificate has expired or is not yet valid` | Continues | Renew; no restart |
+| Names the right server and also an excluded subdomain (`postgres` and `extra.postgres`) | Refused by the CA's constraints: OpenSSL code 48 (excluded subtree violation); Go `x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "extra.postgres" is excluded by constraint ".postgres"`; libpq `certificate verify failed` | Continues | Renew; no restart |
 
 What the workload does meanwhile:
 

@@ -89,8 +89,11 @@ as root with raw sockets, but its network has one other member, the gateway.
 ## What was built
 
 - **Internal CA** (`init`): separate from the lab CA, ECDSA P-256, 90 days,
-  `pathlen:0`, name-constrained to `DNS:postgres` and `DNS:rabbitmq`, IPs
-  excluded. Its key never leaves `pki/` (mode 600).
+  `pathlen:0`, permitted `DNS:postgres` and `DNS:rabbitmq`, IPs excluded.
+  Its key never leaves `pki/` (mode 600). *As first built (and in the first
+  evidence run) the permitted constraints also allowed subdomains; see
+  [review fixes](#review-fixes-and-rerun) for the exact-name policy now in
+  place.*
 - **Server certificates**: one per datastore, 14 days, the service name as
   the only SAN, `tls.pem` (key and certificate) in `internal-tls/<service>/`,
   mounted read-only; `init` reissues near expiry or when the name does not
@@ -113,7 +116,9 @@ as root with raw sockets, but its network has one other member, the gateway.
 ## Results
 
 Evidence: [`evidence/issue-121/internal-tls/`](../../evidence/issue-121/internal-tls).
-All runs on 2026-10-13 between 20:04 and 20:25 UTC.
+First evidence run on 2026-10-13 between 20:04 and 20:25 UTC, at the PR's
+first version. The [rerun after review](#review-fixes-and-rerun) supersedes
+parts of it.
 
 | Check | Result |
 | --- | --- |
@@ -125,7 +130,7 @@ All runs on 2026-10-13 between 20:04 and 20:25 UTC.
 | `verify-authentication` (`verify-authentication.json`) | 77 pass, 10 observations, 0 fail |
 | `verify-log-hygiene` (`log-hygiene.json`) | 17 pass, 21 observations, 0 fail |
 | `verify-authorization` (`verify-authorization.json`) | 79 pass, 14 observations, 0 fail; the pinned pre-authorization API (`0682b52`) also ran over the TLS URLs, unchanged |
-| `scripts/test-security-lab-internal-tls.sh` | 23 / 23 (local; also in CI) |
+| `scripts/test-security-lab-internal-tls.sh` | 23 / 23 at the first version (local; also in CI); 42 / 42 after the review fixes |
 | State-safety, startup-warning, CI-workflow, and classifier tests; Compose config; actionlint; `go test ./...` | pass (local) |
 
 The authentication, authorization, log-hygiene, and reachability counts match
@@ -177,7 +182,8 @@ established connection survived, and create and process `succeeded`.
    bad certificate. A failure surfaces only on a new connection: a restart,
    pool turnover, or a reconnect after a broker or network fault.
 2. **The client knows why; the server often does not.** Go clients sent the
-   generic `bad certificate` alert for all three kinds, and libpq sent none
+   generic `bad certificate` alert for all three kinds (and for the
+   subdomain case in the rerun), and libpq sent none
    for a name mismatch (it checks the name after the handshake). Server logs
    prove a rejection happened, not its cause.
 3. **The API and worker recover without restarts.** pgx retries on the next
@@ -196,6 +202,70 @@ established connection survived, and create and process `succeeded`.
    baseline verified the replacement serial. The search was fixed before the
    evidence runs.
 
+## Review fixes and rerun
+
+Review of PR #136 at `5b9fbe0` found two defects. Both were fixed in this
+PR, and the affected runtime experiments were rerun. The results above are
+the first evidence run and stay as recorded. The rerun supersedes them where
+noted below.
+
+| Finding | Effect on the first run | Fix |
+| --- | --- | --- |
+| The internal CA permitted `DNS:postgres` and `DNS:rabbitmq`. A permitted dNSName constraint covers the whole subtree, so the reviewer's certificates for `extra.postgres` and `extra.rabbitmq` passed OpenSSL chain and hostname verification (`keycloak` was refused) | "Permits only postgres and rabbitmq" (CI test label) and "cannot vouch for any other name" (ADR 0006) overstated the guarantee. The first run's failure cases are unaffected: none of them depended on that claim | **Exact names enforced.** The constraints also exclude `DNS:.postgres` and `DNS:.rabbitmq`. `check-secrets` refuses an internal CA without the exclusions; `init` replaces it and reissues both certificates. New `subdomain` failure case: a certificate naming `postgres` (or `rabbitmq`) **and** `extra.<service>` is internal-CA-signed and matches the dialed name, so only the exclusion can refuse it |
+| `wait_for_internal_serial` returned its last observation successfully after 60 attempts, even without five consecutive matches. 59 old-serial observations followed by one new one returned `0 NEW`, which the renewal caller accepted | A renewal or failure-case step could have passed on one matching connection. The first run's renewal and failure-case observations are not known to be wrong, but they did not have this guarantee | **Timeout fails.** The rule is five consecutive observations equal to the full expected value (verify code and serial) within 60 attempts. Otherwise the command fails and prints `timeout: <streak> of 5 …; last '<observation>'`, which can never equal the expected value. `issue-internal-certificate` exits non-zero on a timeout. Failure cases wait for their own nonzero code |
+
+**Regression tests** (`scripts/test-security-lab-internal-tls.sh`, 42 checks, run locally and in CI):
+
+- **CA policy, against the generated internal CA:**
+  - `postgres` and `rabbitmq` accepted for their dialed names;
+  - `extra.postgres` and `extra.rabbitmq` refused (`excluded subtree violation`);
+  - `postgres` plus `extra.postgres` refused although the dialed name matches;
+  - `keycloak` refused (`permitted subtree violation`);
+  - a valid `rabbitmq` certificate refused for the dialed name `postgres` (`hostname mismatch`, the per-client name check);
+  - a control CA with only the permitted subtrees accepts `extra.postgres`;
+  - refusal and replacement of such a CA by `check-secrets` and `init`.
+- **Renewal confirmation:** through the tool's `check-serial-streak` hook, which uses the same function as `issue-internal-certificate`:
+  - five consecutive matches succeed, also after old observations;
+  - intermittent matches (4, old, 4) fail;
+  - a failed verification with the right serial resets the streak;
+  - a single match on the final attempt (the reviewer's reproduction) fails;
+  - no match before timeout fails;
+  - a timeout never prints the expected value;
+  - five matching nonzero-code observations succeed for a failure case.
+
+  A mutation restoring the old timeout behavior failed five of these cases, including the reproduction.
+
+**Rerun** in the same isolated project. `init` refused, then replaced, the subtree-only internal CA from the first run and reissued both certificates. The project's containers and volumes were recreated by `start`; its lab CA and secrets were kept. Tool blob `b0a67502fd6bbdfedbc194f01a9206520550ff05`; test blob `de8d00a71a5ebb6b7ab1a10878f79ebd5a693ea7`; the Compose, `pg_hba.conf`, `tls.sh`, and RabbitMQ blobs are unchanged from the table above.
+
+| Check | Passed | Observations | Failed | Supersedes |
+| --- | --- | --- | --- | --- |
+| `verify-internal-tls` (`verify-internal-tls-rerun.json`, 21:01–21:04 UTC) | 94 | 35 | 0 | `verify-internal-tls.json` for the CA policy and the confirmation rule |
+| `verify-failures` (`missing-secret-failures-rerun.json`) | 14 | 0 | 0 | `missing-secret-failures.json` (same cases, current tool) |
+| `verify` (`verify-rerun.json`; Windows LAN address redacted) | 82 | 4 | 0 | `verify.json` (same checks, current tool) |
+| `issue-internal-certificate postgres`, `rabbitmq` (console output) | both confirmed five consecutive verified connections with the new serial | — | 0 | — |
+
+New subdomain case in the rerun, for both services:
+
+- OpenSSL verify code 48 (excluded subtree violation) with the bad serial;
+- libpq `SSL error: certificate verify failed` (PostgreSQL), with the server logging `alert certificate unknown`;
+- established connections kept, and create and process `succeeded` with 0 new connections;
+- the restarted API (503) and the restarted worker (disconnected, job `accepted`) logged `x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "extra.<service>" is excluded by constraint ".<service>"`;
+- renewal recovered both without restarts.
+
+The exclusion is therefore enforced by OpenSSL, libpq, and Go's `crypto/x509` as used by pgx and amqp091-go, not only by OpenSSL.
+
+`verify-internal-tls-rerun-attempt1.json` is kept:
+
+- It was the first rerun: 92 passed, 35 observations, 2 failed.
+- Both failures were the tool's expected Go message. It lacked "to sign", which Go 1.27 includes.
+- Clients and lab outcomes were the same as in the final rerun: 503, worker absent, and the same error found in the container logs.
+- The expected text was corrected, and the whole rerun was repeated on the final blob.
+
+`verify-authentication`, `verify-log-hygiene`, `verify-realm`,
+`verify-authorization`, and the ingress renewal were **not** rerun. The fixes
+change neither their code paths nor their guarantees, and their first-run
+results stand.
+
 ## What this does not prove
 
 - Anything about the hops left plaintext (ingress → API, oauth2-proxy,
@@ -209,6 +279,8 @@ established connection survived, and create and process `succeeded`.
 - The upgrade of a lab created before this change; the original and `-authz`
   labs were not started.
 - Browser behavior: no manual browser check was made in this slice.
+- How a verifier other than OpenSSL and Go reads the leading-dot exclusion.
+  RFC 5280 leaves it undefined for dNSName, so other verifiers may differ.
 
 ## Remaining gaps
 

@@ -40,7 +40,7 @@ this decision:
 | R2 | Verification that cannot be skipped: server identity and name, no plaintext fallback (T6) |
 | R3 | Failures must be closed and observable at the boundary, and recoverable without rebuilding the lab (T5) |
 | R4 | Issuance, trust distribution, renewal, and ownership reproducible by the lab tool |
-| R5 | A browser-trusted CA must not be able to vouch for internal services, and the internal CA must not vouch for anything else (T7) |
+| R5 | A browser-trusted CA must not be able to vouch for internal services, and the internal CA must vouch for nothing but the exact internal service names (T7) |
 | R6 | No application code change unless the drivers cannot express the policy |
 | R7 | Lifecycle cost proportionate to the threat removed |
 
@@ -76,11 +76,32 @@ gain is small and the lifecycle cost roughly doubles.
 
 Details:
 
-- **Separate internal CA.** ECDSA P-256, 90 days, `pathlen:0`,
-  name-constrained to `DNS:postgres` and `DNS:rabbitmq`, IP addresses
-  excluded. The lab CA, which people may trust in Windows or a browser, does
-  not verify the internal servers, and the internal CA cannot vouch for any
-  other name (`permitted subtree violation`, tested in CI).
+- **Separate internal CA, limited to the exact service names.** ECDSA
+  P-256, 90 days, `pathlen:0`. Its name constraints are:
+  - permitted `DNS:postgres` and `DNS:rabbitmq`;
+  - excluded `DNS:.postgres` and `DNS:.rabbitmq`;
+  - all IP addresses excluded.
+
+  A permitted dNSName constraint alone permits the whole DNS subtree
+  (RFC 5280): `extra.postgres` would also be accepted. That was the first
+  version of this slice; review found it, and the claim that the CA could
+  vouch for nothing else overstated the guarantee. The exclusions remove the
+  subdomains and keep the names themselves, because OpenSSL (libpq) and Go's
+  `crypto/x509` (pgx, amqp091-go) both treat a leading dot as "proper
+  subdomains only".
+
+  RFC 5280 does not define the leading dot for dNSName, so a verifier outside
+  these two may read it differently. The behavior is tested with OpenSSL in CI
+  and with libpq and the Go clients in the lab, using a certificate that names
+  both `postgres` and `extra.postgres`.
+
+  The lab CA, which people may trust in Windows or a browser, does not verify
+  the internal servers.
+- **CA names versus the dialed name.** The CA's constraints bound which names
+  any certificate it issues may carry: exactly `postgres` and `rabbitmq`.
+  Separately, each client verifies the one name it dialed. A valid
+  `rabbitmq` certificate presented by the PostgreSQL address is refused by
+  that check, not by the constraints.
 - **Server certificates.** One per service, 14 days, SAN equal to the Docker
   service name, `serverAuth`. Key and certificate in one `tls.pem`, replaced
   by a single rename in a per-service directory (mode 711, file 644), mounted
@@ -104,10 +125,14 @@ Details:
   Keycloak, and browsers never receive it.
 - **Renewal and reload.** `issue-internal-certificate <service>` issues,
   replaces the file, reloads (PostgreSQL `pg_ctl reload`; RabbitMQ
-  `ssl:clear_pem_cache()`), and requires five consecutive new connections to
-  verify the new serial. Established connections keep the session they
-  negotiated. `init` reissues a certificate within two days of expiry or when
-  it does not verify for its name.
+  `ssl:clear_pem_cache()`). It succeeds only when five consecutive new
+  connections verify (code 0) and receive the new serial, within 60 attempts.
+  A timeout fails the command, even if the last connection matched; the
+  first version of this slice accepted that case, and review found it.
+  Established connections keep the session they negotiated. `init` reissues
+  a certificate within two days of expiry or when it does not verify for its
+  name. `init` also replaces an internal CA whose constraints still permit
+  subdomains, and `check-secrets` refuses one.
 - **Ownership.** The lab operator owns both CAs and all certificates through
   `tools/security-lab-local`. Nothing renews automatically; there is no
   revocation.
@@ -176,6 +201,20 @@ clients only (`verify-internal-tls.json`: 75 pass, 30 observations, 0 fail):
   `verify-authentication`, `verify-log-hygiene`, and `verify-authorization`
   passed in the same lab.
 
-Open: the plaintext hops, mTLS, automated renewal and monitoring, the upgrade
-of existing labs, and single runs. The decision stays Proposed pending
-review.
+### 2026-10-13 — Review fixes (same PR)
+
+- **CA names:** the first version permitted the DNS subtrees `postgres` and `rabbitmq`, so `extra.postgres` passed verification. The internal CA now also excludes `.postgres` and `.rabbitmq`.
+  - In the rerun (`verify-internal-tls-rerun.json`: 94 passed, 35 observations, 0 failed), a certificate naming `postgres` and `extra.postgres` was refused by OpenSSL (code 48), libpq, and the Go clients (`… is excluded by constraint ".postgres"`); likewise for `rabbitmq`.
+  - Established connections continued, and renewal recovered.
+- **Renewal confirmation:** a timeout no longer counts as success. Renewal requires five consecutive verified connections with the new serial; regression cases cover a single final match, intermittent matches, and no match.
+
+Open:
+
+- the plaintext hops, including ingress → Keycloak;
+- mTLS;
+- automated renewal and monitoring;
+- the upgrade of existing labs;
+- verifiers other than OpenSSL and Go;
+- single runs.
+
+The decision stays Proposed pending review.
