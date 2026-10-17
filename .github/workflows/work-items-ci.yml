@@ -461,6 +461,7 @@ jobs:
           bash -n scripts/test-security-lab-state-safety.sh
           bash -n scripts/test-security-lab-startup-warning.sh
           bash -n scripts/test-security-lab-internal-tls.sh
+          bash -n scripts/test-security-lab-keycloak-tls.sh
           bash -n tools/work-items-api-local
           bash -n tools/postgres-local
           bash -n scripts/test-async-result-recovery.sh
@@ -481,6 +482,8 @@ jobs:
             ZTP_SECURITY_LAB_CA_FILE=/nonexistent \
             ZTP_SECURITY_LAB_INTERNAL_CA_FILE=/nonexistent \
             ZTP_SECURITY_LAB_INTERNAL_TLS_DIR=/nonexistent \
+            ZTP_SECURITY_LAB_IDP_CA_FILE=/nonexistent \
+            ZTP_SECURITY_LAB_IDP_TLS_DIR=/nonexistent \
             docker compose -f infra/security-lab/compose.yaml --profile tools config --quiet
 
           ./scripts/test-ci-change-classifier.sh
@@ -490,6 +493,7 @@ jobs:
           bash scripts/test-security-lab-state-safety.sh
           bash scripts/test-security-lab-startup-warning.sh
           bash scripts/test-security-lab-internal-tls.sh
+          bash scripts/test-security-lab-keycloak-tls.sh
 
       - name: Lint GitHub Actions workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
