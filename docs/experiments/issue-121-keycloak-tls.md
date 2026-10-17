@@ -465,7 +465,8 @@ accepted, as was the CA `init` creates. Mutation control: the same script
 against the tool at `7c54810` failed the 12 refusal and replacement cases.
 
 **Applicability of the runtime evidence.** The fix changes only the
-preflight gate: `idp_ca_policy_check`, `idp_ca_constraints_ok`,
+preflight gate: `idp_ca_policy_check` (later generalized as
+`ca_name_policy_check`), `idp_ca_constraints_ok`,
 `init_idp_ca`, and the identity-provider branch of `check-secrets`. No
 configuration, certificate, CA, container, or verifier that the lab runs
 changed. The lab's identity-provider CA was created by `init` with the
@@ -556,7 +557,8 @@ Kept out of the evidence directory; summarized here:
 - The datastore (internal) CA's preflight check (ADR 0006,
   `ca_constraints_ok`) still verifies only the permitted names and their
   subdomain exclusions. It would accept additional permitted names or
-  missing IP exclusions. It was left unchanged in this slice.
+  missing IP exclusions. It was left unchanged in this slice. (Fixed after
+  #137 by applying the same validator; see ADR 0006's 2026-10-17 entry.)
 - Secret rotation, rate limiting, observability, availability, and restore
   (#130, #131) are unchanged.
 
