@@ -15,9 +15,11 @@ from Keycloak client roles, deny by default
 ([ADR 0005](../adr/0005-security-lab-authorization.md), Proposed). On the
 data network, PostgreSQL and RabbitMQ accept only **TLS**, and the API,
 worker, and migrator verify them against a separate internal CA
-([ADR 0006](../adr/0006-security-lab-internal-transport.md), Proposed); the
-other internal hops stay plaintext by decision. Rate limiting and secret
-rotation are not implemented yet. It does not complete Issue #121.
+([ADR 0006](../adr/0006-security-lab-internal-transport.md), Proposed).
+Keycloak serves only **HTTPS**, and the ingress verifies it against a third,
+identity-provider CA ([ADR 0007](../adr/0007-security-lab-identity-provider-transport.md),
+Proposed). The other internal hops stay plaintext by decision. Rate limiting
+and secret rotation are not implemented yet. It does not complete Issue #121.
 
 The development lab ([local Work Items guide](local-work-items.md)) is
 unchanged and keeps its labelled development credentials. The security lab
@@ -38,20 +40,20 @@ Windows browser / WSL client / machine client
         ├── app network (internal) ── API; oauth2-proxy (auth_request)
         │                               │
         │                               └── session network ── Valkey
-        └── idp network (internal) ─── Keycloak ── idp-data network ── Keycloak PostgreSQL
+        └── idp network (internal, HTTPS) ─── Keycloak ── idp-data network ── Keycloak PostgreSQL
 
   API ── data network (internal) ── PostgreSQL, RabbitMQ, worker
 ```
 
 | Component | Networks | Published | Runtime secrets (files) |
 | --- | --- | --- | --- |
-| ingress | edge, app, idp | `127.0.0.1:9443 → 8443` | TLS key and certificate (one file in a mounted directory) |
+| ingress | edge, app, idp | `127.0.0.1:9443 → 8443` | TLS key and certificate (one file in a mounted directory); identity-provider CA certificate (public) |
 | api | app, data | none | database URL, RabbitMQ publisher URL; lab CA and internal CA certificates (public) |
 | worker | data | none | database URL, RabbitMQ worker URL; internal CA certificate (public) |
 | postgres | data | none | admin, migrator, app, worker passwords; TLS key and certificate (one file in a mounted directory) |
 | rabbitmq | data | none | definitions (users with password hashes, permissions, queue); TLS key and certificate (one file in a mounted directory) |
 | migrate (on demand) | data | none | migrator URL; internal CA certificate (public) |
-| keycloak | idp, idp-data | none | `keycloak.conf` (database password), realm file (client secrets, lab-user password) |
+| keycloak | idp, idp-data | none | `keycloak.conf` (database password), realm file (client secrets, lab-user password); TLS key and certificate (one file in a mounted directory) |
 | keycloak-postgres | idp-data | none | Keycloak database password |
 | oauth2-proxy | app, session | none | `oauth2-proxy.cfg` (client secret, cookie secret, Valkey password); lab CA certificate |
 | valkey | session | none | `valkey.conf` (password) |
@@ -74,14 +76,15 @@ does not route its administration console or master realm.
 | API/worker/migrator → PostgreSQL | TLS 1.2/1.3 (internal `data` network); the server rejects non-TLS clients | Internal CA and the name `postgres` (`sslmode=verify-full`); password (SCRAM) |
 | API/worker → RabbitMQ | TLS 1.2/1.3 on 5671 (internal `data` network); no plaintext listener | Internal CA and the name `rabbitmq` (`amqps`); password inside TLS |
 | Ingress → API, ingress → oauth2-proxy | none (internal `app` network) | — |
-| Ingress → Keycloak | none (internal `idp` network) | — |
+| Ingress → Keycloak | TLS 1.2/1.3 on 8443 (internal `idp` network); Keycloak has no plaintext listener | Identity-provider CA and the name `keycloak` (`proxy_ssl_verify on`) |
 | oauth2-proxy → Valkey | none (internal `session` network) | Valkey password |
 | Keycloak → its PostgreSQL | none (internal `idp-data` network) | Database password |
 
-Why the data network is encrypted and the other hops are not yet is in the
-[threat model](../architecture/security-lab-threat-model.md) and
-[ADR 0006](../adr/0006-security-lab-internal-transport.md); the plaintext hops
-are listed under [limitations](#limitations).
+Why the data network and the Keycloak hop are encrypted and the other hops are
+not yet is in the [threat model](../architecture/security-lab-threat-model.md),
+[ADR 0006](../adr/0006-security-lab-internal-transport.md), and
+[ADR 0007](../adr/0007-security-lab-identity-provider-transport.md); the
+plaintext hops are listed under [limitations](#limitations).
 
 ## Prerequisites
 
@@ -107,12 +110,13 @@ any other value.
 ```text
 ~/.local/state/zero-to-prod/zero-to-prod-security-lab/   (mode 700)
 ├── .zero-to-prod-security-lab   ownership marker
-├── pki/          lab CA and internal CA keys (600) and certificates
+├── pki/          lab CA, internal CA, and identity-provider CA keys (600) and certificates
 ├── secrets/      runtime secret files (directory mode 700)
 ├── ingress-tls/  tls.pem: ingress key and certificate (directory mode 711)
-└── internal-tls/
-    ├── postgres/  tls.pem: PostgreSQL key and certificate (directory mode 711)
-    └── rabbitmq/  tls.pem: RabbitMQ key and certificate (directory mode 711)
+├── internal-tls/
+│   ├── postgres/  tls.pem: PostgreSQL key and certificate (directory mode 711)
+│   └── rabbitmq/  tls.pem: RabbitMQ key and certificate (directory mode 711)
+└── idp-tls/      tls.pem: Keycloak key and certificate (directory mode 711)
 ```
 
 Rerunning `init` keeps the existing lab CA and generated passwords, and leaves
@@ -124,6 +128,8 @@ remove:
 - the PostgreSQL or RabbitMQ certificate and key, when missing, within two
   days of expiry, or not verifying for the service's name against the
   internal CA;
+- the Keycloak certificate and key, when missing, within two days of expiry,
+  or not verifying for the name `keycloak` against the identity-provider CA;
 - the Keycloak, oauth2-proxy, and Valkey configuration files, if their content
   would change;
 - the RabbitMQ definitions, when missing or when a RabbitMQ password was just
@@ -161,6 +167,11 @@ refuses an existing directory that is not this lab's state.
 - `init` replaces an internal CA created before the subdomain exclusion
   (`check-secrets` refuses one) and reissues both datastore certificates;
   `start` then recreates the clients, which load the new CA.
+- The **identity-provider CA** is a third CA, for the ingress → Keycloak hop
+  only: valid for 90 days, no intermediates, and name-constrained to exactly
+  `keycloak` (subdomains and IP addresses excluded). Only the ingress trusts
+  it. Keycloak's certificate is valid for 14 days with `keycloak` as its only
+  name. See [TLS to Keycloak](#tls-to-keycloak).
 - Passwords and client secrets are random per lab. Connection URLs, the
   RabbitMQ definitions, and the Keycloak, oauth2-proxy, and Valkey
   configuration files are derived from them.
@@ -190,8 +201,8 @@ mounts. The CA keys and the source passwords and client secrets (RabbitMQ,
 client secrets, lab-user password, Valkey password, cookie secret) are never
 mounted and stay mode 600; the mounted configuration files embed them.
 
-The PostgreSQL and RabbitMQ keys follow the ingress layout: one `tls.pem` in
-a mode-711 directory, mounted read-only into that service only. PostgreSQL
+The PostgreSQL, RabbitMQ, and Keycloak keys follow the ingress layout: one
+`tls.pem` in a mode-711 directory, mounted read-only into that service only. PostgreSQL
 refuses a key it does not own with mode 600, so its entrypoint
 (`infra/security-lab/postgres/tls.sh`) copies the file into a tmpfs owned by
 the `postgres` user before starting the server.
@@ -408,7 +419,10 @@ values out of the ingress and gateway logs:
   request processing are suppressed. This includes the `error`-level entries
   for upstream connection failures and timeouts, so their reason (for
   example refused versus timed out) is no longer logged; the access-log
-  fields above remain. Startup and configuration errors are logged as before;
+  fields above remain. Startup and configuration errors are logged as before.
+  For Keycloak's certificate, a loopback-only diagnostic route logs nginx's
+  TLS verdict at `error` level; its request carries no credentials (see
+  [TLS to Keycloak](#tls-to-keycloak));
 - oauth2-proxy's request log omits the request URI; its auth and error logs
   are unchanged and still name the user;
 - the request ID (`rid=` in the access log, `X-Request-Id` in the response) is
@@ -429,7 +443,44 @@ logging.
 ./tools/security-lab-local verify-realm
 ./tools/security-lab-local verify-authorization
 ./tools/security-lab-local verify-internal-tls
+./tools/security-lab-local verify-keycloak-tls
+./tools/security-lab-local capture-idp-hop
 ```
+
+`verify-keycloak-tls` (about 15 minutes; Keycloak rereads its certificate
+every 35 s):
+- checks that Keycloak verifies against the identity-provider CA and not
+  against the lab or internal CA, that it has no plaintext listener and its
+  health interface is on its loopback, and records its listeners;
+- checks that the issuer, discovery metadata (also with spoofed forwarding
+  headers), authorization redirect, login-form action, callback, sign-in,
+  machine token, and sign-out are unchanged and work;
+- captures the hop passively during a sign-in and token request (see
+  `capture-idp-hop`) and expects no credential and no plaintext HTTP;
+- installs, one at a time, a certificate from an untrusted CA, one from the
+  lab CA, one for another name, an expired one, one also naming
+  `extra.keycloak`, and one also naming `IP:127.0.0.1`, and observes new connections, the public route, the access
+  log, the diagnostic route's reason, a TLS connection and a saved TLS session
+  from before the change, a token issued before it, a control nginx with
+  session reuse, a kept-alive connection, or verification off, and recovery
+  by renewal;
+- runs an isolated control on its own Docker network: nginx from the ingress
+  image with the production `keycloak-upstream.conf` refuses the
+  `keycloak` + IP certificate from the identity-provider CA and accepts the
+  same names from an unconstrained control CA. The lab's containers and the
+  ingress's trust anchor are not touched;
+- renews once more, checks that neither Keycloak nor the ingress restarted,
+  and searches the logs for the credentials and tokens it used.
+
+It leaves a valid certificate installed, also when interrupted (Keycloak
+serves it within 35 s).
+
+`capture-idp-hop` joins Keycloak's network namespace with a raw socket,
+captures the ingress ↔ Keycloak payload during a sign-in, the code redemption,
+and a client-credentials request, and counts occurrences of the password,
+code, client secrets, access token, plaintext HTTP messages, and the TLS server
+name. Values are never printed or recorded, and the capture file is deleted.
+It works on labs created before ADR 0007, where it finds the credentials.
 
 `verify-internal-tls`:
 - records each container's networks and whether it can gain raw-socket
@@ -761,6 +812,112 @@ containers. Data volumes are kept: `pg_hba.conf` is read from the repository,
 not from the volume. This upgrade path was not exercised; the
 authorization-era labs were left untouched.
 
+## TLS to Keycloak
+
+Keycloak serves only HTTPS on 8443 (`http-enabled=false`), with
+`idp-tls/tls.pem`, and the ingress verifies it
+([ADR 0007](../adr/0007-security-lab-identity-provider-transport.md)):
+
+- `infra/security-lab/ingress/keycloak-upstream.conf` sets
+  `proxy_ssl_verify on`, the identity-provider CA as the only trust anchor,
+  the name `keycloak` (also sent as SNI), TLS 1.2/1.3, and no session reuse;
+- the public names do not change: the issuer stays
+  `https://auth.work-items.localhost:9443/realms/work-items`, Keycloak's
+  `hostname` and `proxy-headers=xforwarded` are unchanged, and the ingress
+  replaces client forwarding headers as before. The discovery document had
+  the same digest before and after the change;
+- Keycloak's management interface (health) is plain HTTP bound to
+  `127.0.0.1:9000` inside its container, for the health check only;
+- the tool's admin-API probe (`verify-realm`, `verify-authorization`) uses
+  `https://keycloak:8443` and verifies like the ingress.
+
+The API and oauth2-proxy still reach the issuer only through the ingress, so
+nothing else needs the identity-provider CA.
+
+### Renewing Keycloak's certificate
+
+```bash
+./tools/security-lab-local issue-keycloak-certificate
+```
+
+The tool issues a certificate from the identity-provider CA and replaces
+`idp-tls/tls.pem` by a rename. Keycloak rereads the file every 35 s
+(`https-certificates-reload-period`), so nothing restarts. The command
+succeeds only when five consecutive new connections verify (code 0) with the
+new serial within 100 attempts a second apart, and otherwise exits with
+`renewal of keycloak not confirmed: timeout: …`. `init` reissues the
+certificate within two days of expiry, and `check-secrets` refuses an expired
+one, as for the other certificates.
+
+Keycloak logs an INFO line per event-loop thread on every reload, whether or
+not the file changed (about 20 lines every 35 s), so that logger is set to
+`warn` in `keycloak.conf`. Its log therefore does not show when a renewed
+certificate took effect; the command's own check does.
+
+### When Keycloak's certificate is wrong
+
+Measured by `verify-keycloak-tls` (see the
+[experiment record](../experiments/issue-121-keycloak-tls.md)). In every
+case below, new requests to the identity provider through the ingress answer
+`503 {"error":"identity_provider_unavailable"}` (issuer discovery, token
+requests, new sign-ins), the access log shows `upstream=502` on port 8443,
+and renewal recovers without restarting Keycloak or the ingress:
+
+| Certificate | nginx's reason (diagnostic route) |
+| --- | --- |
+| Signed by an unknown CA | `upstream SSL certificate verify error: (21:unable to verify the first certificate)` |
+| Signed by the lab CA (browser-trusted) | Same as an unknown CA: the ingress does not trust the lab CA for Keycloak |
+| For another name (`postgres`) | `(47:permitted subtree violation)`: the identity-provider CA may not issue for that name, which OpenSSL reports after the hostname check |
+| Expired | `(10:certificate has expired)` |
+| Naming `keycloak` and the excluded `extra.keycloak` | `(48:excluded subtree violation)` |
+| Naming `keycloak` and an IP address (`IP:127.0.0.1`), which the CA excludes | `(48:excluded subtree violation)`; the same names from a CA without constraints are accepted by the same nginx directives |
+
+What keeps working meanwhile: an access token issued before the change was
+still accepted by the API, which validates locally with cached keys. For
+everything else expect the [Keycloak outage](#dependency-outages) behavior;
+browser sessions were not exercised under a bad certificate.
+
+To see the reason, ask the ingress's diagnostic route:
+
+```bash
+./tools/security-lab-local check-keycloak-upstream
+```
+
+The public route does not log it: in the public servers, nginx error-log
+entries below `crit` are suppressed because they carry the request line,
+which can hold authorization codes. The diagnostic route
+(`127.0.0.1:8082/keycloak-upstream` inside the ingress) fetches issuer
+discovery with the same TLS settings; its request carries no credentials, so
+it logs at `error` level.
+
+Two client behaviors matter for these conclusions:
+
+- **Established connections are not re-verified.** A TLS connection opened
+  before the change kept working afterwards, and a control nginx with a
+  kept-alive upstream connection kept answering 200 with a bad certificate in
+  place. The production ingress keeps no connections to Keycloak (measured:
+  none after requests), so every request verifies the certificate Keycloak
+  serves at that moment.
+- **Session resumption.** Keycloak resumed a saved TLS session while its
+  certificate was unchanged. A resumed session sends no certificate, so the
+  client verifies nothing on it. After every certificate change Keycloak
+  declined the saved session and performed a full handshake, so the client
+  received and verified the new certificate. No session was resumed across a
+  change, so this does not show that a resumed session would be
+  revalidated. The ingress does not reuse sessions
+  (`proxy_ssl_session_reuse off`), so it does not depend on that server
+  behavior.
+
+### Labs created before TLS to Keycloak
+
+`check-secrets`, and so `start`, refuses them: the identity-provider CA is
+missing and `keycloak.conf` still enables HTTP. Run `init`, which adds the CA
+and certificate and rewrites `keycloak.conf`, then `start`, which rebuilds
+the ingress and recreates the containers. The Keycloak database volume, and so
+the realm, is kept. This path was exercised twice, on a lab created from
+`main` for this purpose (once after creating it, once after switching it
+back to `main`'s files); the existing labs were left untouched.
+
 ## Stop and remove
 
 ```bash
@@ -804,6 +961,10 @@ manually when no longer needed.
 | `the postgres certificate does not verify …` or `has expired` | Certificate expired or replaced by hand | `issue-internal-certificate postgres` (or `rabbitmq`) |
 | API answers 503 and logs `x509: …`, or the worker logs `x509: …` and retries | A datastore serves a certificate the clients do not accept | Renew it with `issue-internal-certificate`; no restart needed |
 | PostgreSQL exits with `PostgreSQL TLS file missing or empty` | The `internal-tls/postgres/` mount is empty | Run `init`, then `start` |
+| Discovery, token requests, or sign-in answer 503 `identity_provider_unavailable` while Keycloak is healthy | The ingress refuses Keycloak's certificate | `check-keycloak-upstream` prints nginx's reason; renew with `issue-keycloak-certificate` |
+| `identity-provider CA certificate missing` or `keycloak.conf does not restrict Keycloak to HTTPS` from `check-secrets` | State created before TLS to Keycloak | Run `init`, then `start` |
+| Keycloak exits with `Unable to read file /run/keycloak-tls/tls.pem` | The `idp-tls/` mount is empty | Run `init`, then `start` |
+| The ingress exits with `cannot load certificate "/run/idp-ca/ca.crt"` | The identity-provider CA certificate is missing | Run `init`, then `start` |
 
 ## Limitations
 
@@ -830,10 +991,17 @@ manually when no longer needed.
 - One lab user and one machine client, defined in the realm file; no
   self-service, MFA, or Keycloak administration access.
 - The HTTPS port is fixed at 9443.
-- Ingress → API, ingress → Keycloak and oauth2-proxy, oauth2-proxy → Valkey,
-  and Keycloak → its database are unencrypted on internal networks
-  (ADR 0006: provisional, with reconsideration conditions). Ingress →
-  Keycloak carries person passwords and is the first candidate.
+- Ingress → API, ingress → oauth2-proxy, oauth2-proxy → Valkey, and Keycloak
+  → its database are unencrypted on internal networks (ADR 0006: provisional,
+  with reconsideration conditions).
+- TLS to Keycloak authenticates Keycloak only; there are no client
+  certificates (mTLS). OAuth clients still authenticate with client
+  credentials inside TLS, but any member of `idp` can open a
+  TLS connection and reach every Keycloak path, including the admin API (the
+  ingress's route allow-list applies only to traffic through the ingress).
+  Keycloak's cache-cluster listeners (`:7800` with mTLS, `:57800`) remain on
+  `idp`. The identity-provider CA is a third private CA with its own key and
+  manual lifecycle.
 - Internal TLS authenticates servers only; clients still authenticate with
   passwords (no mTLS). No automated renewal, expiry monitoring, or
   revocation; a bad certificate goes unnoticed by established connections
