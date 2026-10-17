@@ -120,9 +120,16 @@ identity-provider CA; the ingress verifies it.
   verifies against the identity-provider CA.
 - **Preflight.** `check-secrets` (and so `start`) refuses a missing,
   expired, wrong-name, or mismatched Keycloak certificate, an
-  identity-provider CA whose constraints are not exactly `keycloak`, and a
-  `keycloak.conf` that enables HTTP or lacks the certificate or the
-  loopback-bound management interface.
+  identity-provider CA whose critical name constraints differ in any way from
+  the policy above (only `DNS:keycloak` permitted; exactly `DNS:.keycloak`,
+  all IPv4, and all IPv6 excluded; checked on the DER encoding, independent
+  of order and display format), and a `keycloak.conf` that enables HTTP or
+  lacks the certificate or the loopback-bound management interface. `init`
+  replaces such a CA and reissues Keycloak's certificate. Review of #137 at
+  `7c54810` found that the first version checked only the permitted name and
+  the `.keycloak` exclusion, so it accepted additional permitted names and
+  missing IP exclusions. The datastore CA's check (ADR 0006) still has that
+  narrower form.
 - **Renewal and ownership.** `issue-keycloak-certificate` issues, replaces
   the file, and succeeds only when five consecutive new connections verify
   (code 0) with the new serial; Keycloak picks the file up on its next reload.

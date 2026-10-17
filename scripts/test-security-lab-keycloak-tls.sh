@@ -207,6 +207,61 @@ check "init replaces that CA and reissues the Keycloak certificate" "$(
     grep -q 'Issuing Keycloak certificate' <<< "$output" && echo pass || echo fail)"
 check_cmd "check-secrets passes after the replacement" lab check-secrets
 
+# The full ADR 0007 policy, checked on the DER encoding: only DNS:keycloak
+# permitted; .keycloak, all IPv4, and all IPv6 excluded; nothing else. Each
+# invalid CA is refused by check-secrets, then replaced by init, which also
+# reissues a Keycloak certificate that verifies against the new CA.
+make_idp_ca() {
+  openssl req -x509 -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+    -keyout "${idp_ca}.key" -out "${idp_ca}.crt" -days 1 -subj "/CN=policy case" \
+    -addext "basicConstraints=critical,CA:TRUE,pathlen:0" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "nameConstraints=$1" 2>/dev/null
+}
+fingerprint() { openssl x509 -noout -fingerprint -sha256 -in "${idp_ca}.crt"; }
+full_exclusions="excluded;DNS:.keycloak,excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
+policy_case() {
+  local label="$1" constraints="$2" reason="$3" before output
+  lab init >/dev/null
+  make_idp_ca "$constraints"
+  before="$(fingerprint)"
+  output="$(lab check-secrets 2>&1 || true)"
+  check "policy: check-secrets refuses a CA with ${label}" "$(
+    grep -q "identity-provider CA's name constraints do not limit it to exactly keycloak" <<< "$output" &&
+      grep -qF "$reason" <<< "$output" && echo pass || echo fail)"
+  output="$(lab init 2>&1)"
+  check "policy: init replaces the CA with ${label} and reissues the Keycloak certificate" "$(
+    grep -q 'Replacing the identity-provider CA' <<< "$output" &&
+      grep -q 'Issuing Keycloak certificate' <<< "$output" &&
+      [[ "$(fingerprint)" != "$before" ]] && echo pass || echo fail)"
+  check "policy: after replacing the CA with ${label}, the new Keycloak certificate verifies and check-secrets passes" "$(
+    openssl verify -CAfile "${idp_ca}.crt" -verify_hostname keycloak -purpose sslserver "$keycloak" >/dev/null 2>&1 &&
+      lab check-secrets >/dev/null 2>&1 && echo pass || echo fail)"
+}
+policy_case "an additional permitted DNS name" \
+  "critical,permitted;DNS:keycloak,permitted;DNS:attacker.example,${full_exclusions}" "attacker.example"
+policy_case "an additional permitted IP range" \
+  "critical,permitted;DNS:keycloak,permitted;IP:10.0.0.0/255.0.0.0,${full_exclusions}" "permitted subtrees are"
+policy_case "no IPv4 exclusion" \
+  "critical,permitted;DNS:keycloak,excluded;DNS:.keycloak,excluded;IP:::/::" "missing [('ipv4', 'all')]"
+policy_case "no IPv6 exclusion" \
+  "critical,permitted;DNS:keycloak,excluded;DNS:.keycloak,excluded;IP:0.0.0.0/0.0.0.0" "missing [('ipv6', 'all')]"
+policy_case "no IP exclusions (the review's reproduction)" \
+  "critical,permitted;DNS:keycloak,permitted;DNS:attacker.example,excluded;DNS:.keycloak" "permitted subtrees are"
+policy_case "a non-critical extension" \
+  "permitted;DNS:keycloak,${full_exclusions}" "not critical"
+
+# The valid policy, written in another order, is kept by init.
+lab init >/dev/null
+make_idp_ca "critical,excluded;IP:::/::,excluded;DNS:.keycloak,permitted;DNS:keycloak,excluded;IP:0.0.0.0/0.0.0.0"
+before="$(fingerprint)"
+output="$(lab init 2>&1)"
+check "policy: init keeps a valid CA whose subtrees are in another order" "$(
+  grep -q 'Identity-provider CA exists' <<< "$output" && [[ "$(fingerprint)" == "$before" ]] && echo pass || echo fail)"
+check_cmd "policy: check-secrets accepts that valid CA" lab check-secrets
+check "policy: the CA init creates passes the same check" "$(
+  rm -f "${idp_ca}.key" "${idp_ca}.crt"; lab init >/dev/null
+  lab check-secrets >/dev/null 2>&1 && echo pass || echo fail)"
+
 rm -f "$keycloak"
 output="$(lab check-secrets 2>&1 || true)"
 check "check-secrets refuses a missing Keycloak TLS file" "$(

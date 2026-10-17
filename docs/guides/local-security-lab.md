@@ -171,7 +171,13 @@ refuses an existing directory that is not this lab's state.
   only: valid for 90 days, no intermediates, and name-constrained to exactly
   `keycloak` (subdomains and IP addresses excluded). Only the ingress trusts
   it. Keycloak's certificate is valid for 14 days with `keycloak` as its only
-  name. See [TLS to Keycloak](#tls-to-keycloak).
+  name. `check-secrets` refuses, and `init` replaces (reissuing Keycloak's
+  certificate), an identity-provider CA whose critical name constraints are
+  not exactly: permitted `DNS:keycloak`; excluded `DNS:.keycloak`, all IPv4,
+  and all IPv6. Additional permitted names or ranges, missing exclusions, or
+  a non-critical extension all fail. The check reads the certificate's DER
+  encoding with `python3`, which both commands therefore require. See
+  [TLS to Keycloak](#tls-to-keycloak).
 - Passwords and client secrets are random per lab. Connection URLs, the
   RabbitMQ definitions, and the Keycloak, oauth2-proxy, and Valkey
   configuration files are derived from them.

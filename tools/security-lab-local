@@ -594,17 +594,120 @@ init_internal_ca() {
 # trusts it, and it may issue only for the exact name keycloak. It is kept
 # apart from the internal CA so that neither CA's key can vouch for the other
 # hop, and the internal CA's policy (ADR 0006) stays unchanged.
+#
+# The policy is checked on the certificate's DER encoding, not on OpenSSL's
+# text output, so the order of extensions or subtrees and the display format
+# do not matter. The CA passes only when it has exactly one critical
+# nameConstraints extension whose
+#   permitted subtrees are exactly { dNSName keycloak }, and whose
+#   excluded subtrees are exactly { dNSName .keycloak, all IPv4, all IPv6 }
+# (an iPAddress subtree with an all-zero mask covers every address of its
+# family). Any other name or range, a minimum or maximum, or a missing
+# exclusion fails it. Prints the reason on failure.
+idp_ca_policy_check() {
+  openssl x509 -in "$1" -outform DER 2>/dev/null | python3 -I -c '
+import sys
+
+def tlv(buf, i):
+    tag = buf[i]; i += 1
+    n = buf[i]; i += 1
+    if n & 0x80:
+        k = n & 0x7F
+        if k == 0 or k > 4:
+            raise ValueError("unsupported length")
+        n = int.from_bytes(buf[i:i + k], "big"); i += k
+    if i + n > len(buf):
+        raise ValueError("truncated")
+    return tag, buf[i:i + n], i + n
+
+def items(buf):
+    i, out = 0, []
+    while i < len(buf):
+        tag, val, i = tlv(buf, i)
+        out.append((tag, val))
+    return out
+
+def fail(reason):
+    print(reason); sys.exit(1)
+
+name = sys.argv[1]
+try:
+    der = sys.stdin.buffer.read()
+    tag, cert, _ = tlv(der, 0)
+    tbs = items(cert)[0]
+    if tag != 0x30 or tbs[0] != 0x30:
+        fail("not a certificate")
+    found = []
+    for t, v in items(tbs[1]):
+        if t != 0xA3:  # [3] extensions
+            continue
+        for _, ext in items(items(v)[0][1]):
+            parts = items(ext)
+            if parts[0] != (0x06, bytes.fromhex("551d1e")):  # 2.5.29.30
+                continue
+            critical = len(parts) == 3 and parts[1] == (0x01, b"\xff")
+            found.append((critical, parts[-1][1]))
+    if len(found) != 1:
+        fail("expected exactly one nameConstraints extension, found %d" % len(found))
+    critical, value = found[0]
+    if not critical:
+        fail("nameConstraints is not critical")
+
+    def subtrees(tagged):
+        out = set()
+        for t, sub in items(tagged):
+            fields = items(sub)
+            if t != 0x30 or len(fields) != 1:
+                fail("a subtree has a minimum or maximum, or is malformed")
+            gt, gv = fields[0]
+            if gt == 0x82:    # dNSName
+                out.add(("dns", gv.decode("ascii").lower()))
+            elif gt == 0x87 and len(gv) in (8, 32):   # iPAddress
+                half = len(gv) // 2
+                family = "ipv4" if half == 4 else "ipv6"
+                mask = gv[half:]
+                out.add((family, "all") if not any(mask) else (family, gv.hex()))
+            else:
+                out.add(("other", "%02x:%s" % (gt, gv.hex())))
+        return out
+
+    seq = items(value)
+    if len(seq) != 1 or seq[0][0] != 0x30:
+        fail("malformed nameConstraints")
+    permitted, excluded, seen = set(), set(), set()
+    for t, v in items(seq[0][1]):
+        if t in seen or t not in (0xA0, 0xA1):
+            fail("malformed nameConstraints")
+        seen.add(t)
+        (permitted if t == 0xA0 else excluded).update(subtrees(v))
+except (ValueError, IndexError, UnicodeDecodeError):
+    fail("unreadable certificate or nameConstraints")
+
+want_permitted = {("dns", name)}
+want_excluded = {("dns", "." + name), ("ipv4", "all"), ("ipv6", "all")}
+if permitted != want_permitted:
+    fail("permitted subtrees are %s, expected only dNSName %s" % (sorted(permitted), name))
+if excluded != want_excluded:
+    missing = sorted(want_excluded - excluded)
+    extra = sorted(excluded - want_excluded)
+    fail("excluded subtrees: missing %s, unexpected %s" % (missing, extra))
+' "$2"
+}
+
 idp_ca_constraints_ok() {
-  ca_constraints_ok "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME"
+  idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME" >/dev/null
 }
 
 init_idp_ca() {
+  # Without python3 the policy cannot be checked; stop rather than treat an
+  # unchecked CA as invalid and replace it.
+  require_command python3
   if [[ -f "${PKI_DIR}/idp-ca.key" ]]; then
     if idp_ca_constraints_ok; then
       echo "Identity-provider CA exists: ${PKI_DIR}/idp-ca.crt"
       return 0
     fi
-    echo "Replacing the identity-provider CA: its name constraints are not exactly ${IDP_TLS_NAME}."
+    echo "Replacing the identity-provider CA: its name constraints do not match ADR 0007 ($(idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME"))."
     rm -f "${PKI_DIR}/idp-ca.key" "${PKI_DIR}/idp-ca.crt"
   fi
 
@@ -1217,11 +1320,15 @@ check_secrets() {
   # Identity-provider hop (ADR 0007): Keycloak's certificate verifies for the
   # name keycloak against its own CA, is unexpired, and matches its key; the
   # CA permits exactly that name.
+  local idp_policy
   if [[ ! -f "${PKI_DIR}/idp-ca.crt" ]]; then
     echo "error: identity-provider CA certificate missing: ${PKI_DIR}/idp-ca.crt (run: $0 init)" >&2
     failures=$((failures + 1))
-  elif ! idp_ca_constraints_ok; then
-    echo "error: the identity-provider CA's name constraints do not limit it to exactly ${IDP_TLS_NAME}; run: $0 init" >&2
+  elif ! command -v python3 >/dev/null 2>&1; then
+    echo "error: python3 is required to check the identity-provider CA's name constraints" >&2
+    failures=$((failures + 1))
+  elif ! idp_policy="$(idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME")"; then
+    echo "error: the identity-provider CA's name constraints do not limit it to exactly ${IDP_TLS_NAME} (${idp_policy}); run: $0 init" >&2
     failures=$((failures + 1))
   elif [[ "$(stat -c '%a' "$IDP_TLS_DIR" 2>/dev/null)" != "711" ]]; then
     echo "error: ${IDP_TLS_DIR} missing or not mode 711 (run: $0 init)" >&2

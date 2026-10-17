@@ -98,7 +98,9 @@ Its benefit here would be access control on `idp`, not transport protection.
   diagnostic route that logs the TLS verdict at `error` level.
 - **Lab tool**: the admin probe uses HTTPS with the identity-provider CA;
   `check-secrets` refuses a missing, invalid, or wrong-CA certificate, a CA
-  with other constraints, and a `keycloak.conf` that enables HTTP;
+  whose name constraints differ from ADR 0007's policy (complete since the
+  [review fix](#review-fix-identity-ca-policy-validation)), and a
+  `keycloak.conf` that enables HTTP;
   `check-keycloak-upstream`, `capture-idp-hop`, and `verify-keycloak-tls`.
 - **CI**: `scripts/test-security-lab-keycloak-tls.sh` (CA policy including
   the subdomain and IP-address exclusions with unconstrained-CA positive
@@ -424,6 +426,58 @@ that OpenSSL accepted.
   secret files (passwords, client secrets, connection URLs) and no private
   key; a planted value was found.
 
+## Review fix: identity-CA policy validation
+
+Independent review of #137 at `7c54810` found that `idp_ca_constraints_ok`
+checked only that `DNS:keycloak` was permitted and `DNS:.keycloak` excluded.
+It accepted additional permitted names and missing IPv4 or IPv6 exclusions.
+Reproduced in temporary state: a CA permitting `keycloak` and
+`attacker.example`, excluding only `.keycloak`, was kept by `init` (which
+issued a Keycloak certificate from it) and accepted by `check-secrets`.
+
+**Fix (tool blob `26fd5e4`).** The identity-provider CA is now checked on
+its DER encoding. It must carry exactly one critical `nameConstraints`
+extension. Its permitted subtrees must be exactly { `DNS:keycloak` }. Its
+excluded subtrees must be exactly { `DNS:.keycloak`, all IPv4, all IPv6 },
+where an all-zero mask means all addresses of the family. Order and display
+format do not matter. Any other name or range, or a minimum or maximum,
+fails the check. `check-secrets` refuses a failing CA and names the
+difference. `init` replaces it and reissues Keycloak's certificate. Both
+commands need `python3` for the check, and stop rather than replace a CA
+they cannot check. The datastore CA's check (ADR 0006) is unchanged, and has
+the same narrower form (see [remaining gaps](#remaining-gaps)).
+
+**Regression (`scripts/test-security-lab-keycloak-tls.sh`, blob `c0c6e85`,
+temporary state, no Docker): 65 passed, 0 failed.** Six invalid policies were
+each refused by `check-secrets` with the reason, then replaced by `init`,
+after which the reissued Keycloak certificate verified against the new CA
+and `check-secrets` passed:
+
+- an additional permitted DNS name;
+- an additional permitted IP range;
+- no IPv4 exclusion;
+- no IPv6 exclusion;
+- no IP exclusions plus an extra permitted name (the review's reproduction);
+- a non-critical extension.
+
+A valid CA with its subtrees in another order was kept by `init` and
+accepted, as was the CA `init` creates. Mutation control: the same script
+against the tool at `7c54810` failed the 12 refusal and replacement cases.
+
+**Applicability of the runtime evidence.** The fix changes only the
+preflight gate: `idp_ca_policy_check`, `idp_ca_constraints_ok`,
+`init_idp_ca`, and the identity-provider branch of `check-secrets`. No
+configuration, certificate, CA, container, or verifier that the lab runs
+changed. The lab's identity-provider CA was created by `init` with the
+full policy on 2026-10-13 and has not changed since. It passes the new check
+(read-only check of its public certificate). So every runtime result above,
+including the `check-secrets` pass recorded at the end of
+`verify-keycloak-tls`, stays applicable; none was rerun. The recorded tool
+blobs (`b4b2dc4`, `2b445a3`) remain the ones those runs used. The only
+earlier claim the fix changes is that `check-secrets` refused "a CA with
+other constraints". At `7c54810` that held only for the subdomain
+exclusion.
+
 ## Observations
 
 1. **The two-member premise was already false.** The tool's admin probe sent
@@ -499,6 +553,10 @@ Kept out of the evidence directory; summarized here:
   listeners remain on `idp`.
 - Manual renewal only, no expiry monitoring, no revocation; three private CAs
   with separate manual lifecycles.
+- The datastore (internal) CA's preflight check (ADR 0006,
+  `ca_constraints_ok`) still verifies only the permitted names and their
+  subdomain exclusions. It would accept additional permitted names or
+  missing IP exclusions. It was left unchanged in this slice.
 - Secret rotation, rate limiting, observability, availability, and restore
   (#130, #131) are unchanged.
 
