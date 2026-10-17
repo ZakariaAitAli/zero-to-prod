@@ -1,0 +1,17 @@
+{
+  "run": "targeted verify-keycloak-tls 2026-10-17 13:36-13:46 UTC",
+  "description": "Files the lab ran with for verify-keycloak-tls.json in this directory. Differs from the full rerun (../rerun/provenance.json) only in tools/security-lab-local: the ip certificate kind, its failure case, and the isolated unconstrained-CA control.",
+  "base_commit": "4f8b299b67c7b210d6ef74a9346689287342feae",
+  "recorded_at": "2026-10-17T13:46:34Z",
+  "tested_files_git_blob": {
+    "tools/security-lab-local": "2b445a3374d607d60ba725da1b624d6eb28077bb",
+    "infra/security-lab/compose.yaml": "bbbd6c5549ab3560b571634fb3d20167e3984097",
+    "infra/security-lab/ingress/nginx.conf": "8d7a9688634ba357694dd4df7efb096445d2510c",
+    "infra/security-lab/ingress/keycloak-upstream.conf": "b3db07565d2a2ba3a89f11ca95de8f06a496a8f9",
+    "infra/security-lab/ingress/Dockerfile": "b7874b68e54fbbac2719d736f24a2e247eda3419",
+    "infra/security-lab/ingress/Dockerfile.dockerignore": "a165c911ccd6564510d77b3fe4da62ed31cce2a0",
+    "infra/security-lab/postgres/pg_hba.conf": "9146c3698f4e8399b35a664d5313a30e06325db1",
+    "infra/security-lab/postgres/tls.sh": "d06d7a72a6815554452b0f220c9577f0d4b2aa88",
+    "infra/security-lab/rabbitmq/rabbitmq.conf": "94880902eafc97a01f448e38a35c80b5200264c9"
+  }
+}

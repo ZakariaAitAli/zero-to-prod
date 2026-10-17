@@ -1,0 +1,19 @@
+{
+  "project": "zero-to-prod-security-lab-kctls",
+  "started_at": "2026-10-17T13:15:28Z",
+  "recorded_at": "2026-10-17T13:15:38Z",
+  "description": "Realm readiness: the work-items realm's authorization configuration read through the admin API by the role-management client.",
+  "results": [
+    {"vantage":"realm readiness","check":"client work-items-api exists","expected":"yes","observed":"yes","result":"pass"},
+    {"vantage":"realm readiness","check":"work-items-api roles","expected":"editor,items.create,items.process,items.read,viewer","observed":"editor,items.create,items.process,items.read,viewer","result":"pass"},
+    {"vantage":"realm readiness","check":"editor composite","expected":"items.create,items.process,items.read","observed":"items.create,items.process,items.read","result":"pass"},
+    {"vantage":"realm readiness","check":"viewer composite","expected":"items.read","observed":"items.read","result":"pass"},
+    {"vantage":"realm readiness","check":"lab-user: effective work-items-api roles","expected":"editor,items.create,items.process,items.read","observed":"editor,items.create,items.process,items.read","result":"pass"},
+    {"vantage":"realm readiness","check":"lab-viewer: effective work-items-api roles","expected":"items.read,viewer","observed":"items.read,viewer","result":"pass"},
+    {"vantage":"realm readiness","check":"lab-outsider: effective work-items-api roles","expected":"none","observed":"none","result":"pass"},
+    {"vantage":"realm readiness","check":"work-items-automation: effective work-items-api roles","expected":"items.process,items.read","observed":"items.process,items.read","result":"pass"},
+    {"vantage":"realm readiness","check":"lab-outsider: realm role named items.create","expected":"yes","observed":"yes","result":"pass"},
+    {"vantage":"realm readiness","check":"lab-outsider: work-items-gateway role named items.create","expected":"items.create","observed":"items.create","result":"pass"},
+    {"vantage":"realm readiness","check":"work-items-lab-admin: realm-management roles","expected":"manage-users,view-clients","observed":"manage-users,view-clients","result":"pass"}
+  ]
+}
