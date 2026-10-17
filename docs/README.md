@@ -38,7 +38,7 @@ Architecture documents describe the current or retained Zero-to-Prod system boun
 
 - [Delivery architecture](architecture/delivery.md) — the delivery and recovery model established by Sprint 01 and Sprint 02.
 - [Work Items architecture](architecture/work-items.md) — the current local-first Work Items system using PostgreSQL and RabbitMQ.
-- [Security lab architecture](architecture/security-lab.md) — the opt-in Issue #121 environment: HTTPS ingress, private networks, lab CA, runtime secrets, authentication, authorization, and verified TLS to the datastores.
+- [Security lab architecture](architecture/security-lab.md) — the opt-in Issue #121 environment: HTTPS ingress, private networks, lab CA, runtime secrets, authentication, authorization, and verified TLS to the datastores and to Keycloak.
 - [Security lab threat model: internal transport](architecture/security-lab-threat-model.md) — assets, principals, every internal connection with its network members, transport threats, and what each mitigation leaves open.
 
 ## Guides
@@ -69,7 +69,8 @@ ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
 - [ADR 0003 — Work Items async success semantics](adr/0003-work-items-async-success-semantics.md) — what successful processing means, why PostgreSQL owns the result, and the required failure model.
 - [ADR 0004 — Security lab authentication](adr/0004-security-lab-authentication.md) — **Proposed:** provisional identity provider, session gateway, and session store candidates for Issue #121, pending a comparison experiment.
 - [ADR 0005 — Security lab authorization](adr/0005-security-lab-authorization.md) — **Proposed:** Keycloak client roles as the permission source, enforced in the API with deny-by-default route registration.
-- [ADR 0006 — Security lab internal transport](adr/0006-security-lab-internal-transport.md) — **Proposed:** server-verified TLS from a separate, name-constrained internal CA on the shared data network (PostgreSQL, RabbitMQ); other internal hops plaintext with explicit triggers; mTLS not adopted.
+- [ADR 0006 — Security lab internal transport](adr/0006-security-lab-internal-transport.md) — **Proposed:** server-verified TLS from a separate, name-constrained internal CA on the shared data network (PostgreSQL, RabbitMQ); other internal hops plaintext with explicit triggers; mTLS not adopted. Its ingress → Keycloak row is replaced by ADR 0007.
+- [ADR 0007 — Security lab identity-provider hop](adr/0007-security-lab-identity-provider-transport.md) — **Proposed:** Keycloak serves only HTTPS with a certificate from a third CA, limited to exactly `keycloak` and trusted only by the ingress, which verifies chain and name without session reuse; lab CA, extended internal CA, pinning, mTLS, and passthrough compared.
 
 ## Experiments
 
@@ -78,6 +79,7 @@ Experiment records answer **what did we test and what happened?** Focused experi
 - [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
 - [Issue #117 — result implementation validation](experiments/issue-117-result-validation.md) — title-analysis results, atomic business completion, migration refusal, and result backup compatibility.
 - [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
+- [Issue #121 — TLS to Keycloak](experiments/issue-121-keycloak-tls.md) — the ingress → Keycloak hop in a separate lab: a passive capture before and after, unchanged public metadata and redirects, untrusted, lab-CA, wrong-name, expired, excluded-subdomain, and excluded-IP certificates (with an isolated unconstrained-CA control) with new versus established connections and TLS session resumption, recovery and renewal without restarts, and regression runs, rerun with the final files; browser sign-in blocked by the untrusted lab CA.
 - [Issue #121 — internal TLS](experiments/issue-121-internal-tls.md) — verified TLS to PostgreSQL and RabbitMQ in a separate lab: plaintext refusal, untrusted issuer, hostname mismatch, and expiry with new versus established connections, recovery by renewal without client restarts, and regression runs of the earlier checks.
 - [Issue #121 — authorization](experiments/issue-121-authorization.md) — role-based authorization in a separate lab: the principal × action matrix on both paths with a pinned pre-authorization control, strict claims, measured role-removal delays, an identity-provider outage, and the role-management client's minimum permissions.
 - [Issue #121 — authentication integration](experiments/issue-121-authentication-integration.md) — the security lab with Keycloak, oauth2-proxy and Valkey, and API token validation: both API paths, token rejection, CSRF, sign-out through Keycloak, cookie and captured-token replay, and dependency outages.

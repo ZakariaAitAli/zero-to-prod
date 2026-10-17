@@ -1,0 +1,10 @@
+{
+  "project": "zero-to-prod-security-lab-kctls",
+  "recorded_at": "2026-10-13T22:03:37Z",
+  "mount": "directory bind mount <state>/ingress-tls -> /run/ingress-tls (read-only)",
+  "before": { "served_serial": "EF55F607E78CB5CFE4323C3D9E0788F0", "file_serial": "EF55F607E78CB5CFE4323C3D9E0788F0" },
+  "after": { "served_serial": "2B1C4876E8B61F24C2FF43BA1EE8B3DC", "file_serial": "2B1C4876E8B61F24C2FF43BA1EE8B3DC" },
+  "container_file_matches_host_file": true,
+  "control_single_file_bind_mount_after_replacement": "stale",
+  "result": "pass"
+}

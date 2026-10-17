@@ -3,7 +3,10 @@
 ## Status
 
 Proposed (provisional). Builds on ADR 0004 and ADR 0005, which are also
-Proposed and unchanged by this decision.
+Proposed and unchanged by this decision. The "Ingress → Keycloak" row of the
+decision below is replaced by
+[ADR 0007](0007-security-lab-identity-provider-transport.md) (verified TLS
+from a separate identity-provider CA); the rest stands.
 
 ## Context
 
@@ -208,9 +211,22 @@ clients only (`verify-internal-tls.json`: 75 pass, 30 observations, 0 fail):
   - Established connections continued, and renewal recovered.
 - **Renewal confirmation:** a timeout no longer counts as success. Renewal requires five consecutive verified connections with the new serial; regression cases cover a single final match, intermittent matches, and no match.
 
+### 2026-10-13 — Ingress → Keycloak encrypted (ADR 0007)
+
+The reconsideration condition "`idp` gains a member" had already been met:
+the lab tool's admin-API probe and reachability probes join `idp`, and the
+admin probe sent the role-management client secret and admin tokens to
+Keycloak in plaintext. A passive capture of the hop in a lab built from
+`main` found the password, the authorization code, both clients' secrets, and
+an access token. [ADR 0007](0007-security-lab-identity-provider-transport.md)
+encrypts the hop with a separate identity-provider CA; this ADR's internal CA
+and its exact-name policy are unchanged
+([experiment](../experiments/issue-121-keycloak-tls.md)).
+
 Open:
 
-- the plaintext hops, including ingress → Keycloak;
+- the remaining plaintext hops (ingress → API and oauth2-proxy,
+  oauth2-proxy → Valkey, Keycloak → its database);
 - mTLS;
 - automated renewal and monitoring;
 - the upgrade of existing labs;

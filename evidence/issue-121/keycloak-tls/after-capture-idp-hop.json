@@ -1,0 +1,15 @@
+{
+  "project": "zero-to-prod-security-lab-kctls",
+  "started_at": "2026-10-13T22:03:14Z",
+  "recorded_at": "2026-10-13T22:03:35Z",
+  "description": "capture-idp-hop: passive capture of the ingress-Keycloak hop from Keycloak's network namespace during a sign-in, code redemption, and client-credentials request; counts only, no values recorded.",
+  "results": [
+    {"vantage":"metadata","check":"issuer discovery through the ingress","expected":"observe","observed":"sha256=8b48b730131d9c24 issuer=https://auth.work-items.localhost:9443/realms/work-items endpoints_below_issuer=yes","result":"info"},
+    {"vantage":"metadata","check":"keycloak: listening sockets","expected":"observe","observed":"192.168.112.2:7800,:::8443,127.0.0.1:9000,127.0.0.11:41133,127.0.0.1:43137,:::57800","result":"info"},
+    {"vantage":"metadata","check":"ingress upstream for the identity provider (access log)","expected":"observe","observed":"2 port=8443","result":"info"},
+    {"vantage":"passive capture of the ingress-Keycloak hop","check":"capture started (raw socket in Keycloak's network namespace)","expected":"observe","observed":"yes","result":"info"},
+    {"vantage":"passive capture of the ingress-Keycloak hop","check":"flows during the capture: sign-in callback, client credentials","expected":"observe","observed":"callback=302 code=obtained token=issued","result":"info"},
+    {"vantage":"passive capture of the ingress-Keycloak hop","check":"payload bytes captured on the hop","expected":"observe","observed":"39575","result":"info"},
+    {"vantage":"passive capture of the ingress-Keycloak hop","check":"occurrences per kind (credentials, plaintext HTTP, TLS server name)","expected":"observe","observed":"access-token=0 authorization-code=0 client-secret=0 client-secret-basic=0 client-secret-basic+encoded=0 http-message=0 password=0 tls-server-name=5","result":"info"}
+  ]
+}

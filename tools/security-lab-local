@@ -26,6 +26,15 @@ INTERNAL_TLS_DIR="${STATE_DIR}/internal-tls"
 # Services on the data network that accept only TLS. Their Docker service
 # names are the certificate names and the internal CA's permitted names.
 INTERNAL_TLS_SERVICES=(postgres rabbitmq)
+# Keycloak's key and certificate (ADR 0007), signed by the identity-provider
+# CA, which may issue only for IDP_TLS_NAME and is trusted only by the ingress.
+IDP_TLS_DIR="${STATE_DIR}/idp-tls"
+IDP_TLS_FILE="${IDP_TLS_DIR}/tls.pem"
+# The name the ingress dials and verifies (its Docker service name).
+IDP_TLS_NAME=keycloak
+IDP_TLS_PORT=8443
+# Keycloak rereads its certificate files on this period (more than 30 s).
+KEYCLOAK_TLS_RELOAD_SECONDS=35
 # Fixed: the issuer URL, client registrations, and the ingress's internal
 # listener all carry it.
 HTTPS_PORT=9443
@@ -128,6 +137,10 @@ Usage:
   ./tools/security-lab-local verify-renewal [--evidence <file>]
   ./tools/security-lab-local issue-internal-certificate <postgres|rabbitmq>
   ./tools/security-lab-local verify-internal-tls [--evidence <file>]
+  ./tools/security-lab-local issue-keycloak-certificate
+  ./tools/security-lab-local check-keycloak-upstream
+  ./tools/security-lab-local capture-idp-hop [--evidence <file>]
+  ./tools/security-lab-local verify-keycloak-tls [--evidence <file>]
   ./tools/security-lab-local check-serial-streak "<code> <serial>" [required] [attempts] < observations
   ./tools/security-lab-local ca-certificate
   ./tools/security-lab-local stop
@@ -144,9 +157,10 @@ oauth2-proxy and Keycloak, machine clients use client credentials.
 
 Commands:
   init               Create the lab CA, ingress certificate, internal CA,
-                     PostgreSQL and RabbitMQ certificates, and runtime secrets
-                     outside the repository. Keeps existing CAs and passwords;
-                     reissues certificates near expiry.
+                     PostgreSQL and RabbitMQ certificates, identity-provider
+                     CA, Keycloak certificate, and runtime secrets outside the
+                     repository. Keeps existing CAs and passwords; reissues
+                     certificates near expiry.
   check-secrets      Verify the required runtime secret files and certificate.
   start              Check secrets, build images, start the lab, apply
                      identities and migrations, and wait until healthy.
@@ -197,6 +211,26 @@ Commands:
                      new versus established connections, recovery, and
                      renewal. Restarts the API and worker and installs bad
                      certificates temporarily.
+  issue-keycloak-certificate
+                     Issue a new Keycloak certificate from the
+                     identity-provider CA and wait until Keycloak rereads it
+                     (every ${KEYCLOAK_TLS_RELOAD_SECONDS} s) and five consecutive new connections
+                     verify the new serial.
+  check-keycloak-upstream
+                     Fetch issuer discovery from Keycloak through the
+                     ingress's diagnostic route and print nginx's TLS verdict.
+  capture-idp-hop    Capture the ingress-Keycloak hop passively during a
+                     sign-in and token request and count credentials and
+                     plaintext HTTP in it (values are never recorded). Works
+                     on labs created before ADR 0007.
+  verify-keycloak-tls
+                     Exercise the ingress-Keycloak TLS hop: baseline, public
+                     metadata and redirects, passive capture, untrusted CA,
+                     lab CA, wrong name, expired, excluded subdomain,
+                     excluded IP address (with an isolated unconstrained-CA
+                     control), new versus established connections, session
+                     resumption, recovery, and renewal. Installs bad
+                     certificates temporarily; takes about 15 minutes.
   check-serial-streak
                      Test hook: apply the renewal confirmation rule (N
                      consecutive equal observations within M attempts) to
@@ -298,10 +332,12 @@ check_state_dir() {
   INGRESS_TLS_DIR="${STATE_DIR}/ingress-tls"
   INGRESS_TLS_FILE="${INGRESS_TLS_DIR}/tls.pem"
   INTERNAL_TLS_DIR="${STATE_DIR}/internal-tls"
+  IDP_TLS_DIR="${STATE_DIR}/idp-tls"
+  IDP_TLS_FILE="${IDP_TLS_DIR}/tls.pem"
   STATE_MARKER="${STATE_DIR}/.zero-to-prod-security-lab"
 }
 
-STATE_ENTRIES=(.zero-to-prod-security-lab pki secrets ingress-tls internal-tls)
+STATE_ENTRIES=(.zero-to-prod-security-lab pki secrets ingress-tls internal-tls idp-tls)
 
 # Prints entries of the state directory that the lab does not create.
 unexpected_state_entries() {
@@ -359,6 +395,8 @@ compose() {
     ZTP_SECURITY_LAB_CA_FILE="${PKI_DIR}/ca.crt" \
     ZTP_SECURITY_LAB_INTERNAL_CA_FILE="${PKI_DIR}/internal-ca.crt" \
     ZTP_SECURITY_LAB_INTERNAL_TLS_DIR="$INTERNAL_TLS_DIR" \
+    ZTP_SECURITY_LAB_IDP_CA_FILE="${PKI_DIR}/idp-ca.crt" \
+    ZTP_SECURITY_LAB_IDP_TLS_DIR="$IDP_TLS_DIR" \
     docker compose \
       --project-name "$PROJECT" \
       -f "$COMPOSE_FILE" \
@@ -491,17 +529,48 @@ internal_ca_name_constraints() {
   echo "${permitted}${excluded}excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
 }
 
+# True when the CA certificate $1 permits each name in $2… and excludes its
+# subdomains (".<name>").
+ca_constraints_ok() {
+  local text permitted excluded name
+  text="$(openssl x509 -noout -ext nameConstraints -in "$1" 2>/dev/null)" || return 1
+  shift
+  permitted="$(sed -n '/Permitted:/,/Excluded:/p' <<< "$text" | tr -d ' ')"
+  excluded="$(sed -n '/Excluded:/,$p' <<< "$text" | tr -d ' ')"
+  for name in "$@"; do
+    grep -qx "DNS:${name}" <<< "$permitted" || return 1
+    grep -qx "DNS:\.${name}" <<< "$excluded" || return 1
+  done
+}
+
 # True when the internal CA carries the current constraints: each service
 # name permitted and its subdomains excluded.
 internal_ca_constraints_ok() {
-  local text permitted excluded service
-  text="$(openssl x509 -noout -ext nameConstraints -in "${PKI_DIR}/internal-ca.crt" 2>/dev/null)" || return 1
-  permitted="$(sed -n '/Permitted:/,/Excluded:/p' <<< "$text" | tr -d ' ')"
-  excluded="$(sed -n '/Excluded:/,$p' <<< "$text" | tr -d ' ')"
-  for service in "${INTERNAL_TLS_SERVICES[@]}"; do
-    grep -qx "DNS:${service}" <<< "$permitted" || return 1
-    grep -qx "DNS:\.${service}" <<< "$excluded" || return 1
-  done
+  ca_constraints_ok "${PKI_DIR}/internal-ca.crt" "${INTERNAL_TLS_SERVICES[@]}"
+}
+
+# Create a private CA at prefix $1 (<prefix>.key, mode 600; <prefix>.crt)
+# with common name $2 and the nameConstraints value $3. It may not issue
+# intermediate CAs.
+create_ca() {
+  local prefix="$1" common_name="$2" constraints="$3"
+  (
+    umask 077
+    openssl req -x509 -new \
+      -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${prefix}.key" \
+      -out "${prefix}.crt" \
+      -days "$CA_DAYS" \
+      -subj "/O=Zero-to-Prod security lab/CN=${common_name}" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -addext "nameConstraints=critical,${constraints}" \
+      -addext "subjectKeyIdentifier=hash" \
+      2>/dev/null
+  )
+
+  chmod 600 "${prefix}.key"
+  chmod 644 "${prefix}.crt"
 }
 
 init_internal_ca() {
@@ -518,24 +587,189 @@ init_internal_ca() {
   fi
 
   echo "Creating internal CA (${CA_DAYS} days, name-constrained to exactly ${INTERNAL_TLS_SERVICES[*]})..."
+  create_ca "${PKI_DIR}/internal-ca" "Zero-to-Prod internal CA (${PROJECT})" "$(internal_ca_name_constraints)"
+}
+
+# A third CA, for the ingress → Keycloak hop only (ADR 0007). Only the ingress
+# trusts it, and it may issue only for the exact name keycloak. It is kept
+# apart from the internal CA so that neither CA's key can vouch for the other
+# hop, and the internal CA's policy (ADR 0006) stays unchanged.
+#
+# The policy is checked on the certificate's DER encoding, not on OpenSSL's
+# text output, so the order of extensions or subtrees and the display format
+# do not matter. The CA passes only when it has exactly one critical
+# nameConstraints extension whose
+#   permitted subtrees are exactly { dNSName keycloak }, and whose
+#   excluded subtrees are exactly { dNSName .keycloak, all IPv4, all IPv6 }
+# (an iPAddress subtree with an all-zero mask covers every address of its
+# family). Any other name or range, a minimum or maximum, or a missing
+# exclusion fails it. Prints the reason on failure.
+idp_ca_policy_check() {
+  openssl x509 -in "$1" -outform DER 2>/dev/null | python3 -I -c '
+import sys
+
+def tlv(buf, i):
+    tag = buf[i]; i += 1
+    n = buf[i]; i += 1
+    if n & 0x80:
+        k = n & 0x7F
+        if k == 0 or k > 4:
+            raise ValueError("unsupported length")
+        n = int.from_bytes(buf[i:i + k], "big"); i += k
+    if i + n > len(buf):
+        raise ValueError("truncated")
+    return tag, buf[i:i + n], i + n
+
+def items(buf):
+    i, out = 0, []
+    while i < len(buf):
+        tag, val, i = tlv(buf, i)
+        out.append((tag, val))
+    return out
+
+def fail(reason):
+    print(reason); sys.exit(1)
+
+name = sys.argv[1]
+try:
+    der = sys.stdin.buffer.read()
+    tag, cert, _ = tlv(der, 0)
+    tbs = items(cert)[0]
+    if tag != 0x30 or tbs[0] != 0x30:
+        fail("not a certificate")
+    found = []
+    for t, v in items(tbs[1]):
+        if t != 0xA3:  # [3] extensions
+            continue
+        for _, ext in items(items(v)[0][1]):
+            parts = items(ext)
+            if parts[0] != (0x06, bytes.fromhex("551d1e")):  # 2.5.29.30
+                continue
+            critical = len(parts) == 3 and parts[1] == (0x01, b"\xff")
+            found.append((critical, parts[-1][1]))
+    if len(found) != 1:
+        fail("expected exactly one nameConstraints extension, found %d" % len(found))
+    critical, value = found[0]
+    if not critical:
+        fail("nameConstraints is not critical")
+
+    def subtrees(tagged):
+        out = set()
+        for t, sub in items(tagged):
+            fields = items(sub)
+            if t != 0x30 or len(fields) != 1:
+                fail("a subtree has a minimum or maximum, or is malformed")
+            gt, gv = fields[0]
+            if gt == 0x82:    # dNSName
+                out.add(("dns", gv.decode("ascii").lower()))
+            elif gt == 0x87 and len(gv) in (8, 32):   # iPAddress
+                half = len(gv) // 2
+                family = "ipv4" if half == 4 else "ipv6"
+                mask = gv[half:]
+                out.add((family, "all") if not any(mask) else (family, gv.hex()))
+            else:
+                out.add(("other", "%02x:%s" % (gt, gv.hex())))
+        return out
+
+    seq = items(value)
+    if len(seq) != 1 or seq[0][0] != 0x30:
+        fail("malformed nameConstraints")
+    permitted, excluded, seen = set(), set(), set()
+    for t, v in items(seq[0][1]):
+        if t in seen or t not in (0xA0, 0xA1):
+            fail("malformed nameConstraints")
+        seen.add(t)
+        (permitted if t == 0xA0 else excluded).update(subtrees(v))
+except (ValueError, IndexError, UnicodeDecodeError):
+    fail("unreadable certificate or nameConstraints")
+
+want_permitted = {("dns", name)}
+want_excluded = {("dns", "." + name), ("ipv4", "all"), ("ipv6", "all")}
+if permitted != want_permitted:
+    fail("permitted subtrees are %s, expected only dNSName %s" % (sorted(permitted), name))
+if excluded != want_excluded:
+    missing = sorted(want_excluded - excluded)
+    extra = sorted(excluded - want_excluded)
+    fail("excluded subtrees: missing %s, unexpected %s" % (missing, extra))
+' "$2"
+}
+
+idp_ca_constraints_ok() {
+  idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME" >/dev/null
+}
+
+init_idp_ca() {
+  # Without python3 the policy cannot be checked; stop rather than treat an
+  # unchecked CA as invalid and replace it.
+  require_command python3
+  if [[ -f "${PKI_DIR}/idp-ca.key" ]]; then
+    if idp_ca_constraints_ok; then
+      echo "Identity-provider CA exists: ${PKI_DIR}/idp-ca.crt"
+      return 0
+    fi
+    echo "Replacing the identity-provider CA: its name constraints do not match ADR 0007 ($(idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME"))."
+    rm -f "${PKI_DIR}/idp-ca.key" "${PKI_DIR}/idp-ca.crt"
+  fi
+
+  echo "Creating identity-provider CA (${CA_DAYS} days, name-constrained to exactly ${IDP_TLS_NAME})..."
+  create_ca "${PKI_DIR}/idp-ca" "Zero-to-Prod IdP CA (${PROJECT})" \
+    "permitted;DNS:${IDP_TLS_NAME},excluded;DNS:.${IDP_TLS_NAME},excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
+}
+
+# Write a new key and a server certificate for the subjectAltName list $3
+# ("DNS:a,DNS:b"), signed by the CA at prefix $2, to the file $1 (key and
+# certificate in one file, replaced by a single rename). Remaining arguments
+# are openssl validity options (default: -days CERT_DAYS).
+write_server_certificate() {
+  local file="$1" ca="$2" san="$3" common_name work
+  shift 3
+  local validity=("$@")
+  [[ ${#validity[@]} -gt 0 ]] || validity=(-days "$CERT_DAYS")
+  common_name="${san%%,*}"
+  common_name="${common_name#DNS:}"
+
+  work="$(mktemp -d "${PKI_DIR}/.issue.XXXXXX")"
+
+  cat > "${work}/ext" <<EOF_EXT
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=serverAuth
+subjectAltName=${san}
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid
+EOF_EXT
 
   (
     umask 077
-    openssl req -x509 -new \
+    openssl req -new \
       -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
-      -keyout "${PKI_DIR}/internal-ca.key" \
-      -out "${PKI_DIR}/internal-ca.crt" \
-      -days "$CA_DAYS" \
-      -subj "/O=Zero-to-Prod security lab/CN=Zero-to-Prod internal CA (${PROJECT})" \
-      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
-      -addext "keyUsage=critical,keyCertSign,cRLSign" \
-      -addext "nameConstraints=critical,$(internal_ca_name_constraints)" \
-      -addext "subjectKeyIdentifier=hash" \
+      -keyout "${work}/key" \
+      -out "${work}/csr" \
+      -subj "/CN=${common_name}" \
       2>/dev/null
-  )
 
-  chmod 600 "${PKI_DIR}/internal-ca.key"
-  chmod 644 "${PKI_DIR}/internal-ca.crt"
+    openssl x509 -req \
+      -in "${work}/csr" \
+      -CA "${ca}.crt" \
+      -CAkey "${ca}.key" \
+      -set_serial "0x$(openssl rand -hex 16)" \
+      "${validity[@]}" \
+      -extfile "${work}/ext" \
+      -out "${work}/crt" \
+      2>/dev/null
+  ) || { rm -rf -- "$work"; return 1; }
+
+  # Same layout and permissions as the ingress (see "Secret file
+  # permissions" in the guide): one file, replaced by a single rename.
+  cat "${work}/key" "${work}/crt" > "$(dirname -- "$file")/.tls.pem.tmp"
+  rm -rf -- "$work"
+  chmod 644 "$(dirname -- "$file")/.tls.pem.tmp"
+  mv -f "$(dirname -- "$file")/.tls.pem.tmp" "$file"
+}
+
+# Validity options of a certificate whose validity ended a day ago.
+expired_validity() {
+  echo "-not_before $(date -u -d '-2 days' +%Y%m%d%H%M%SZ) -not_after $(date -u -d '-1 day' +%Y%m%d%H%M%SZ)"
 }
 
 # Issue a server certificate for an internal service and replace its
@@ -551,70 +785,62 @@ init_internal_ca() {
 issue_internal_certificate() {
   local service="$1" kind="${2:-valid}"
   local dir="${INTERNAL_TLS_DIR}/${service}"
-  local ca_key="${PKI_DIR}/internal-ca.key" ca_cert="${PKI_DIR}/internal-ca.crt"
-  local name="$service" other san=""
-  local validity=(-days "$CERT_DAYS")
+  local ca="${PKI_DIR}/internal-ca" san="DNS:${service}" other
+  local validity=()
 
-  [[ -f "$ca_key" ]] || die "internal CA missing; run: $0 init"
+  [[ -f "${ca}.key" ]] || die "internal CA missing; run: $0 init"
   [[ -d "$dir" ]] || die "internal TLS directory missing: ${dir}; run: $0 init"
 
   case "$kind" in
     valid) ;;
     mismatch)
       for other in "${INTERNAL_TLS_SERVICES[@]}"; do
-        [[ "$other" != "$service" ]] && name="$other" && break
+        [[ "$other" != "$service" ]] && san="DNS:${other}" && break
       done
       ;;
-    expired)
-      validity=(-not_before "$(date -u -d '-2 days' +%Y%m%d%H%M%SZ)"
-                -not_after "$(date -u -d '-1 day' +%Y%m%d%H%M%SZ)")
-      ;;
-    untrusted)
-      ca_key="${3:?untrusted requires a CA directory}/ca.key"
-      ca_cert="${3}/ca.crt"
-      ;;
-    subdomain) san=",DNS:extra.${service}" ;;
+    expired) read -r -a validity <<< "$(expired_validity)" ;;
+    untrusted) ca="${3:?untrusted requires a CA directory}/ca" ;;
+    subdomain) san+=",DNS:extra.${service}" ;;
     *) die "unknown certificate kind: ${kind}" ;;
   esac
 
-  local work
-  work="$(mktemp -d "${PKI_DIR}/.issue.XXXXXX")"
+  write_server_certificate "${dir}/tls.pem" "$ca" "$san" "${validity[@]}" ||
+    die "issuing the ${kind} certificate for ${service} failed"
+}
 
-  cat > "${work}/ext" <<EOF_EXT
-basicConstraints=critical,CA:FALSE
-keyUsage=critical,digitalSignature
-extendedKeyUsage=serverAuth
-subjectAltName=DNS:${name}${san}
-subjectKeyIdentifier=hash
-authorityKeyIdentifier=keyid
-EOF_EXT
+# Issue Keycloak's certificate (ADR 0007) and replace idp-tls/tls.pem by a
+# single rename. Only "valid" is used in normal operation; the other kinds
+# exist for verify-keycloak-tls:
+#   valid      identity-provider CA, the name keycloak, CERT_DAYS
+#   untrusted  the name keycloak, signed by the CA in directory $2
+#   lab-ca     the name keycloak, signed by the browser-trusted lab CA
+#   mismatch   identity-provider CA, another name (postgres), which the CA's
+#              constraints do not permit either
+#   expired    identity-provider CA, the name keycloak, ended a day ago
+#   subdomain  identity-provider CA, keycloak plus extra.keycloak, which the
+#              CA's constraints exclude
+#   ip         identity-provider CA, keycloak plus IP:127.0.0.1; the name
+#              dialed matches, and the CA's IP exclusion refuses it
+issue_keycloak_certificate() {
+  local kind="${1:-valid}" ca="${PKI_DIR}/idp-ca" san="DNS:${IDP_TLS_NAME}"
+  local validity=()
 
-  (
-    umask 077
-    openssl req -new \
-      -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
-      -keyout "${work}/key" \
-      -out "${work}/csr" \
-      -subj "/CN=${name}" \
-      2>/dev/null
+  [[ -f "${PKI_DIR}/idp-ca.key" ]] || die "identity-provider CA missing; run: $0 init"
+  [[ -d "$IDP_TLS_DIR" ]] || die "identity-provider TLS directory missing: ${IDP_TLS_DIR}; run: $0 init"
 
-    openssl x509 -req \
-      -in "${work}/csr" \
-      -CA "$ca_cert" \
-      -CAkey "$ca_key" \
-      -set_serial "0x$(openssl rand -hex 16)" \
-      "${validity[@]}" \
-      -extfile "${work}/ext" \
-      -out "${work}/crt" \
-      2>/dev/null
-  ) || { rm -rf -- "$work"; die "issuing the ${kind} certificate for ${service} failed"; }
+  case "$kind" in
+    valid) ;;
+    untrusted) ca="${2:?untrusted requires a CA directory}/ca" ;;
+    lab-ca) ca="${PKI_DIR}/ca" ;;
+    mismatch) san="DNS:postgres" ;;
+    expired) read -r -a validity <<< "$(expired_validity)" ;;
+    subdomain) san+=",DNS:extra.${IDP_TLS_NAME}" ;;
+    ip) san+=",IP:127.0.0.1" ;;
+    *) die "unknown certificate kind: ${kind}" ;;
+  esac
 
-  # Same layout and permissions as the ingress (see "Secret file
-  # permissions" in the guide): one file, replaced by a single rename.
-  cat "${work}/key" "${work}/crt" > "${dir}/.tls.pem.tmp"
-  rm -rf -- "$work"
-  chmod 644 "${dir}/.tls.pem.tmp"
-  mv -f "${dir}/.tls.pem.tmp" "${dir}/tls.pem"
+  write_server_certificate "$IDP_TLS_FILE" "$ca" "$san" "${validity[@]}" ||
+    die "issuing the ${kind} certificate for ${IDP_TLS_NAME} failed"
 }
 
 # True when the service's certificate verifies against the internal CA for
@@ -625,6 +851,16 @@ internal_certificate_ok() {
     openssl verify -CAfile "${PKI_DIR}/internal-ca.crt" -verify_hostname "$service" \
       -purpose sslserver "$file" >/dev/null 2>&1 &&
     openssl x509 -checkend "$seconds" -noout -in "$file" >/dev/null 2>&1
+}
+
+# True when Keycloak's certificate verifies against the identity-provider CA
+# for the name keycloak and stays valid for at least $1 seconds.
+keycloak_certificate_ok() {
+  local seconds="${1:-0}"
+  [[ -s "$IDP_TLS_FILE" ]] &&
+    openssl verify -CAfile "${PKI_DIR}/idp-ca.crt" -verify_hostname "$IDP_TLS_NAME" \
+      -purpose sslserver "$IDP_TLS_FILE" >/dev/null 2>&1 &&
+    openssl x509 -checkend "$seconds" -noout -in "$IDP_TLS_FILE" >/dev/null 2>&1
 }
 
 # Serial of the certificate the ingress serves on a new, verified connection.
@@ -757,6 +993,12 @@ EOF_MAPPER
 # Keycloak, oauth2-proxy, and Valkey configuration. Keycloak imports the
 # realm only when it does not exist yet, so a changed realm file reaches a
 # running lab only after destroy (see the guide).
+#
+# Keycloak (ADR 0007) serves only HTTPS, from idp-tls/tls.pem, which it
+# rereads every KEYCLOAK_TLS_RELOAD_SECONDS. Its management interface (health
+# only) stays plain HTTP, bound to the container loopback for the health check.
+# Keycloak logs an INFO line per event-loop thread on every reload, changed or
+# not (about 20 lines every 35 s, measured); that logger is set to warn.
 derive_authentication_configs() {
   cat <<EOF_CONF | write_file "${SECRETS_DIR}/keycloak.conf" 644
 db=postgres
@@ -765,9 +1007,17 @@ db-url-database=keycloak
 db-username=keycloak
 db-password=$(secret keycloak-db-password)
 hostname=https://${AUTH_HOSTNAME}:${HTTPS_PORT}
-http-enabled=true
 proxy-headers=xforwarded
+http-enabled=false
+https-port=${IDP_TLS_PORT}
+https-certificate-file=/run/keycloak-tls/tls.pem
+https-certificate-key-file=/run/keycloak-tls/tls.pem
+https-certificates-reload-period=${KEYCLOAK_TLS_RELOAD_SECONDS}s
+https-protocols=TLSv1.3,TLSv1.2
 health-enabled=true
+http-management-scheme=http
+http-management-host=127.0.0.1
+log-level=info,io.quarkus.vertx.http.runtime.HttpCertificateUpdateEventListener:warn
 EOF_CONF
 
   # Clients: the gateway (browser), the automation machine client, the
@@ -915,6 +1165,7 @@ init_state() {
 
   init_ca
   init_internal_ca
+  init_idp_ca
 
   # Mounted into PostgreSQL and RabbitMQ as their TLS directories; mode 711
   # like ingress-tls. Reissue when missing, within two days of expiry, or
@@ -929,6 +1180,14 @@ init_state() {
       issue_internal_certificate "$service" valid
     fi
   done
+
+  # Mounted into Keycloak; same layout, modes, and reissue rule.
+  (umask 077; mkdir -p "$IDP_TLS_DIR")
+  chmod 711 "$IDP_TLS_DIR"
+  if ! keycloak_certificate_ok 172800; then
+    echo "Issuing Keycloak certificate for ${IDP_TLS_NAME} (${CERT_DAYS} days)..."
+    issue_keycloak_certificate valid
+  fi
 
   # Earlier versions mounted the ingress key and certificate as single files.
   rm -f "${SECRETS_DIR}/ingress-tls-key" "${SECRETS_DIR}/ingress-tls-chain"
@@ -1058,6 +1317,45 @@ check_secrets() {
     done
   fi
 
+  # Identity-provider hop (ADR 0007): Keycloak's certificate verifies for the
+  # name keycloak against its own CA, is unexpired, and matches its key; the
+  # CA permits exactly that name.
+  local idp_policy
+  if [[ ! -f "${PKI_DIR}/idp-ca.crt" ]]; then
+    echo "error: identity-provider CA certificate missing: ${PKI_DIR}/idp-ca.crt (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif ! command -v python3 >/dev/null 2>&1; then
+    echo "error: python3 is required to check the identity-provider CA's name constraints" >&2
+    failures=$((failures + 1))
+  elif ! idp_policy="$(idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME")"; then
+    echo "error: the identity-provider CA's name constraints do not limit it to exactly ${IDP_TLS_NAME} (${idp_policy}); run: $0 init" >&2
+    failures=$((failures + 1))
+  elif [[ "$(stat -c '%a' "$IDP_TLS_DIR" 2>/dev/null)" != "711" ]]; then
+    echo "error: ${IDP_TLS_DIR} missing or not mode 711 (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif [[ ! -s "$IDP_TLS_FILE" ]]; then
+    echo "error: required identity-provider TLS file missing or empty: ${IDP_TLS_FILE} (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif ! keycloak_certificate_ok 0; then
+    echo "error: the Keycloak certificate does not verify for the name ${IDP_TLS_NAME} against the identity-provider CA, or has expired; run: $0 issue-keycloak-certificate" >&2
+    failures=$((failures + 1))
+  elif [[ "$(openssl x509 -noout -pubkey -in "$IDP_TLS_FILE" | openssl sha256)" != \
+          "$(openssl pkey -pubout -in "$IDP_TLS_FILE" | openssl sha256)" ]]; then
+    echo "error: the Keycloak key does not match its certificate" >&2
+    failures=$((failures + 1))
+  fi
+
+  # Keycloak must serve only HTTPS from that file; a configuration from an
+  # older init (http-enabled=true) is refused rather than started.
+  if [[ -s "${SECRETS_DIR}/keycloak.conf" ]] &&
+     ! { grep -qx 'http-enabled=false' "${SECRETS_DIR}/keycloak.conf" &&
+         grep -qx 'https-certificate-file=/run/keycloak-tls/tls.pem' "${SECRETS_DIR}/keycloak.conf" &&
+         grep -qx 'http-management-host=127.0.0.1' "${SECRETS_DIR}/keycloak.conf" &&
+         ! grep -q '^http-enabled=true' "${SECRETS_DIR}/keycloak.conf"; }; then
+    echo "error: keycloak.conf does not restrict Keycloak to HTTPS (ADR 0007); run: $0 init" >&2
+    failures=$((failures + 1))
+  fi
+
   # Every internal connection URL requests verified TLS; a plaintext or
   # unverified URL (for example from an older init) is refused here rather
   # than discovered at runtime.
@@ -1090,6 +1388,7 @@ check_secrets() {
       openssl x509 -noout -enddate -in "${INTERNAL_TLS_DIR}/${service}/tls.pem" | cut -d= -f2
     )."
   done
+  echo "Keycloak certificate valid until $(openssl x509 -noout -enddate -in "$IDP_TLS_FILE" | cut -d= -f2)."
 }
 
 show_ca_certificate() {
@@ -1105,8 +1404,9 @@ show_ca_certificate() {
   echo "  SHA-1:        $(openssl x509 -noout -fingerprint -sha1 -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
   echo "  Valid until:  $(openssl x509 -noout -enddate -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
   echo "The CA private key never leaves ${PKI_DIR}."
-  echo "The internal CA (${PKI_DIR}/internal-ca.crt) is for service-to-service TLS"
-  echo "inside the lab only; browsers and Windows do not need it."
+  echo "The internal CA (${PKI_DIR}/internal-ca.crt) and the identity-provider CA"
+  echo "(${PKI_DIR}/idp-ca.crt) are for service-to-service TLS inside the lab only;"
+  echo "browsers and Windows do not need them."
 }
 
 # ---------------------------------------------------------------------------
@@ -1228,7 +1528,7 @@ verify_renewal() {
   printf 'replacement\n' > "${control_dir}/file.new"
   mv -f "${control_dir}/file.new" "${control_dir}/file"
   control_view="$(docker exec "${PROJECT}-mount-control" cat /control/file)"
-  docker rm -f "${PROJECT}-mount-control" >/dev/null 2>&1 || true
+  docker rm -fv "${PROJECT}-mount-control" >/dev/null 2>&1 || true
   rm -rf -- "$control_dir"
   if [[ "$control_view" == original ]]; then
     single_file_mount=stale
@@ -1301,7 +1601,7 @@ reload_internal_tls() {
 # A TLS client on the data network for observing new connections. It holds
 # no secret: only the internal CA certificate is mounted.
 start_internal_probe() {
-  docker rm -f "$INTERNAL_PROBE" >/dev/null 2>&1 || true
+  docker rm -fv "$INTERNAL_PROBE" >/dev/null 2>&1 || true
   docker run -d --rm --name "$INTERNAL_PROBE" --network "${PROJECT}_data" \
     --cap-drop ALL --security-opt no-new-privileges:true --read-only --user 999:999 \
     -v "${PKI_DIR}/internal-ca.crt:/internal-ca/ca.crt:ro" \
@@ -1309,25 +1609,31 @@ start_internal_probe() {
 }
 
 stop_internal_probe() {
-  docker rm -f "$INTERNAL_PROBE" >/dev/null 2>&1 || true
+  docker rm -fv "$INTERNAL_PROBE" >/dev/null 2>&1 || true
 }
 
-# "<verify code> <served serial>" for one new TLS connection to the service,
-# verified against the internal CA for the service's name. OpenSSL completes
-# the handshake despite a verification failure, so the served certificate's
-# serial is known either way.
+# "<verify code> <served serial>" for one new TLS connection from the probe
+# container $1 to $2:$3, verifying the name $2 against the CA file $4 (a path
+# in the probe); $5: extra s_client options. OpenSSL completes the handshake
+# despite a verification failure, so the served certificate's serial is
+# known either way.
+tls_probe() {
+  docker exec "$1" sh -c '
+    out="$(/opt/openssl/bin/openssl s_client -connect "$1:$2" -servername "$1" -verify_hostname "$1" \
+      -CAfile "$3" $4 </dev/null 2>&1)"
+    code="$(printf "%s\n" "$out" | sed -n "s/^ *Verify return code: \([0-9]*\).*/\1/p" | tail -n 1)"
+    serial="$(printf "%s\n" "$out" | /opt/openssl/bin/openssl x509 -noout -serial 2>/dev/null | cut -d= -f2)"
+    echo "${code:-none} ${serial:-none}"' probe "$2" "$3" "$4" "${5:-}"
+}
+
+# The same for an internal service, verified against the internal CA.
 internal_tls_probe() {
   local service="$1" port starttls=""
   case "$service" in
     postgres) port=5432; starttls="-starttls postgres" ;;
     rabbitmq) port=5671 ;;
   esac
-  docker exec "$INTERNAL_PROBE" sh -c '
-    out="$(/opt/openssl/bin/openssl s_client -connect "$1:$2" -servername "$1" -verify_hostname "$1" \
-      -CAfile /internal-ca/ca.crt $3 </dev/null 2>&1)"
-    code="$(printf "%s\n" "$out" | sed -n "s/^ *Verify return code: \([0-9]*\).*/\1/p" | tail -n 1)"
-    serial="$(printf "%s\n" "$out" | /opt/openssl/bin/openssl x509 -noout -serial 2>/dev/null | cut -d= -f2)"
-    echo "${code:-none} ${serial:-none}"' probe "$service" "$port" "$starttls"
+  tls_probe "$INTERNAL_PROBE" "$service" "$port" /internal-ca/ca.crt "$starttls"
 }
 
 # Run "$@" up to $3 times, $4 seconds apart, until $2 consecutive outputs
@@ -1770,6 +2076,993 @@ verify_internal_tls() {
   finish_checks "Internal TLS verification"
 }
 
+# ---------------------------------------------------------------------------
+# Identity-provider hop: ingress → Keycloak over TLS (ADR 0007)
+# ---------------------------------------------------------------------------
+
+IDP_PROBE="${PROJECT}-idp-probe"
+NGINX_CONTROL="${PROJECT}-nginx-control"
+DISCOVERY_PATH=/realms/work-items/.well-known/openid-configuration
+INGRESS_IMAGE=zero-to-prod-security-lab-ingress:local
+
+# A TLS client on the idp network. It holds no secret: only the three CA
+# certificates (public) are mounted, to show which of them verifies Keycloak.
+# Probes are removed with -v: the RabbitMQ image declares a volume, and
+# removing a --rm container explicitly leaves its anonymous volume otherwise.
+start_idp_probe() {
+  docker rm -fv "$IDP_PROBE" >/dev/null 2>&1 || true
+  docker run -d --rm --name "$IDP_PROBE" --network "${PROJECT}_idp" \
+    --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp --user 999:999 \
+    -v "${PKI_DIR}/idp-ca.crt:/probe-ca/idp-ca.crt:ro" \
+    -v "${PKI_DIR}/ca.crt:/probe-ca/lab-ca.crt:ro" \
+    -v "${PKI_DIR}/internal-ca.crt:/probe-ca/internal-ca.crt:ro" \
+    --entrypoint sleep "$RABBITMQ_IMAGE" infinity >/dev/null
+}
+
+stop_idp_probe() {
+  docker rm -fv "$IDP_PROBE" >/dev/null 2>&1 || true
+}
+
+# "<verify code> <served serial>" for one new connection to Keycloak,
+# verified for the name keycloak against the CA $1: idp (default), lab, or
+# internal.
+idp_tls_probe() {
+  tls_probe "$IDP_PROBE" "$IDP_TLS_NAME" "$IDP_TLS_PORT" "/probe-ca/${1:-idp}-ca.crt"
+}
+
+idp_served_serial() {
+  local observed
+  observed="$(idp_tls_probe)"
+  echo "${observed#* }"
+}
+
+# Keycloak rereads its certificate file every KEYCLOAK_TLS_RELOAD_SECONDS, so
+# a replaced file is served from the next reload on. Wait until five
+# consecutive new connections show the expected observation ($1) of the
+# function $2: "<code> <serial>" (idp_tls_probe) or "<serial>"
+# (idp_served_serial). Prints it, or fails with a "timeout: …" line.
+wait_for_keycloak() {
+  await_observation_streak "$1" 5 $(( KEYCLOAK_TLS_RELOAD_SECONDS * 2 + 30 )) 1 "$2"
+}
+
+issue_keycloak_certificate_command() {
+  require_owned_state
+  local expected observed
+
+  issue_keycloak_certificate valid
+  expected="$(certificate_serial "$IDP_TLS_FILE")"
+
+  if [[ -z "$(compose ps -q --status running keycloak 2>/dev/null)" ]]; then
+    echo "Issued Keycloak serial ${expected}; Keycloak is not running."
+    return 0
+  fi
+
+  echo "Waiting for Keycloak to reread its certificate (every ${KEYCLOAK_TLS_RELOAD_SECONDS} s)..."
+  start_idp_probe
+  if ! observed="$(wait_for_keycloak "0 ${expected}" idp_tls_probe)"; then
+    stop_idp_probe
+    die "renewal of keycloak not confirmed: ${observed} (verify code, serial)"
+  fi
+  stop_idp_probe
+  echo "Keycloak reloaded; five consecutive new connections verified serial ${expected}."
+}
+
+# Status of one request through the ingress's diagnostic route, which fetches
+# issuer discovery from Keycloak with the production TLS settings.
+keycloak_upstream_check() {
+  { compose exec -T ingress wget -q -S -O /dev/null "http://127.0.0.1:8082/keycloak-upstream" 2>&1 || true; } \
+    | grep -oE 'HTTP/1\.[01] [0-9]{3}' | tail -n 1 | cut -d' ' -f2
+}
+
+# nginx's upstream TLS verdicts in the log read on standard input.
+nginx_upstream_tls_reason() {
+  { grep -oE 'upstream SSL certificate (verify error: \([0-9]+:[^)]*\)|does not match "[^"]*")' || true; } \
+    | sort -u | paste -sd ';' -
+}
+
+ingress_tls_reason_since() {
+  compose logs --no-log-prefix --since "$1" ingress 2>/dev/null | nginx_upstream_tls_reason
+}
+
+# The ingress's upstream TLS error lines since $1, addresses replaced.
+ingress_tls_lines_since() {
+  { compose logs --no-log-prefix --since "$1" ingress 2>/dev/null | grep -F 'upstream SSL certificate' || true; } \
+    | sed -E 's/^[0-9/]+ [0-9:]+ //; s/[0-9]+#[0-9]+: \*[0-9]+ /<worker> /; s/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/<address>/g'
+}
+
+check_keycloak_upstream() {
+  local since status
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  status="$(keycloak_upstream_check)"
+  sleep 1
+  echo "Diagnostic request to Keycloak through the ingress: HTTP ${status:-none}"
+  if [[ "$status" == 200 ]]; then
+    echo "Keycloak's certificate verified for the name ${IDP_TLS_NAME}."
+  else
+    echo "Reason in the ingress log: $(ingress_tls_reason_since "$since")"
+    echo "An empty reason means the failure was not a certificate verdict; see: $0 logs ingress"
+  fi
+  [[ "$status" == 200 ]]
+}
+
+# Status and error code of issuer discovery through the ingress.
+discovery_summary() {
+  local out error
+  out="$(http_status_body "$@" "${ISSUER}/.well-known/openid-configuration")"
+  error="$(json_field error <<< "${out#* }")"
+  echo "${out%% *}${error:+ ${error}}"
+}
+
+# Issuer discovery as the public sees it: a digest of the canonical document,
+# the issuer, and whether every endpoint lies below the issuer URL.
+discovery_fingerprint() {
+  http_status_body "$@" "${ISSUER}/.well-known/openid-configuration" | cut -d' ' -f2- | python3 -I -c '
+import hashlib, json, sys
+issuer = sys.argv[1]
+try:
+    d = json.loads(sys.stdin.read())
+except Exception:
+    print("unreadable"); sys.exit(0)
+canonical = json.dumps(d, sort_keys=True, separators=(",", ":")).encode()
+keys = ["authorization_endpoint", "token_endpoint", "userinfo_endpoint", "jwks_uri",
+        "end_session_endpoint", "introspection_endpoint", "revocation_endpoint"]
+under = "yes" if all(str(d.get(k, "")).startswith(issuer + "/") for k in keys) else "no"
+digest = hashlib.sha256(canonical).hexdigest()[:16]
+print("sha256=" + digest + " issuer=" + str(d.get("issuer")) + " endpoints_below_issuer=" + under)
+' "$ISSUER"
+}
+
+# Status of a client-credentials token request through the ingress.
+token_request_status() {
+  curl_config user "work-items-automation:$(secret automation-client-secret)" \
+    | http_status -K - -d grant_type=client_credentials "${ISSUER}/protocol/openid-connect/token"
+}
+
+# Status at the end of a new browser sign-in (200: Keycloak's login form).
+new_sign_in_status() {
+  http_status -L -c "$1" -b "$1" "${APP_URL}/oauth2/start?rd=%2F"
+}
+
+container_started_at() {
+  docker inspect --format '{{.State.StartedAt}}' "$(compose ps -q "$1")" 2>/dev/null
+}
+
+# ESTABLISHED TCP connections in the container $1 to remote port $2.
+established_to_port() {
+  docker exec "$1" cat /proc/net/tcp /proc/net/tcp6 2>/dev/null \
+    | awk -v port=":$(printf '%04X' "$2")" '$3 ~ port"$" && $4 == "01" {n++} END {print n + 0}'
+}
+
+# Keycloak's listening TCP sockets ("<address>:<port>", sorted).
+keycloak_listeners() {
+  compose exec -T keycloak cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | python3 -I -c '
+import ipaddress, sys
+out = set()
+for line in sys.stdin:
+    f = line.split()
+    if len(f) < 4 or f[3] != "0A" or ":" not in f[1]:
+        continue
+    addr, port = f[1].split(":")
+    raw = bytes.fromhex(addr)
+    # /proc prints each 32-bit word in host (little-endian) order.
+    raw = b"".join(raw[i:i + 4][::-1] for i in range(0, len(raw), 4))
+    ip = ipaddress.ip_address(raw)
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    out.add(f"{ip}:{int(port, 16)}")
+print(",".join(sorted(out, key=lambda s: (int(s.rsplit(":", 1)[1]), s))))
+'
+}
+
+DISCOVERY_REQUEST="GET ${DISCOVERY_PATH} HTTP/1.1\r\nHost: ${AUTH_HOSTNAME}:${HTTPS_PORT}\r\n\r\n"
+
+# An established connection: one TLS connection from the probe to Keycloak,
+# opened now, with a first keep-alive request; later requests reuse it.
+open_established_connection() {
+  # Each background process leads its own session; a previous connection's
+  # sessions are ended by their recorded IDs.
+  docker exec "$IDP_PROBE" sh -c '
+    if [ -f /tmp/est.pids ]; then
+      for pid in $(cat /tmp/est.pids); do kill -- "-$pid" 2>/dev/null || true; done
+    fi
+    rm -f /tmp/est.in /tmp/est.out /tmp/est.pids
+    mkfifo /tmp/est.in
+    setsid sh -c "sleep 3600 > /tmp/est.in" </dev/null >/dev/null 2>&1 &
+    echo "$!" >> /tmp/est.pids
+    setsid /opt/openssl/bin/openssl s_client -connect keycloak:8443 -servername keycloak \
+      -verify_hostname keycloak -CAfile /probe-ca/idp-ca.crt -ign_eof \
+      < /tmp/est.in > /tmp/est.out 2>&1 &
+    echo "$!" >> /tmp/est.pids
+    sleep 2
+    printf "$1" > /tmp/est.in
+    sleep 1' probe "$DISCOVERY_REQUEST"
+}
+
+# Sends one more request on the established connection. Prints the last
+# response status, the responses and handshakes seen on it, and the verify
+# code of its only handshake.
+established_request() {
+  docker exec "$IDP_PROBE" sh -c '
+    printf "$1" > /tmp/est.in
+    sleep 1
+    # s_client prints the session-ticket dump without a final newline, so a
+    # status line need not start a line.
+    status="$(grep -aoE "HTTP/1\.1 [0-9]{3}" /tmp/est.out | tail -n 1 | cut -d" " -f2)"
+    echo "${status:-none} responses=$(grep -aoE "HTTP/1\.1 [0-9]{3}" /tmp/est.out | wc -l) handshakes=$(grep -c "^CONNECTED(" /tmp/est.out) verify=$(sed -n "s/^ *Verify return code: \([0-9]*\).*/\1/p" /tmp/est.out | paste -sd, -)"' \
+    probe "$DISCOVERY_REQUEST"
+}
+
+# Saves the TLS session of a new, verified connection (-sess_out). The
+# request is written a second after the connection starts: written at once,
+# it got no response in this setup.
+save_idp_session() {
+  docker exec "$IDP_PROBE" sh -c '
+    rm -f /tmp/idp.sess
+    (sleep 1; printf "GET $2 HTTP/1.0\r\nHost: $3\r\n\r\n"; sleep 1) | /opt/openssl/bin/openssl s_client \
+      -connect keycloak:8443 -servername keycloak -verify_hostname keycloak -CAfile /probe-ca/idp-ca.crt \
+      -sess_out /tmp/idp.sess -ign_eof >/dev/null 2>&1
+    [ -s /tmp/idp.sess ] && echo saved || echo none' probe x "$DISCOVERY_PATH" "${AUTH_HOSTNAME}:${HTTPS_PORT}"
+}
+
+# Offers the saved session on a new connection. Prints "<New|Reused>
+# verify=<code> status=<HTTP status>": a resumed session is not re-verified,
+# because no certificate is sent.
+resume_idp_session() {
+  docker exec "$IDP_PROBE" sh -c '
+    out="$( (sleep 1; printf "GET $2 HTTP/1.0\r\nHost: $3\r\n\r\n"; sleep 1) | /opt/openssl/bin/openssl s_client \
+      -connect keycloak:8443 -servername keycloak -verify_hostname keycloak -CAfile /probe-ca/idp-ca.crt \
+      -sess_in /tmp/idp.sess -ign_eof 2>&1)"
+    kind="$(printf "%s\n" "$out" | sed -n "s/^\(New\|Reused\), .*/\1/p" | head -n 1)"
+    code="$(printf "%s\n" "$out" | sed -n "s/^ *Verify return code: \([0-9]*\).*/\1/p" | tail -n 1)"
+    status="$(printf "%s\n" "$out" | grep -aoE "HTTP/1\.[01] [0-9]{3}" | tail -n 1 | cut -d" " -f2)"
+    echo "${kind:-none} verify=${code:-none} status=${status:-none}"' probe x "$DISCOVERY_PATH" "${AUTH_HOSTNAME}:${HTTPS_PORT}"
+}
+
+# A second nginx on the idp network, from the ingress image, used only by
+# verify-keycloak-tls to compare the production upstream directives with
+# variants: session reuse on, a kept-alive upstream connection, another
+# dialed name, and verification off (the negative control). It has the
+# identity-provider CA and no secret; it is reachable only from inside itself.
+start_nginx_control() {
+  local conf="${AUTH_WORK}/nginx-control.conf"
+  cat > "$conf" <<EOF_NGINX
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr error;
+events { worker_connections 64; }
+http {
+    access_log off;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi;
+    scgi_temp_path /tmp/scgi;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    upstream keycloak_keepalive {
+        server keycloak:${IDP_TLS_PORT};
+        keepalive 2;
+        keepalive_timeout 600s;
+    }
+
+    server {
+        listen 127.0.0.1:8080;
+        proxy_set_header Host ${AUTH_HOSTNAME}:${HTTPS_PORT};
+        proxy_ssl_trusted_certificate /run/idp-ca/ca.crt;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        proxy_ssl_server_name on;
+        proxy_connect_timeout 2s;
+        set \$discovery https://keycloak:${IDP_TLS_PORT}${DISCOVERY_PATH};
+
+        location = /healthz { return 200; }
+
+        # The production directives, unchanged.
+        location = /production {
+            include /etc/nginx/keycloak-upstream.conf;
+            proxy_pass \$discovery;
+        }
+        location = /reuse-on {
+            proxy_ssl_verify on;
+            proxy_ssl_name keycloak;
+            proxy_ssl_session_reuse on;
+            proxy_pass \$discovery;
+        }
+        location = /keepalive {
+            proxy_ssl_verify on;
+            proxy_ssl_name keycloak;
+            proxy_ssl_session_reuse on;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host ${AUTH_HOSTNAME}:${HTTPS_PORT};
+            proxy_pass https://keycloak_keepalive${DISCOVERY_PATH};
+        }
+        location = /other-name {
+            proxy_ssl_verify on;
+            proxy_ssl_name postgres;
+            proxy_ssl_session_reuse off;
+            proxy_pass \$discovery;
+        }
+        location = /verify-off {
+            proxy_ssl_verify off;
+            proxy_pass \$discovery;
+        }
+    }
+}
+EOF_NGINX
+  chmod 644 "$conf"
+  docker rm -fv "$NGINX_CONTROL" >/dev/null 2>&1 || true
+  docker run -d --name "$NGINX_CONTROL" --network "${PROJECT}_idp" \
+    --read-only --tmpfs /tmp --tmpfs /var/cache/nginx --cap-drop ALL \
+    --security-opt no-new-privileges:true --user 101:101 \
+    -v "${conf}:/etc/nginx/nginx.conf:ro" -v "${PKI_DIR}/idp-ca.crt:/run/idp-ca/ca.crt:ro" \
+    "$INGRESS_IMAGE" >/dev/null
+  local _
+  for _ in $(seq 1 20); do
+    [[ "$(control_status healthz)" == 200 ]] && return 0
+    sleep 0.5
+  done
+  die "the nginx control did not start: $(docker logs "$NGINX_CONTROL" 2>&1 | tail -n 3)"
+}
+
+stop_nginx_control() {
+  docker rm -fv "$NGINX_CONTROL" >/dev/null 2>&1 || true
+}
+
+control_status() {
+  { docker exec "$NGINX_CONTROL" wget -q -S -O /dev/null "http://127.0.0.1:8080/$1" 2>&1 || true; } \
+    | grep -oE 'HTTP/1\.[01] [0-9]{3}' | tail -n 1 | cut -d' ' -f2
+}
+
+control_tls_reason_since() {
+  docker logs --since "$1" "$NGINX_CONTROL" 2>&1 | nginx_upstream_tls_reason
+}
+
+# Byte strings counted in a capture: "<kind>\t<value>" lines in $2, searched
+# in the binary file $1. Prints "<kind>=<occurrences>" for each kind, sorted.
+count_in_capture() {
+  python3 -I - "$1" "$2" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read()
+counts = {}
+for line in open(sys.argv[2], encoding="utf-8"):
+    kind, _, value = line.rstrip("\n").partition("\t")
+    if value:
+        counts[kind] = counts.get(kind, 0) + data.count(value.encode())
+print(" ".join(f"{k}={counts[k]}" for k in sorted(counts)))
+PY
+}
+
+# Passive capture of the ingress ↔ Keycloak hop, as a network member with raw
+# sockets could do it (threat T1): a container joins Keycloak's network
+# namespace with CAP_NET_RAW, reads every frame for a fixed time, and keeps
+# the TCP payloads between the ingress's and Keycloak's idp addresses. During
+# the capture a sign-in (password and authorization code), the code
+# redemption by oauth2-proxy (gateway client secret), and a client-credentials
+# request (automation client secret) cross the hop. The capture stays in a
+# temporary file and is deleted; only counts are recorded, never values.
+# $1: observe (record only) or encrypted (expect no plaintext).
+CAPTURE_SCRIPT='
+use strict; use warnings; use Socket qw(inet_aton);
+my ($x, $y, $secs) = @ARGV;
+my ($ia, $ib) = (inet_aton($x), inet_aton($y));
+socket(my $s, 17, 3, 0x0300) or die "socket: $!\n";
+binmode STDOUT; $| = 1;
+print STDERR "ready\n";
+my $end = time + $secs;
+my $rin = ""; vec($rin, fileno($s), 1) = 1;
+while (time < $end) {
+  my $rout = $rin;
+  next unless select($rout, undef, undef, 0.5) > 0;
+  my $buf = "";
+  defined(recv($s, $buf, 65535, 0)) or next;
+  next unless length($buf) > 34 && substr($buf, 12, 2) eq "\x08\x00" && ord(substr($buf, 23, 1)) == 6;
+  my ($src, $dst) = (substr($buf, 26, 4), substr($buf, 30, 4));
+  next unless ($src eq $ia && $dst eq $ib) || ($src eq $ib && $dst eq $ia);
+  my $end_ip = 14 + unpack("n", substr($buf, 16, 2));
+  my $tcp = 14 + (ord(substr($buf, 14, 1)) & 15) * 4;
+  my $data = $tcp + (ord(substr($buf, $tcp + 12, 1)) >> 4) * 4;
+  print substr($buf, $data, $end_ip - $data) if $end_ip > $data;
+}
+'
+
+capture_idp_hop() {
+  local mode="$1" area="passive capture of the ingress-Keycloak hop"
+  local ingress_ip keycloak_ip keycloak_id capture="${AUTH_WORK}/idp-hop.capture" values="${AUTH_WORK}/capture-values"
+  local pid _ jar="${AUTH_WORK}/capture" callback code result token response
+  ingress_ip="$(container_ip ingress idp)"
+  keycloak_ip="$(container_ip keycloak idp)"
+  keycloak_id="$(compose ps -q keycloak)"
+  : > "$values"
+
+  (umask 077; : > "$capture"; : > "${capture}.err")
+  docker run --rm --network "container:${keycloak_id}" --cap-drop ALL --cap-add NET_RAW \
+    --security-opt no-new-privileges:true --read-only --user 0:0 --entrypoint perl "$RABBITMQ_IMAGE" \
+    -e "$CAPTURE_SCRIPT" "$ingress_ip" "$keycloak_ip" 20 > "$capture" 2> "${capture}.err" &
+  pid=$!
+  for _ in $(seq 1 50); do
+    grep -q ready "${capture}.err" && break
+    sleep 0.2
+  done
+  record "$area" "capture started (raw socket in Keycloak's network namespace)" "observe" \
+    "$(grep -q ready "${capture}.err" && echo yes || echo "no: $(head -c 200 "${capture}.err")")" info
+
+  callback="$(authorize_until_callback "$jar")"
+  code="$(query_param "$callback" code)"
+  result="$(curl_config url "$callback" | status_and_request_id -K - -c "$jar" -b "$jar")"
+  response="$(client_credentials_response)"
+  token="$(json_field access_token <<< "$response")"
+  wait "$pid" || true
+
+  add_value "$values" password "$(secret lab-user-password)"
+  add_value "$values" authorization-code "$code"
+  add_value "$values" client-secret "$(secret gateway-client-secret)"
+  add_value "$values" client-secret "$(secret automation-client-secret)"
+  add_value "$values" client-secret-basic "$(printf 'work-items-gateway:%s' "$(secret gateway-client-secret)" | base64 -w0)"
+  add_value "$values" client-secret-basic "$(printf 'work-items-automation:%s' "$(secret automation-client-secret)" | base64 -w0)"
+  add_value "$values" access-token "$token"
+  printf 'http-message\tHTTP/1.\ntls-server-name\t%s\n' "$IDP_TLS_NAME" >> "$values"
+
+  local bytes counts credentials
+  bytes="$(stat -c '%s' "$capture")"
+  counts="$(count_in_capture "$capture" "$values")"
+  credentials="$(tr ' ' '\n' <<< "$counts" | grep -vE '^(http-message|tls-server-name)=' \
+    | awk -F= '{n += $2} END {print n + 0}')"
+  rm -f -- "$capture" "${capture}.err"
+
+  record "$area" "flows during the capture: sign-in callback, client credentials" "observe" \
+    "callback=${result%% *} code=$([[ -n "$code" ]] && echo obtained || echo missing) token=$([[ -n "$token" ]] && echo issued || echo missing)" info
+  record "$area" "payload bytes captured on the hop" "observe" "$bytes" info
+  record "$area" "occurrences per kind (credentials, plaintext HTTP, TLS server name)" "observe" "$counts" info
+
+  if [[ "$mode" == encrypted ]]; then
+    expect "$area" "credential occurrences in the captured payload" "0" "$credentials"
+    expect "$area" "plaintext HTTP messages in the captured payload" "0" \
+      "$(tr ' ' '\n' <<< "$counts" | sed -n 's/^http-message=//p')"
+    # Positive control: the capture saw the hop (the TLS ClientHello names
+    # the server in clear text).
+    expect "$area" "positive control: TLS server name seen in the capture" "yes" \
+      "$([[ "$(tr ' ' '\n' <<< "$counts" | sed -n 's/^tls-server-name=//p')" -gt 0 ]] && echo yes || echo no)"
+  fi
+}
+
+# Read-only use of the capture on any running lab, including one created
+# before ADR 0007 (it needs no identity-provider CA).
+capture_idp_hop_command() {
+  local evidence_file="" started
+  [[ "${1:-}" == "--evidence" ]] && evidence_file="${2:?--evidence requires a file}"
+  require_command python3
+  for service in keycloak ingress oauth2-proxy; do
+    [[ -n "$(compose ps -q --status running "$service" 2>/dev/null)" ]] || die "${service} is not running; run: $0 start"
+  done
+  RESULTS=(); FAILED=0
+  AUTH_WORK="$(mktemp -d)"
+  trap 'rm -rf -- "$AUTH_WORK"' EXIT
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  wait_for_issuer || die "the issuer is not reachable: ${ISSUER}"
+  record "metadata" "issuer discovery through the ingress" "observe" "$(discovery_fingerprint)" info
+  record "metadata" "keycloak: listening sockets" "observe" "$(keycloak_listeners)" info
+  record "metadata" "ingress upstream for the identity provider (access log)" "observe" \
+    "$(compose logs --no-log-prefix --since "$started" ingress 2>/dev/null | grep -F "host=${AUTH_HOSTNAME} " \
+       | grep -oE 'uaddr=[^ ]*' | sed -E 's/uaddr=[0-9.]+:/port=/' | sort | uniq -c | sed 's/^ *//' | paste -sd ';' -)" info
+  capture_idp_hop observe
+  [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
+    "capture-idp-hop: passive capture of the ingress-Keycloak hop from Keycloak's network namespace during a sign-in, code redemption, and client-credentials request; counts only, no values recorded."
+  finish_checks "Identity-provider hop capture"
+}
+
+# Expected client-side verdicts per Keycloak certificate kind: OpenSSL's
+# verify code (s_client keeps the last error) and nginx's log text.
+expected_idp_code() {
+  case "$1" in
+    untrusted | lab-ca) echo 21 ;;  # unable to verify the first certificate
+    mismatch) echo 47 ;;            # permitted subtree violation (after the hostname check)
+    expired) echo 10 ;;             # certificate has expired
+    subdomain | ip) echo 48 ;;      # excluded subtree violation
+  esac
+}
+
+expected_nginx_reason() {
+  case "$1" in
+    untrusted | lab-ca) echo "upstream SSL certificate verify error: (21:unable to verify the first certificate)" ;;
+    mismatch) echo "upstream SSL certificate verify error: (47:permitted subtree violation)" ;;
+    expired) echo "upstream SSL certificate verify error: (10:certificate has expired)" ;;
+    subdomain | ip) echo "upstream SSL certificate verify error: (48:excluded subtree violation)" ;;
+  esac
+}
+
+# Ingress access-log lines for the identity-provider host since $1, as
+# "<count> <status> upstream=<status> port=<upstream port>".
+ingress_idp_access_since() {
+  { compose logs --no-log-prefix --since "$1" ingress 2>/dev/null | grep -F "host=${AUTH_HOSTNAME} " || true; } \
+    | sed -nE 's/.*" ([0-9]{3}) [0-9]+ host=[^ ]+ upstream=([^ ]+) uaddr=([^ ]+) .*/\1 upstream=\2 port=\3/p' \
+    | sed -E 's/port=[^ ]*:([0-9]+)$/port=\1/' | sort | uniq -c | sed 's/^ *//' | paste -sd ';' -
+}
+
+# One failure case: install a bad certificate, wait until Keycloak serves it
+# to new connections, observe the ingress (public route, diagnostics, logs),
+# connections negotiated before the change, the control variants, and
+# recovery by renewal without restarting anything.
+keycloak_tls_failure_case() {
+  local kind="$1" rogue="$2" values="$3" area="keycloak: ${1}" bad good since observed machine_before
+
+  open_established_connection
+  save_idp_session >/dev/null
+  control_status keepalive >/dev/null
+  machine_before="$(client_credentials access_token)"
+  add_value "$values" machine-access-token "$machine_before"
+
+  issue_keycloak_certificate "$kind" "$rogue"
+  bad="$(certificate_serial "$IDP_TLS_FILE")"
+  expect "$area" "new connection: served serial after Keycloak rereads the file" "$bad" \
+    "$(wait_for_keycloak "$bad" idp_served_serial)"
+  expect "$area" "new connection: openssl verify code (identity-provider CA, name keycloak)" \
+    "$(expected_idp_code "$kind")" "$(idp_tls_probe | cut -d' ' -f1)"
+
+  # The public route, as browsers and clients use it.
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  expect "$area" "ingress: issuer discovery" "503 identity_provider_unavailable" "$(discovery_summary)"
+  expect "$area" "ingress: client-credentials token request (secret sent)" "503" "$(token_request_status)"
+  expect "$area" "ingress: new browser sign-in" "503" "$(new_sign_in_status "${AUTH_WORK}/new-${kind}")"
+  sleep 1
+  expect "$area" "ingress: public-route upstream TLS reason lines (suppressed below crit)" "" \
+    "$(ingress_tls_reason_since "$since")"
+  observed="$(ingress_idp_access_since "$since")"
+  expect "$area" "ingress access log: identity-provider requests" "yes" \
+    "$([[ -n "$observed" ]] && ! grep -qvE '^[0-9]+ 503 upstream=502 port=8443$' <<< "$(tr ';' '\n' <<< "$observed")" && echo yes || echo no)"
+  record "$area" "ingress access log: identity-provider requests (count status upstream port)" "observe" "$observed" info
+
+  # The diagnostic route logs the reason.
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  expect "$area" "diagnostic route: status" "502" "$(keycloak_upstream_check)"
+  sleep 1
+  expect "$area" "diagnostic route: TLS reason in the ingress log" "$(expected_nginx_reason "$kind")" \
+    "$(ingress_tls_reason_since "$since")"
+  record "$area" "diagnostic route: logged line (addresses redacted)" "observe" \
+    "$(ingress_tls_lines_since "$since" | head -n 1)" info
+
+  # What was negotiated or issued before the change.
+  expect "$area" "established TLS connection opened before the change: next request" \
+    "200 responses=2 handshakes=1 verify=0" "$(established_request)"
+  record "$area" "TLS session saved before the change, offered on a new connection" "observe" \
+    "$(resume_idp_session)" info
+  expect "$area" "machine token issued before the change, at the API (local validation)" "200" \
+    "$(bearer_status "$machine_before" "${APP_URL}/api/items")"
+  expect "$area" "ingress: established connections to Keycloak:8443" "0" \
+    "$(established_to_port "$(compose ps -q ingress)" "$IDP_TLS_PORT")"
+
+  # Control variants on the same certificate.
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  expect "$area" "control nginx: production directives" "502" "$(control_status production)"
+  record "$area" "control nginx: session reuse on (variable upstream)" "observe" "$(control_status reuse-on)" info
+  record "$area" "control nginx: keep-alive upstream connection opened before the change" "observe" \
+    "$(control_status keepalive)" info
+  expect "$area" "control nginx: verification off (negative control)" "200" "$(control_status verify-off)"
+  sleep 1
+  record "$area" "control nginx: TLS reasons logged" "observe" "$(control_tls_reason_since "$since")" info
+
+  # Recovery: a valid certificate, picked up by Keycloak's reload; nothing
+  # is restarted.
+  issue_keycloak_certificate valid
+  good="$(certificate_serial "$IDP_TLS_FILE")"
+  expect "$area" "renewed: openssl verify code, served serial" "0 ${good}" \
+    "$(wait_for_keycloak "0 ${good}" idp_tls_probe)"
+  expect "$area" "renewed: issuer discovery" "200" "$(discovery_summary)"
+  expect "$area" "renewed: client-credentials token request" "200" "$(token_request_status)"
+  local jar="${AUTH_WORK}/recovered-${kind}"
+  browser_login "$jar" lab-user >/dev/null
+  expect "$area" "renewed: sign-in, then GET /api/items with the session" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  add_value "$values" session-cookie "$(session_cookie "$jar")"
+  expect "$area" "renewed: diagnostic route" "200" "$(keycloak_upstream_check)"
+}
+
+# Isolated positive control for the IP exclusion. It shows that the mixed
+# certificate (keycloak plus IP:127.0.0.1) is refused because of the
+# identity-provider CA's constraints, not because of its names or format: the
+# same verifier, nginx from the ingress image with the production
+# keycloak-upstream.conf, dialing the name keycloak, accepts an equivalent
+# certificate from a CA without name constraints. Only the trust anchor
+# mounted at /run/idp-ca/ca.crt differs.
+#
+# Everything runs on its own internal network with a stand-in TLS server
+# under the alias keycloak. The lab's containers, networks, Keycloak
+# certificate, and the ingress's trust anchor are not touched; the control CA
+# and its key exist only in the run's temporary directory.
+IPCONTROL_NETWORK="${PROJECT}-ipcontrol"
+IPCONTROL_SERVER="${PROJECT}-ipcontrol-server"
+IPCONTROL_CLIENT="${PROJECT}-ipcontrol-client"
+
+stop_ipcontrol() {
+  docker rm -fv "$IPCONTROL_CLIENT" "$IPCONTROL_SERVER" >/dev/null 2>&1 || true
+  docker network rm "$IPCONTROL_NETWORK" >/dev/null 2>&1 || true
+}
+
+# Serve the key-and-certificate file $1 on keycloak:8443 in the control network.
+start_ipcontrol_server() {
+  local dir="${AUTH_WORK}/ipcontrol"
+  cat > "${dir}/server.conf" <<'EOF_NGINX'
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr error;
+events { worker_connections 16; }
+http {
+    access_log off;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi;
+    scgi_temp_path /tmp/scgi;
+    server {
+        listen 8443 ssl;
+        ssl_certificate /tls/tls.pem;
+        ssl_certificate_key /tls/tls.pem;
+        location / { return 200 "control\n"; }
+    }
+}
+EOF_NGINX
+  chmod 644 "${dir}/server.conf" "$1"
+  docker rm -fv "$IPCONTROL_SERVER" >/dev/null 2>&1 || true
+  docker run -d --name "$IPCONTROL_SERVER" --network "$IPCONTROL_NETWORK" --network-alias "$IDP_TLS_NAME" \
+    --read-only --tmpfs /tmp --tmpfs /var/cache/nginx --cap-drop ALL \
+    --security-opt no-new-privileges:true --user 101:101 \
+    -v "${dir}/server.conf:/etc/nginx/nginx.conf:ro" -v "$1:/tls/tls.pem:ro" \
+    "$INGRESS_IMAGE" >/dev/null
+}
+
+# The verifier: nginx from the ingress image, trusting the CA certificate $1,
+# proxying to https://keycloak:8443 with the image's keycloak-upstream.conf.
+start_ipcontrol_client() {
+  local dir="${AUTH_WORK}/ipcontrol" _
+  cat > "${dir}/client.conf" <<'EOF_NGINX'
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr error;
+events { worker_connections 16; }
+http {
+    access_log off;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi;
+    scgi_temp_path /tmp/scgi;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    server {
+        listen 127.0.0.1:8080;
+        location = /healthz { return 200; }
+        location = /check {
+            set $keycloak https://keycloak:8443;
+            include /etc/nginx/keycloak-upstream.conf;
+            proxy_connect_timeout 2s;
+            proxy_pass $keycloak/;
+        }
+    }
+}
+EOF_NGINX
+  chmod 644 "${dir}/client.conf" "$1"
+  docker rm -fv "$IPCONTROL_CLIENT" >/dev/null 2>&1 || true
+  docker run -d --name "$IPCONTROL_CLIENT" --network "$IPCONTROL_NETWORK" \
+    --read-only --tmpfs /tmp --tmpfs /var/cache/nginx --cap-drop ALL \
+    --security-opt no-new-privileges:true --user 101:101 \
+    -v "${dir}/client.conf:/etc/nginx/nginx.conf:ro" -v "$1:/run/idp-ca/ca.crt:ro" \
+    "$INGRESS_IMAGE" >/dev/null
+  for _ in $(seq 1 20); do
+    [[ "$(ipcontrol_status healthz)" == 200 ]] && return 0
+    sleep 0.5
+  done
+  die "the IP-exclusion control client did not start: $(docker logs "$IPCONTROL_CLIENT" 2>&1 | tail -n 3)"
+}
+
+ipcontrol_status() {
+  { docker exec "$IPCONTROL_CLIENT" wget -q -S -O /dev/null "http://127.0.0.1:8080/$1" 2>&1 || true; } \
+    | grep -oE 'HTTP/1\.[01] [0-9]{3}' | tail -n 1 | cut -d' ' -f2
+}
+
+# One isolated observation: server certificate $1, client trust anchor $2.
+# Prints "<status> reason=<nginx's upstream TLS verdict or none>".
+ipcontrol_observe() {
+  local since status reason
+  start_ipcontrol_server "$1"
+  start_ipcontrol_client "$2"
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  status="$(ipcontrol_status check)"
+  sleep 1
+  reason="$(docker logs --since "$since" "$IPCONTROL_CLIENT" 2>&1 | nginx_upstream_tls_reason)"
+  echo "${status:-none} reason=${reason:-none}"
+}
+
+keycloak_ip_constraint_control() {
+  local area="keycloak: ip (isolated control)" dir="${AUTH_WORK}/ipcontrol" open="${AUTH_WORK}/ipcontrol/open-ca"
+  local mixed="DNS:${IDP_TLS_NAME},IP:127.0.0.1"
+  mkdir -p "${dir}/valid" "${dir}/constrained" "${dir}/open"
+  chmod 755 "$dir" "${dir}/valid" "${dir}/constrained" "${dir}/open"
+
+  # A control CA without name constraints, same key type and basic
+  # constraints as the identity-provider CA.
+  (
+    umask 077
+    openssl req -x509 -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${open}.key" -out "${open}.crt" -days 1 \
+      -subj "/CN=Unconstrained control CA (verify-keycloak-tls)" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -addext "subjectKeyIdentifier=hash" 2>/dev/null
+  )
+  write_server_certificate "${dir}/valid/tls.pem" "${PKI_DIR}/idp-ca" "DNS:${IDP_TLS_NAME}"
+  write_server_certificate "${dir}/constrained/tls.pem" "${PKI_DIR}/idp-ca" "$mixed"
+  write_server_certificate "${dir}/open/tls.pem" "$open" "$mixed"
+  record "$area" "subject alternative names of both mixed certificates" "observe" \
+    "constrained: $(openssl x509 -noout -ext subjectAltName -in "${dir}/constrained/tls.pem" | tail -n 1 | tr -d ' ');open: $(openssl x509 -noout -ext subjectAltName -in "${dir}/open/tls.pem" | tail -n 1 | tr -d ' ')" info
+
+  local anchor_before
+  anchor_before="$(compose exec -T ingress sha256sum /run/idp-ca/ca.crt 2>/dev/null | cut -d' ' -f1)"
+  stop_ipcontrol
+  docker network create --internal "$IPCONTROL_NETWORK" >/dev/null
+  expect "$area" "valid keycloak certificate, identity-provider CA trusted (setup works)" "200 reason=none" \
+    "$(ipcontrol_observe "${dir}/valid/tls.pem" "${PKI_DIR}/idp-ca.crt")"
+  expect "$area" "keycloak plus IP:127.0.0.1 from the identity-provider CA, identity-provider CA trusted" \
+    "502 reason=upstream SSL certificate verify error: (48:excluded subtree violation)" \
+    "$(ipcontrol_observe "${dir}/constrained/tls.pem" "${PKI_DIR}/idp-ca.crt")"
+  expect "$area" "positive control: keycloak plus IP:127.0.0.1 from an unconstrained CA, that CA trusted" "200 reason=none" \
+    "$(ipcontrol_observe "${dir}/open/tls.pem" "${open}.crt")"
+  stop_ipcontrol
+
+  # The ingress's trust anchor is the identity-provider CA before and after.
+  expect "$area" "ingress trust anchor is the identity-provider CA before the control" \
+    "$(sha256sum "${PKI_DIR}/idp-ca.crt" | cut -d' ' -f1)" "$anchor_before"
+  expect "$area" "ingress trust anchor unchanged by the control" "$anchor_before" \
+    "$(compose exec -T ingress sha256sum /run/idp-ca/ca.crt 2>/dev/null | cut -d' ' -f1)"
+  rm -f -- "${open}.key"
+}
+
+# Renewal with a valid certificate: new connections get the new serial;
+# connections and sessions from before are observed.
+keycloak_tls_renewal_case() {
+  local values="$1" area="keycloak: renewal" before new_serial jar="${AUTH_WORK}/renewal"
+  open_established_connection
+  save_idp_session >/dev/null
+  before="$(idp_tls_probe)"
+  issue_keycloak_certificate valid
+  new_serial="$(certificate_serial "$IDP_TLS_FILE")"
+  record "$area" "before: openssl verify code, served serial" "observe" "$before" info
+  expect "$area" "after: openssl verify code, served serial" "0 ${new_serial}" \
+    "$(wait_for_keycloak "0 ${new_serial}" idp_tls_probe)"
+  expect "$area" "served serial changed" "changed" \
+    "$([[ "${before#* }" != "$new_serial" ]] && echo changed || echo unchanged)"
+  expect "$area" "established TLS connection opened before renewal: next request" \
+    "200 responses=2 handshakes=1 verify=0" "$(established_request)"
+  record "$area" "TLS session saved before renewal, offered on a new connection" "observe" "$(resume_idp_session)" info
+  expect "$area" "issuer discovery" "200" "$(discovery_summary)"
+  browser_login "$jar" lab-user >/dev/null
+  add_value "$values" session-cookie "$(session_cookie "$jar")"
+  expect "$area" "sign-in, then create and process" "succeeded" "$(tls_flow "$jar" "keycloak tls renewal")"
+}
+
+verify_keycloak_tls() {
+  local evidence_file="" started service
+  [[ "${1:-}" == "--evidence" ]] && evidence_file="${2:?--evidence requires a file}"
+  require_command python3
+  require_owned_state
+  for service in keycloak ingress api worker oauth2-proxy; do
+    [[ -n "$(compose ps -q --status running "$service" 2>/dev/null)" ]] || die "${service} is not running; run: $0 start"
+  done
+  openssl x509 -help 2>&1 | grep -q -- '-not_after' ||
+    die "openssl $(openssl version | cut -d' ' -f2) cannot issue the expired test certificate (-not_after needs 3.4 or later)"
+
+  RESULTS=(); FAILED=0
+  AUTH_WORK="$(mktemp -d)"
+  TLS_ROGUE_DIR="$(mktemp -d)"
+  local rogue="$TLS_ROGUE_DIR"
+  # Always leave a valid certificate, the probe and control removed, and the
+  # untrusted CA's key deleted, also after a failure. Keycloak serves a
+  # reissued certificate from its next reload.
+  trap '
+    stop_idp_probe
+    stop_nginx_control
+    stop_ipcontrol
+    if ! keycloak_certificate_ok 0; then
+      issue_keycloak_certificate valid
+      echo "A valid Keycloak certificate was reissued; Keycloak serves it within ${KEYCLOAK_TLS_RELOAD_SECONDS} s." >&2
+    fi
+    rm -rf -- "$AUTH_WORK" "$TLS_ROGUE_DIR"
+  ' EXIT
+  set_ui_headers
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  wait_for_issuer || die "the issuer is not reachable: ${ISSUER}"
+
+  (
+    umask 077
+    openssl req -x509 -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${rogue}/ca.key" -out "${rogue}/ca.crt" -days 1 \
+      -subj "/CN=Untrusted test CA (verify-keycloak-tls)" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign" 2>/dev/null
+  )
+
+  # Values searched in the logs at the end; never printed or recorded.
+  local values="${AUTH_WORK}/log-values" name
+  : > "$values"
+  for name in gateway-client-secret automation-client-secret lab-user-password lab-admin-client-secret \
+              oauth2-proxy-cookie-secret valkey-password keycloak-db-password; do
+    add_value "$values" secret "$(secret "$name")"
+  done
+
+  local keycloak_started ingress_started
+  keycloak_started="$(container_started_at keycloak)"
+  ingress_started="$(container_started_at ingress)"
+  start_idp_probe
+  start_nginx_control
+
+  # --- Baseline -------------------------------------------------------------
+  local area="baseline" serial observed jar callback location login_action code
+  serial="$(certificate_serial "$IDP_TLS_FILE")"
+  expect "$area" "keycloak: openssl verify code, served serial (identity-provider CA)" "0 ${serial}" \
+    "$(wait_for_keycloak "0 ${serial}" idp_tls_probe)"
+  expect "$area" "keycloak: verify code with the lab CA instead" "21" "$(idp_tls_probe lab | cut -d' ' -f1)"
+  expect "$area" "keycloak: verify code with the internal CA instead" "21" "$(idp_tls_probe internal | cut -d' ' -f1)"
+  expect "$area" "keycloak:8080 (plaintext HTTP) from the idp network" "refused connects=0 exit=7" \
+    "$(probe_tcp_detail "${PROJECT}_idp" "keycloak:8080")"
+  expect "$area" "keycloak:9000 (management) from the idp network" "refused connects=0 exit=7" \
+    "$(probe_tcp_detail "${PROJECT}_idp" "keycloak:9000")"
+  record "$area" "plaintext HTTP request to the TLS port 8443 (curl exit)" "observe" \
+    "$(docker run --rm --network "${PROJECT}_idp" --entrypoint curl "$PROBE_IMAGE" -sS -o /dev/null \
+        --max-time 5 -w '%{http_code}' "http://keycloak:8443${DISCOVERY_PATH}" 2>/dev/null; echo " exit=$?")" info
+  observed="$(keycloak_listeners)"
+  record "$area" "keycloak: listening sockets" "observe" "$observed" info
+  expect "$area" "keycloak: management interface on loopback only" "yes" \
+    "$(tr ',' '\n' <<< "$observed" | grep ':9000$' | grep -qvx '127.0.0.1:9000' && echo no || echo yes)"
+  expect "$area" "keycloak: no listener on 8080" "yes" "$(grep -qE '(^|,)[^,]*:8080(,|$)' <<< "$observed" && echo no || echo yes)"
+  # Keycloak's embedded cache cluster (JGroups) listens on the idp network
+  # too; it is outside this hop's decision and only observed here.
+  record "$area" "keycloak:7800 (cluster transport): issuer of the certificate it serves" "observe" \
+    "$(docker exec "$IDP_PROBE" sh -c '/opt/openssl/bin/openssl s_client -connect keycloak:7800 </dev/null 2>/dev/null |
+        /opt/openssl/bin/openssl x509 -noout -issuer 2>/dev/null || echo "no certificate"')" info
+  record "$area" "keycloak:57800 (cluster failure detection) from the idp network" "observe" \
+    "$(probe_tcp_detail "${PROJECT}_idp" "keycloak:57800")" info
+
+  # Public names, metadata, and redirects are unchanged by the internal TLS.
+  expect "$area" "issuer discovery through the ingress" "200" "$(discovery_summary)"
+  observed="$(discovery_fingerprint)"
+  record "$area" "issuer discovery fingerprint" "observe" "$observed" info
+  expect "$area" "discovery: issuer and endpoints" "issuer=${ISSUER} endpoints_below_issuer=yes" "${observed#* }"
+  expect "$area" "discovery with spoofed X-Forwarded-*/Forwarded headers: same document" "${observed%% *}" \
+    "$(discovery_fingerprint -H 'X-Forwarded-Host: attacker.example' -H 'X-Forwarded-Proto: http' \
+        -H 'X-Forwarded-Port: 80' -H 'Forwarded: host=attacker.example;proto=http' | cut -d' ' -f1)"
+  expect "$area" "diagnostic route" "200" "$(keycloak_upstream_check)"
+
+  jar="${AUTH_WORK}/baseline"
+  location="$(authorization_request "$jar")"
+  expect "$area" "gateway redirects the browser to the public authorization endpoint" "yes" \
+    "$([[ "$location" == "${ISSUER}/protocol/openid-connect/auth?"* ]] && echo yes || echo no)"
+  login_action="$(curl_config url "$location" | lab_curl -K - -c "$jar" -b "$jar" 2>/dev/null \
+    | grep -o 'id="kc-form-login"[^>]*action="[^"]*"' | sed 's/.*action="//; s/"$//; s/&amp;/\&/g' || true)"
+  expect "$area" "login form posts to the public login-actions URL" "yes" \
+    "$([[ "$login_action" == "${ISSUER}/login-actions/authenticate?"* ]] && echo yes || echo no)"
+  jar="${AUTH_WORK}/baseline-signin"
+  callback="$(authorize_until_callback "$jar")"
+  code="$(query_param "$callback" code)"
+  add_value "$values" code "$code"
+  add_value "$values" state "$(query_param "$callback" state)"
+  expect "$area" "Keycloak redirects back to the gateway callback" "yes" \
+    "$([[ "$callback" == "${APP_URL}/oauth2/callback?"* && -n "$code" ]] && echo yes || echo no)"
+  expect "$area" "callback (code redeemed by oauth2-proxy through the ingress)" "302" \
+    "$(curl_config url "$callback" | status_and_request_id -K - -c "$jar" -b "$jar" | cut -d' ' -f1)"
+  expect "$area" "session: GET /api/items" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  add_value "$values" session-cookie "$(session_cookie "$jar")"
+  observed="$(session_access_token "$jar")"
+  add_value "$values" session-access-token "$observed"
+  expect "$area" "session access token issuer" "iss=${ISSUER}" "$(token_claims iss <<< "$observed")"
+  expect "$area" "session: create and process" "succeeded" "$(tls_flow "$jar" "keycloak tls baseline")"
+
+  local machine
+  machine="$(client_credentials access_token)"
+  add_value "$values" machine-access-token "$machine"
+  expect "$area" "machine token issuer" "iss=${ISSUER}" "$(token_claims iss <<< "$machine")"
+  expect "$area" "machine token: GET /api/items" "200" "$(bearer_status "$machine" "${APP_URL}/api/items")"
+
+  # Sign-out ends the Keycloak session through the ingress (backend logout).
+  local status
+  status="$(lab_curl -o /dev/null -D - -b "$jar" -c "$jar" -X POST -H "Origin: ${APP_URL}" \
+    -H "Sec-Fetch-Site: same-origin" -H "Sec-Fetch-Mode: cors" -H "X-Requested-With: work-items-web" \
+    "${APP_URL}/oauth2/sign_out" 2>/dev/null | tr -d '\r' | awk 'NR==1{print $2}')"
+  expect "$area" "sign-out" "302" "$status"
+  expect "$area" "after sign-out: Keycloak session ended (login form)" "login-form" "$(idp_session_state "$jar")"
+
+  sleep 1
+  observed="$(ingress_idp_access_since "$started")"
+  record "$area" "ingress access log: identity-provider requests (count status upstream port)" "observe" "$observed" info
+  expect "$area" "ingress access log: every Keycloak upstream on port 8443" "yes" \
+    "$(tr ';' '\n' <<< "$observed" | awk '$3 ~ /^upstream=[0-9]/' | grep -q . &&
+       ! tr ';' '\n' <<< "$observed" | awk '$3 ~ /^upstream=[0-9]/' | grep -qv 'port=8443$' && echo yes || echo no)"
+  expect "$area" "ingress: established connections to Keycloak:8443 after the requests" "0" \
+    "$(established_to_port "$(compose ps -q ingress)" "$IDP_TLS_PORT")"
+
+  # Control variants with the valid certificate.
+  local since
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  expect "$area" "control nginx: production directives" "200" "$(control_status production)"
+  expect "$area" "control nginx: session reuse on" "200" "$(control_status reuse-on)"
+  expect "$area" "control nginx: keep-alive upstream" "200" "$(control_status keepalive)"
+  expect "$area" "control nginx: verification off" "200" "$(control_status verify-off)"
+  expect "$area" "control nginx: dialed name postgres (hostname check)" "502" "$(control_status other-name)"
+  sleep 1
+  expect "$area" "control nginx: hostname-check reason" 'upstream SSL certificate does not match "postgres"' \
+    "$(control_tls_reason_since "$since")"
+  record "$area" "control nginx: keep-alive connections held to Keycloak:8443" "observe" \
+    "$(established_to_port "$NGINX_CONTROL" "$IDP_TLS_PORT")" info
+
+  expect "$area" "TLS session saved from a new verified connection" "saved" "$(save_idp_session)"
+  record "$area" "saved TLS session offered on a new connection (no change)" "observe" "$(resume_idp_session)" info
+  # Control for the failure cases: Keycloak rereads its certificate every
+  # KEYCLOAK_TLS_RELOAD_SECONDS even when the file is unchanged. Whether a
+  # saved session survives such a reload decides whether a refused session
+  # later is caused by the certificate change or by any reload.
+  local digest
+  digest="$(sha256sum "$IDP_TLS_FILE" | cut -d' ' -f1)"
+  sleep $(( KEYCLOAK_TLS_RELOAD_SECONDS * 2 + 5 ))
+  expect "$area" "certificate file unchanged across two reload periods" "unchanged" \
+    "$([[ "$(sha256sum "$IDP_TLS_FILE" | cut -d' ' -f1)" == "$digest" ]] && echo unchanged || echo changed)"
+  record "$area" "saved TLS session offered after two unchanged reload periods (control)" "observe" \
+    "$(resume_idp_session)" info
+
+  capture_idp_hop encrypted
+
+  # --- Failure cases and recovery ------------------------------------------
+  local kind
+  for kind in untrusted lab-ca mismatch expired subdomain ip; do
+    keycloak_tls_failure_case "$kind" "$rogue" "$values"
+  done
+  keycloak_ip_constraint_control
+
+  # --- Renewal --------------------------------------------------------------
+  keycloak_tls_renewal_case "$values"
+
+  # --- Final state ------------------------------------------------------------
+  area="final state"
+  expect "$area" "keycloak container not restarted" "$keycloak_started" "$(container_started_at keycloak)"
+  expect "$area" "ingress container not restarted" "$ingress_started" "$(container_started_at ingress)"
+  expect "$area" "check-secrets" "pass" "$(check_secrets >/dev/null 2>&1 && echo pass || echo fail)"
+
+  # Logs written during the run (including every failure case) must not
+  # contain the credentials and tokens it used.
+  local log counts value_count
+  stop_idp_probe
+  docker logs "$NGINX_CONTROL" > "${AUTH_WORK}/nginx-control.log" 2>&1 || true
+  stop_nginx_control
+  sleep 1
+  value_count="$(awk -F'\t' '$2 != ""' "$values" | wc -l)"
+  for service in ingress oauth2-proxy keycloak api; do
+    compose logs --no-color --since "$started" "$service" > "${AUTH_WORK}/${service}.log" 2>&1 || true
+  done
+  for log in ingress oauth2-proxy nginx-control keycloak api; do
+    counts="$(count_values "${AUTH_WORK}/${log}.log" "$values")"
+    case "$log" in
+      ingress | oauth2-proxy | nginx-control)
+        expect "logs" "${log}: occurrences of the ${value_count} searched strings" "0" "${counts%% *}" ;;
+      *)
+        record "logs" "${log}: occurrences of the ${value_count} searched strings" "observe" "${counts%% *}" info ;;
+    esac
+    record "logs" "${log}: kinds found" "observe" "$(kinds_found "${AUTH_WORK}/${log}.log" "$values")" info
+  done
+  awk -F'\t' '$2 != "" {print "request: \"POST /token?client_secret=" $2 " HTTP/1.1\""}' "$values" > "${AUTH_WORK}/synthetic.log"
+  counts="$(count_values "${AUTH_WORK}/synthetic.log" "$values")"
+  expect "positive control" "scanner finds each searched string in a synthetic log" "$value_count" "${counts#* }"
+  expect "positive control" "ingress log holds this run's diagnostic TLS reasons" "yes" \
+    "$(grep -q 'upstream SSL certificate verify error' "${AUTH_WORK}/ingress.log" && echo yes || echo no)"
+
+  # Nothing recorded may contain a secret value.
+  local joined
+  joined="$(printf '%s\n' "${RESULTS[@]}")"
+  for name in "${SOURCE_SECRETS[@]}"; do
+    if grep -qFf <(secret "$name") <<< "$joined"; then
+      die "a recorded result contains the value of ${name}; no evidence written"
+    fi
+  done
+  record "$area" "secret values in recorded results" "observe" "none (${#SOURCE_SECRETS[@]} secrets searched)" info
+
+  [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
+    "verify-keycloak-tls: ingress to Keycloak over TLS with the identity-provider CA. Baseline (listeners, plaintext refusal, CA separation, public metadata and redirects, sign-in, machine token, sign-out), passive capture of the hop, control nginx variants (session reuse, keep-alive, another dialed name, verification off), failure cases (untrusted CA, lab CA, name outside the CA's constraints, expired, excluded subdomain, excluded IP address) with new versus established connections, saved-session resumption, and recovery by renewal without restarts; an isolated control in which the same nginx verifier accepts the keycloak-plus-IP certificate from an unconstrained CA; renewal; log search. Scripted clients only."
+  finish_checks "Keycloak TLS verification"
+}
+
 destroy_lab() {
   compose --profile tools down -v --remove-orphans
   docker network rm "$PROBE_NETWORK" >/dev/null 2>&1 || true
@@ -1953,7 +3246,7 @@ verify_probe_controls() {
   detail="$(probe_tcp_detail "$PROBE_NETWORK" "${listener_ip}:8081")"
   expect "probe control" "container: closed port" "refused connects=0 exit=7" "$detail"
 
-  docker rm -f "$listener" >/dev/null 2>&1 || true
+  docker rm -fv "$listener" >/dev/null 2>&1 || true
 
   if ! command -v python3 >/dev/null 2>&1; then
     record "probe control" "host: listener that never responds" "run" "python3 unavailable" skip
@@ -2180,7 +3473,7 @@ verify_lab() {
   expect "edge-network client" "resolve keycloak" "unresolved" "$(probe_dns "$edge" keycloak)"
   expect "edge-network client" "resolve oauth2-proxy" "unresolved" "$(probe_dns "$edge" oauth2-proxy)"
   expect "edge-network client" "resolve valkey" "unresolved" "$(probe_dns "$edge" valkey)"
-  expect_unreachable "edge-network client" "keycloak container IP :8080" "$(probe_tcp_detail "$edge" "${keycloak_ip}:8080")"
+  expect_unreachable "edge-network client" "keycloak container IP :8443" "$(probe_tcp_detail "$edge" "${keycloak_ip}:8443")"
   expect_unreachable "edge-network client" "valkey container IP :6379" "$(probe_tcp_detail "$edge" "${valkey_ip}:6379")"
 
   # The API's network reaches the gateway but not the identity provider or
@@ -2188,7 +3481,7 @@ verify_lab() {
   expect "app-network client" "resolve valkey" "unresolved" "$(probe_dns "${PROJECT}_app" valkey)"
   expect "app-network client" "resolve keycloak" "unresolved" "$(probe_dns "${PROJECT}_app" keycloak)"
   expect_unreachable "app-network client" "valkey container IP :6379" "$(probe_tcp_detail "${PROJECT}_app" "${valkey_ip}:6379")"
-  expect_unreachable "app-network client" "keycloak container IP :8080" "$(probe_tcp_detail "${PROJECT}_app" "${keycloak_ip}:8080")"
+  expect_unreachable "app-network client" "keycloak container IP :8443" "$(probe_tcp_detail "${PROJECT}_app" "${keycloak_ip}:8443")"
   expect_unreachable "app-network client" "keycloak-postgres container IP :5432" \
     "$(probe_tcp_detail "${PROJECT}_app" "${keycloak_postgres_ip}:5432")"
   expect_unreachable "edge-network client" "api container IP :8080" "$(probe_tcp_detail "$edge" "${api_ip}:8080")"
@@ -2199,7 +3492,7 @@ verify_lab() {
   expect_unreachable "unrelated container" "api container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${api_ip}:8080")"
   expect_unreachable "unrelated container" "postgres container IP :5432" "$(probe_tcp_detail "$PROBE_NETWORK" "${postgres_ip}:5432")"
   expect_unreachable "unrelated container" "rabbitmq container IP :5671" "$(probe_tcp_detail "$PROBE_NETWORK" "${rabbitmq_ip}:5671")"
-  expect_unreachable "unrelated container" "keycloak container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${keycloak_ip}:8080")"
+  expect_unreachable "unrelated container" "keycloak container IP :8443" "$(probe_tcp_detail "$PROBE_NETWORK" "${keycloak_ip}:8443")"
   expect_unreachable "unrelated container" "valkey container IP :6379" "$(probe_tcp_detail "$PROBE_NETWORK" "${valkey_ip}:6379")"
   expect_unreachable "unrelated container" "oauth2-proxy container IP :4180" "$(probe_tcp_detail "$PROBE_NETWORK" "${oauth2_proxy_ip}:4180")"
   expect_unreachable "default-bridge container" "api container IP :8080" "$(probe_tcp_detail bridge "${api_ip}:8080")"
@@ -2227,7 +3520,13 @@ verify_lab() {
   expect "data-network client" "rabbitmq:5672 (plaintext AMQP)" "refused connects=0 exit=7" \
     "$(probe_tcp_detail "${PROJECT}_data" "rabbitmq:5672")"
   expect "app-network control" "oauth2-proxy:4180" "connected" "$(probe_tcp "${PROJECT}_app" "oauth2-proxy:4180")"
-  expect "idp-network control" "keycloak:8080" "connected" "$(probe_tcp "${PROJECT}_idp" "keycloak:8080")"
+  expect "idp-network control" "keycloak:8443" "connected" "$(probe_tcp "${PROJECT}_idp" "keycloak:8443")"
+  # ADR 0007: Keycloak has no plaintext listener, even on its own network,
+  # and its management interface is bound to its loopback.
+  expect "idp-network client" "keycloak:8080 (plaintext HTTP)" "refused connects=0 exit=7" \
+    "$(probe_tcp_detail "${PROJECT}_idp" "keycloak:8080")"
+  expect "idp-network client" "keycloak:9000 (management)" "refused connects=0 exit=7" \
+    "$(probe_tcp_detail "${PROJECT}_idp" "keycloak:9000")"
   expect "session-network control" "valkey:6379" "connected" "$(probe_tcp "${PROJECT}_session" "valkey:6379")"
   expect "idp-data-network control" "keycloak-postgres:5432" "connected" \
     "$(probe_tcp "${PROJECT}_idp-data" "keycloak-postgres:5432")"
@@ -2309,8 +3608,8 @@ verify_failures() {
   partial="$(mktemp -d)"
   mkdir -m 700 "${partial}/secrets" "${partial}/pki"
   cp -p "${SECRETS_DIR}"/* "${partial}/secrets/"
-  cp -p "${PKI_DIR}/ca.crt" "${PKI_DIR}/internal-ca.crt" "${partial}/pki/"
-  cp -a "$INGRESS_TLS_DIR" "$INTERNAL_TLS_DIR" "${partial}/"
+  cp -p "${PKI_DIR}/ca.crt" "${PKI_DIR}/internal-ca.crt" "${PKI_DIR}/idp-ca.crt" "${partial}/pki/"
+  cp -a "$INGRESS_TLS_DIR" "$INTERNAL_TLS_DIR" "$IDP_TLS_DIR" "${partial}/"
   rm -f "${partial}/secrets/api-database-url"
 
   check_failure "preflight: missing api-database-url" \
@@ -2335,6 +3634,35 @@ verify_failures() {
     "api-rabbitmq-url does not require verified TLS" \
     env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
 
+  # ADR 0007: a missing Keycloak certificate, and a Keycloak configuration
+  # with the plaintext listener, stop the lab before it starts.
+  rm -f "${partial}/idp-tls/tls.pem"
+  check_failure "preflight: missing Keycloak TLS file" \
+    "required identity-provider TLS file missing or empty: ${partial}/idp-tls/tls.pem" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+  sed -i 's/^http-enabled=false$/http-enabled=true/' "${partial}/secrets/keycloak.conf"
+  check_failure "preflight: plaintext Keycloak configuration" \
+    "keycloak.conf does not restrict Keycloak to HTTPS" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+
+  # The containers themselves refuse to start without their TLS inputs. The
+  # Keycloak case mounts the lab's configuration (with its database
+  # password) and an empty TLS directory, without a network.
+  local empty_tls
+  empty_tls="$(mktemp -d)"
+  chmod 711 "$empty_tls"
+  check_failure "keycloak: TLS file missing" "Unable to read file /run/keycloak-tls/tls.pem" \
+    docker run --rm --network none \
+      -v "${SECRETS_DIR}/keycloak.conf:/opt/keycloak/conf/keycloak.conf:ro" \
+      -v "${empty_tls}:/run/keycloak-tls:ro" \
+      quay.io/keycloak/keycloak:26.8.0@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741 start
+  rm -rf "$empty_tls"
+  check_failure "ingress: identity-provider CA missing" 'cannot load certificate "/run/idp-ca/ca.crt"' \
+    docker run --rm --network none --add-host api:127.0.0.1 \
+      --read-only --tmpfs /tmp --tmpfs /var/cache/nginx \
+      -v "${INGRESS_TLS_DIR}:/run/ingress-tls:ro" \
+      --user 101:101 zero-to-prod-security-lab-ingress:local
+
   rm -rf "$partial"
 
   check_failure "postgres: TLS file missing" "PostgreSQL TLS file missing or empty" \
@@ -2356,7 +3684,7 @@ verify_failures() {
     compose run --rm --no-deps -e DATABASE_URL_FILE=/run/secrets/absent worker
   check_failure "worker: RABBITMQ_WORKER_URL_FILE missing" "read RABBITMQ_WORKER_URL_FILE" \
     compose run --rm --no-deps -e RABBITMQ_WORKER_URL_FILE=/run/secrets/absent worker
-  check_failure "ingress: TLS key and certificate missing" "cannot load certificate" \
+  check_failure "ingress: TLS key and certificate missing" 'cannot load certificate "/run/ingress-tls/tls.pem"' \
     docker run --rm --network none --add-host api:127.0.0.1 \
       --read-only --tmpfs /tmp --tmpfs /var/cache/nginx \
       --user 101:101 zero-to-prod-security-lab-ingress:local
@@ -3413,12 +4741,15 @@ print("api=" + ",".join(api) + " realm=" + ",".join(realm) + " other=" + ",".joi
 # A Keycloak admin REST request as the role-management client, from a probe
 # on the internal idp network (the ingress does not route /admin). The
 # client secret reaches the probe on standard input. Prints "<status>\t<body>".
+# Like the ingress, the probe uses HTTPS and verifies Keycloak's certificate
+# and name against the identity-provider CA (ADR 0007).
 admin_request() {
   local method="$1" path="$2" body="${3:-}"
   { secret lab-admin-client-secret; printf '\n'; } \
-    | docker run --rm -i --network "${PROJECT}_idp" --entrypoint sh "$PROBE_IMAGE" -c '
+    | docker run --rm -i --network "${PROJECT}_idp" -v "${PKI_DIR}/idp-ca.crt:/idp-ca.crt:ro" \
+        -e CURL_CA_BUNDLE=/idp-ca.crt --entrypoint sh "$PROBE_IMAGE" -c '
         IFS= read -r secret
-        kc=http://keycloak:8080
+        kc=https://keycloak:8443
         token=$(printf "user = \"work-items-lab-admin:%s\"\n" "$secret" \
           | curl -sS -K - -d grant_type=client_credentials "$kc/realms/work-items/protocol/openid-connect/token" \
           | sed -n "s/.*\"access_token\":\"\([^\"]*\)\".*/\1/p")
@@ -4153,6 +5484,24 @@ case "${1:-}" in
     require_command docker
     shift
     verify_internal_tls "$@"
+    ;;
+  issue-keycloak-certificate)
+    require_command docker
+    issue_keycloak_certificate_command
+    ;;
+  check-keycloak-upstream)
+    require_command docker
+    check_keycloak_upstream
+    ;;
+  capture-idp-hop)
+    require_command docker
+    shift
+    capture_idp_hop_command "$@"
+    ;;
+  verify-keycloak-tls)
+    require_command docker
+    shift
+    verify_keycloak_tls "$@"
     ;;
   ca-certificate)
     show_ca_certificate

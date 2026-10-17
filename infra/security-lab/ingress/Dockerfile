@@ -19,6 +19,7 @@ FROM nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed4307
 RUN rm -f /etc/nginx/conf.d/default.conf
 
 COPY infra/security-lab/ingress/nginx.conf /etc/nginx/nginx.conf
+COPY infra/security-lab/ingress/keycloak-upstream.conf /etc/nginx/keycloak-upstream.conf
 COPY --from=web /web/dist/ /usr/share/nginx/html/
 
 # Runs as the image's unprivileged nginx user; see compose.yaml.

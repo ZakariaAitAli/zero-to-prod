@@ -12,6 +12,8 @@ role-based authorization in the API
 ([ADR 0005](../adr/0005-security-lab-authorization.md), Proposed), and
 verified TLS to PostgreSQL and RabbitMQ on the data network from a separate
 internal CA ([ADR 0006](../adr/0006-security-lab-internal-transport.md),
+Proposed), and verified TLS from the ingress to Keycloak from a third,
+identity-provider CA ([ADR 0007](../adr/0007-security-lab-identity-provider-transport.md),
 Proposed) exist. The other internal hops stay plaintext by decision; rate
 limiting and secret rotation do not exist. The lab must stay on host
 loopback.
@@ -21,8 +23,9 @@ the transport threats are in the [threat model](security-lab-threat-model.md);
 measurements are in the [first-slice experiment record](../experiments/issue-121-local-https-ingress.md),
 the [authentication comparison](../experiments/issue-121-authentication-comparison.md),
 the [authentication integration record](../experiments/issue-121-authentication-integration.md),
-the [authorization record](../experiments/issue-121-authorization.md), and the
-[internal TLS record](../experiments/issue-121-internal-tls.md).
+the [authorization record](../experiments/issue-121-authorization.md), the
+[internal TLS record](../experiments/issue-121-internal-tls.md), and the
+[Keycloak TLS record](../experiments/issue-121-keycloak-tls.md).
 
 ## Structure
 
@@ -33,11 +36,11 @@ host loopback 127.0.0.1:9443
 edge network
   ingress — nginx, UID 101, read-only: TLS, static Web UI, API allow-list,
             auth_request, CSRF checks, identity-provider routes
-  │  HTTP
+  │  HTTP                        │  HTTPS, Keycloak verified (identity-provider CA)
   ├──────────────────────────────┐
   ▼                              ▼
 app network (internal)         idp network (internal)
-  api — Work Items API,          keycloak ── idp-data network ── keycloak-postgres
+  api — Work Items API,          keycloak :8443 (HTTPS only) ── idp-data network ── keycloak-postgres
         validates tokens
   oauth2-proxy ── session network (internal) ── valkey
   │
@@ -49,9 +52,9 @@ data network (internal)            TLS only, server verified (internal CA)
 
 | Component | Image | Networks | Published | Runtime inputs |
 | --- | --- | --- | --- | --- |
-| ingress | `infra/security-lab/ingress/Dockerfile` (nginx 1.30.5 with the built Web UI) | edge, app (aliases for both lab names), idp | `127.0.0.1:9443` → 8443 | Directory mount `ingress-tls/` (key and certificate in `tls.pem`) |
+| ingress | `infra/security-lab/ingress/Dockerfile` (nginx 1.30.5 with the built Web UI) | edge, app (aliases for both lab names), idp | `127.0.0.1:9443` → 8443 | Directory mount `ingress-tls/` (key and certificate in `tls.pem`); identity-provider CA certificate |
 | api | `apps/work-items/api/Dockerfile` | app, data | none | `DATABASE_URL_FILE`, `RABBITMQ_PUBLISHER_URL_FILE`, `AUTHENTICATION=oidc`, `OIDC_*` settings, lab CA and internal CA certificates |
-| keycloak | Keycloak 26.8.0 (digest-pinned), production mode | idp, idp-data | none | Generated `keycloak.conf` and realm file |
+| keycloak | Keycloak 26.8.0 (digest-pinned), production mode; HTTPS only on 8443, management (health) on its loopback | idp, idp-data | none | Generated `keycloak.conf` and realm file; directory mount `idp-tls/` (key and certificate in `tls.pem`, reread every 35 s) |
 | keycloak-postgres | PostgreSQL 18.6 (digest-pinned) | idp-data | none | Database password file |
 | oauth2-proxy | oauth2-proxy 7.15.5 (digest-pinned), read-only | app, session | none | Generated configuration file; lab CA certificate |
 | valkey | Valkey 9.1.2 (digest-pinned), no persistence | session | none | Generated configuration file |
@@ -75,7 +78,9 @@ lab's projects and volumes.
 | Machine client → API (bearer path) | edge/app | TLS to the ingress | Client-credentials access token, passed unchanged |
 | Ingress → API | edge/app | None | Access token in `Authorization`, validated by the API (signature, algorithm, issuer, audience, expiry); then the route's permission from `resource_access["work-items-api"].roles` (403 without it) |
 | API, oauth2-proxy → issuer | app, through the ingress | TLS 1.2/1.3 | Lab CA certificate file |
-| Ingress → oauth2-proxy, ingress → Keycloak | app, idp | None (ADR 0006: provisional) | None |
+| Ingress → oauth2-proxy | app | None (ADR 0006: provisional) | None |
+| Ingress → Keycloak | idp | TLS 1.2/1.3 (ADR 0007); Keycloak has no plaintext listener | Keycloak's certificate and the name `keycloak` verified against the identity-provider CA (`proxy_ssl_verify on`, no session reuse, no kept-alive upstream connections). No TLS client-certificate (mTLS) authentication; oauth2-proxy and machine clients authenticate to Keycloak with client credentials inside TLS. The public issuer URL, forwarded headers, and Keycloak's `hostname` are unchanged |
+| Lab tool admin probe → Keycloak admin API | idp (while a check runs) | TLS 1.2/1.3 (ADR 0007) | As for the ingress; role-management client credentials inside TLS |
 | oauth2-proxy → Valkey | session | None (ADR 0006: two-member network) | Valkey password |
 | Keycloak → keycloak-postgres | idp-data | None (ADR 0006: two-member network) | Database password |
 | API, worker, migrate → PostgreSQL | data | TLS 1.2/1.3 (1.3 observed); non-TLS clients rejected by `pg_hba.conf` | Server certificate and name `postgres` verified against the internal CA (`sslmode=verify-full`); clients by per-identity passwords (SCRAM) |
@@ -143,12 +148,14 @@ containing the home directory. Destructive cleanup requires that marker.
 | Ingress certificate | Lab operator (`issue-certificate`, or `init` near expiry) | 14 days | Replaces `ingress-tls/tls.pem` by rename, reloads nginx, and waits for consecutive new connections with the new serial |
 | Internal CA | Lab operator (`init`) | 90 days; name constraints permit exactly `postgres` and `rabbitmq` (`DNS:postgres` and `DNS:rabbitmq` permitted, `DNS:.postgres` and `DNS:.rabbitmq` excluded); may not issue intermediates | Not automated. A new CA requires `purge-state` and `init`, then `start`: pgx reads the CA when its pool is created, so the API and worker must restart. `init` also replaces an internal CA whose constraints still permit subdomains |
 | PostgreSQL and RabbitMQ certificates | Lab operator (`issue-internal-certificate <service>`, or `init` near expiry or when the name does not verify) | 14 days | Replaces `internal-tls/<service>/tls.pem` by rename; PostgreSQL: copy to its tmpfs and `pg_ctl reload`; RabbitMQ: `ssl:clear_pem_cache()`. Succeeds only after five consecutive verified new connections with the new serial, within 60 attempts; otherwise it fails. Established connections keep their session |
+| Identity-provider CA | Lab operator (`init`) | 90 days; name constraints permit exactly `keycloak` (`DNS:keycloak` permitted, `DNS:.keycloak` and IP addresses excluded); may not issue intermediates; trusted only by the ingress and the tool's probes | Not automated. A new CA requires `purge-state` and `init`, then `start` (the ingress mounts it as a single file) |
+| Keycloak certificate | Lab operator (`issue-keycloak-certificate`, or `init` near expiry or when the name does not verify) | 14 days | Replaces `idp-tls/tls.pem` by rename; Keycloak rereads it every 35 s, so neither Keycloak nor the ingress restarts. Succeeds only after five consecutive verified new connections with the new serial, within 100 attempts a second apart |
 
 There is no revocation (CRL or OCSP) and no public-CA issuance. Clients trust
 the lab CA only where it is explicitly configured: `--cacert` for the
 automated checks, or an operator-managed browser trust store. The internal CA
-is mounted only into the API, worker, and migrator; it is never needed by a
-browser.
+is mounted only into the API, worker, and migrator, and the identity-provider
+CA only into the ingress; neither is ever needed by a browser.
 
 ## Lifecycle
 
@@ -162,6 +169,7 @@ browser.
 | `verify-realm`, `verify-authorization` | Realm readiness through the admin API; the permission matrix, claims, ordering, logs, role removal, outage, and a control against the pinned pre-authorization API |
 | `verify-admin-permissions` | Minimum role set of the role-management client, in a throwaway `*-probe` project |
 | `issue-internal-certificate`, `verify-internal-tls` | Renew a PostgreSQL or RabbitMQ certificate; exercise plaintext refusal, untrusted issuer, hostname mismatch, expiry, recovery, and renewal; restarts the API and worker |
+| `issue-keycloak-certificate`, `check-keycloak-upstream`, `capture-idp-hop`, `verify-keycloak-tls` | Renew Keycloak's certificate; show nginx's TLS verdict for Keycloak; capture the ingress → Keycloak hop passively (counts only); exercise the hop's baseline, failure cases, session reuse, established connections, recovery, and renewal without restarts |
 | `stop` | Stop containers, keep volumes and state |
 | `destroy` | Remove this project's containers, networks, and volumes |
 | `purge-state --yes` | Delete the marked state directory |
@@ -181,10 +189,11 @@ in the development lab. See the [Work Items architecture](work-items.md).
 
 - Per-item or ownership authorization, and rate limiting.
 - Revocation of access tokens before expiry (validation is local).
-- Encryption of the ingress → API, oauth2-proxy, and Keycloak hops,
-  oauth2-proxy → Valkey, and Keycloak → its database (ADR 0006).
+- Encryption of the ingress → API and oauth2-proxy hops, oauth2-proxy →
+  Valkey, and Keycloak → its database (ADR 0006).
 - Client certificates (mTLS), certificate revocation, automated renewal, and
-  expiry monitoring.
+  expiry monitoring. Any member of `idp` can still reach every Keycloak path
+  over TLS, and Keycloak's cache-cluster listeners remain on `idp`.
 - Access from other containers on the same Docker engine: in the measured
   environment the published ingress port was reachable from them.
 - Secret rotation, revocation, CSP, and HSTS.

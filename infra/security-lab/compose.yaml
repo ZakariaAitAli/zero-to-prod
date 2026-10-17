@@ -18,8 +18,12 @@
 # Internal transport (ADR 0006, Proposed): on the shared data network,
 # PostgreSQL and RabbitMQ accept only TLS, with certificates from a separate
 # internal CA. The API, worker, and migrator verify the server and its name
-# (sslmode=verify-full; amqps with cacertfile). Hops on the other internal
-# networks stay plaintext; see the security lab architecture.
+# (sslmode=verify-full; amqps with cacertfile).
+#
+# Identity-provider hop (ADR 0007, Proposed): Keycloak serves only HTTPS, with
+# a certificate from a third CA that may issue only for the name keycloak and
+# is trusted only by the ingress, which verifies the chain and the name. The
+# other internal hops stay plaintext; see the security lab architecture.
 
 name: zero-to-prod-security-lab
 
@@ -198,6 +202,9 @@ services:
       # A directory mount, so a renewed certificate (replaced by rename) is
       # visible to nginx on reload; a single-file mount keeps the old inode.
       - ${ZTP_SECURITY_LAB_INGRESS_TLS_DIR:?set by tools/security-lab-local}:/run/ingress-tls:ro
+      # Public CA certificate that verifies Keycloak (ADR 0007); replaced only
+      # by purge-state and init.
+      - ${ZTP_SECURITY_LAB_IDP_CA_FILE:?set by tools/security-lab-local}:/run/idp-ca/ca.crt:ro
     networks:
       edge: {}
       app:
@@ -239,9 +246,12 @@ services:
     # The realm is imported only when it does not exist yet; see the guide.
     command: ["start", "--import-realm"]
     volumes:
-      # Generated: database password, hostname, and proxy settings.
+      # Generated: database password, hostname, proxy, and HTTPS settings.
       - ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/keycloak.conf:/opt/keycloak/conf/keycloak.conf:ro
       - ${ZTP_SECURITY_LAB_SECRETS_DIR:?set by tools/security-lab-local}/realm-work-items.json:/opt/keycloak/data/import/work-items.json:ro
+      # Key and certificate in one tls.pem. A directory mount, so a renewed
+      # file (replaced by rename) is visible; Keycloak rereads it periodically.
+      - ${ZTP_SECURITY_LAB_IDP_TLS_DIR:?set by tools/security-lab-local}:/run/keycloak-tls:ro
     networks:
       - idp
       - idp-data
@@ -250,6 +260,8 @@ services:
         condition: service_healthy
     healthcheck:
       # Requires HTTP 200; the body reports "UP" during bootstrap as well.
+      # The management interface serves plain HTTP on the container loopback
+      # only (http-management-host); it exposes health, not realm traffic.
       test:
         - CMD-SHELL
         - >-
@@ -315,7 +327,7 @@ networks:
     internal: true
   data:
     internal: true
-  # Ingress to Keycloak.
+  # Ingress to Keycloak (TLS, ADR 0007).
   idp:
     internal: true
   # Keycloak to its own database.
