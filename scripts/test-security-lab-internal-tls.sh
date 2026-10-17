@@ -139,6 +139,73 @@ check "init replaces that CA and reissues both certificates" "$(
     [[ "$(grep -c 'Issuing internal certificate' <<< "$output")" == 2 ]] && echo pass || echo fail)"
 check_cmd "check-secrets passes after the replacement" lab check-secrets
 
+# The full ADR 0006 policy, checked on the DER encoding: exactly DNS:postgres
+# and DNS:rabbitmq permitted; .postgres, .rabbitmq, all IPv4, and all IPv6
+# excluded; critical; nothing else. Each invalid CA is refused by
+# check-secrets, then replaced by init, which reissues both datastore
+# certificates; both verify against the replacement CA.
+make_internal_ca() {
+  openssl req -x509 -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+    -keyout "${internal_ca}.key" -out "${internal_ca}.crt" -days 1 -subj "/CN=policy case" \
+    -addext "basicConstraints=critical,CA:TRUE,pathlen:0" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "nameConstraints=$1" 2>/dev/null
+}
+fingerprint() { openssl x509 -noout -fingerprint -sha256 -in "${internal_ca}.crt"; }
+permitted_both="permitted;DNS:postgres,permitted;DNS:rabbitmq"
+dns_exclusions="excluded;DNS:.postgres,excluded;DNS:.rabbitmq"
+ip_exclusions="excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
+policy_case() {
+  local label="$1" constraints="$2" reason="$3" before output service
+  lab init >/dev/null
+  make_internal_ca "$constraints"
+  before="$(fingerprint)"
+  # Both certificates from the weak CA, as the previous init kept and issued
+  # them, so the CA's policy is the only thing check-secrets can object to.
+  for service in postgres rabbitmq; do
+    sign "$internal_ca" "weak-${service}" "DNS:${service}"
+    cat "${work}/weak-${service}.key" "${work}/weak-${service}.crt" > "${internal}/${service}/tls.pem"
+  done
+  output="$(lab check-secrets 2>&1 || true)"
+  check "policy: check-secrets refuses an internal CA with ${label}" "$(
+    grep -q "internal CA's name constraints do not limit it to exactly postgres rabbitmq" <<< "$output" &&
+      grep -qF "$reason" <<< "$output" && echo pass || echo fail)"
+  output="$(lab init 2>&1)"
+  check "policy: init replaces the internal CA with ${label} and reissues both certificates" "$(
+    grep -q 'Replacing the internal CA' <<< "$output" &&
+      [[ "$(grep -c 'Issuing internal certificate' <<< "$output")" == 2 && "$(fingerprint)" != "$before" ]] &&
+      echo pass || echo fail)"
+  check "policy: after replacing the CA with ${label}, both certificates verify and check-secrets passes" "$(
+    openssl verify -CAfile "${internal_ca}.crt" -verify_hostname postgres -purpose sslserver "${internal}/postgres/tls.pem" >/dev/null 2>&1 &&
+      openssl verify -CAfile "${internal_ca}.crt" -verify_hostname rabbitmq -purpose sslserver "${internal}/rabbitmq/tls.pem" >/dev/null 2>&1 &&
+      lab check-secrets >/dev/null 2>&1 && echo pass || echo fail)"
+}
+policy_case "an additional permitted DNS name" \
+  "critical,${permitted_both},permitted;DNS:attacker.example,${dns_exclusions},${ip_exclusions}" "attacker.example"
+policy_case "an additional permitted IP range" \
+  "critical,${permitted_both},permitted;IP:10.0.0.0/255.0.0.0,${dns_exclusions},${ip_exclusions}" "permitted subtrees are"
+policy_case "only one of the two service names permitted" \
+  "critical,permitted;DNS:postgres,${dns_exclusions},${ip_exclusions}" "permitted subtrees are"
+policy_case "no IPv4 exclusion" \
+  "critical,${permitted_both},${dns_exclusions},excluded;IP:::/::" "missing [('ipv4', 'all')]"
+policy_case "no IPv6 exclusion" \
+  "critical,${permitted_both},${dns_exclusions},excluded;IP:0.0.0.0/0.0.0.0" "missing [('ipv6', 'all')]"
+policy_case "no IP exclusions and an extra permitted name" \
+  "critical,${permitted_both},permitted;DNS:attacker.example,${dns_exclusions}" "permitted subtrees are"
+policy_case "a non-critical extension" \
+  "${permitted_both},${dns_exclusions},${ip_exclusions}" "not critical"
+
+# The valid policy, written in another order, is kept by init.
+lab init >/dev/null
+make_internal_ca "critical,excluded;IP:::/::,excluded;DNS:.rabbitmq,permitted;DNS:rabbitmq,${ip_exclusions%%,*},excluded;DNS:.postgres,permitted;DNS:postgres"
+before="$(fingerprint)"
+output="$(lab init 2>&1)"
+check "policy: init keeps a valid internal CA whose subtrees are in another order" "$(
+  grep -q 'Internal CA exists' <<< "$output" && [[ "$(fingerprint)" == "$before" ]] && echo pass || echo fail)"
+check_cmd "policy: check-secrets accepts that valid internal CA" lab check-secrets
+check "policy: the internal CA init creates passes the same check" "$(
+  rm -f "${internal_ca}.key" "${internal_ca}.crt"; lab init >/dev/null
+  lab check-secrets >/dev/null 2>&1 && echo pass || echo fail)"
+
 secrets="${state}/secrets"
 check "database URLs require verify-full with the internal CA" "$(
   grep -L 'sslmode=verify-full&sslrootcert=/internal-ca/ca.crt$' \

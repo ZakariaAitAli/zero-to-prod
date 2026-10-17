@@ -529,83 +529,25 @@ internal_ca_name_constraints() {
   echo "${permitted}${excluded}excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
 }
 
-# True when the CA certificate $1 permits each name in $2… and excludes its
-# subdomains (".<name>").
-ca_constraints_ok() {
-  local text permitted excluded name
-  text="$(openssl x509 -noout -ext nameConstraints -in "$1" 2>/dev/null)" || return 1
-  shift
-  permitted="$(sed -n '/Permitted:/,/Excluded:/p' <<< "$text" | tr -d ' ')"
-  excluded="$(sed -n '/Excluded:/,$p' <<< "$text" | tr -d ' ')"
-  for name in "$@"; do
-    grep -qx "DNS:${name}" <<< "$permitted" || return 1
-    grep -qx "DNS:\.${name}" <<< "$excluded" || return 1
-  done
-}
-
-# True when the internal CA carries the current constraints: each service
-# name permitted and its subdomains excluded.
-internal_ca_constraints_ok() {
-  ca_constraints_ok "${PKI_DIR}/internal-ca.crt" "${INTERNAL_TLS_SERVICES[@]}"
-}
-
-# Create a private CA at prefix $1 (<prefix>.key, mode 600; <prefix>.crt)
-# with common name $2 and the nameConstraints value $3. It may not issue
-# intermediate CAs.
-create_ca() {
-  local prefix="$1" common_name="$2" constraints="$3"
-  (
-    umask 077
-    openssl req -x509 -new \
-      -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
-      -keyout "${prefix}.key" \
-      -out "${prefix}.crt" \
-      -days "$CA_DAYS" \
-      -subj "/O=Zero-to-Prod security lab/CN=${common_name}" \
-      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
-      -addext "keyUsage=critical,keyCertSign,cRLSign" \
-      -addext "nameConstraints=critical,${constraints}" \
-      -addext "subjectKeyIdentifier=hash" \
-      2>/dev/null
-  )
-
-  chmod 600 "${prefix}.key"
-  chmod 644 "${prefix}.crt"
-}
-
-init_internal_ca() {
-  if [[ -f "${PKI_DIR}/internal-ca.key" ]]; then
-    if internal_ca_constraints_ok; then
-      echo "Internal CA exists: ${PKI_DIR}/internal-ca.crt"
-      return 0
-    fi
-    # An internal CA from before the subdomain exclusion. Only internal
-    # clients trust it, and start recreates them, so replace it; the
-    # certificates it issued no longer verify and are reissued below.
-    echo "Replacing the internal CA: its name constraints permit subdomains of the service names."
-    rm -f "${PKI_DIR}/internal-ca.key" "${PKI_DIR}/internal-ca.crt"
-  fi
-
-  echo "Creating internal CA (${CA_DAYS} days, name-constrained to exactly ${INTERNAL_TLS_SERVICES[*]})..."
-  create_ca "${PKI_DIR}/internal-ca" "Zero-to-Prod internal CA (${PROJECT})" "$(internal_ca_name_constraints)"
-}
-
-# A third CA, for the ingress → Keycloak hop only (ADR 0007). Only the ingress
-# trusts it, and it may issue only for the exact name keycloak. It is kept
-# apart from the internal CA so that neither CA's key can vouch for the other
-# hop, and the internal CA's policy (ADR 0006) stays unchanged.
+# True (silent) when the CA certificate $1 carries exactly the name policy for
+# the names $2…, otherwise prints the difference and fails. Used for the
+# internal CA (ADR 0006: postgres, rabbitmq) and the identity-provider CA
+# (ADR 0007: keycloak).
 #
 # The policy is checked on the certificate's DER encoding, not on OpenSSL's
 # text output, so the order of extensions or subtrees and the display format
 # do not matter. The CA passes only when it has exactly one critical
 # nameConstraints extension whose
-#   permitted subtrees are exactly { dNSName keycloak }, and whose
-#   excluded subtrees are exactly { dNSName .keycloak, all IPv4, all IPv6 }
+#   permitted subtrees are exactly { dNSName <name> for each name }, and whose
+#   excluded subtrees are exactly { dNSName .<name> for each name, all IPv4,
+#   all IPv6 }
 # (an iPAddress subtree with an all-zero mask covers every address of its
-# family). Any other name or range, a minimum or maximum, or a missing
-# exclusion fails it. Prints the reason on failure.
-idp_ca_policy_check() {
-  openssl x509 -in "$1" -outform DER 2>/dev/null | python3 -I -c '
+# family). Any other name or range, a minimum or maximum, a missing
+# exclusion, or a non-critical extension fails it.
+ca_name_policy_check() {
+  local cert="$1"
+  shift
+  openssl x509 -in "$cert" -outform DER 2>/dev/null | python3 -I -c '
 import sys
 
 def tlv(buf, i):
@@ -630,7 +572,7 @@ def items(buf):
 def fail(reason):
     print(reason); sys.exit(1)
 
-name = sys.argv[1]
+names = sys.argv[1:]
 try:
     der = sys.stdin.buffer.read()
     tag, cert, _ = tlv(der, 0)
@@ -683,19 +625,76 @@ try:
 except (ValueError, IndexError, UnicodeDecodeError):
     fail("unreadable certificate or nameConstraints")
 
-want_permitted = {("dns", name)}
-want_excluded = {("dns", "." + name), ("ipv4", "all"), ("ipv6", "all")}
+want_permitted = {("dns", n) for n in names}
+want_excluded = {("dns", "." + n) for n in names} | {("ipv4", "all"), ("ipv6", "all")}
 if permitted != want_permitted:
-    fail("permitted subtrees are %s, expected only dNSName %s" % (sorted(permitted), name))
+    fail("permitted subtrees are %s, expected only dNSName %s" % (sorted(permitted), " ".join(names)))
 if excluded != want_excluded:
     missing = sorted(want_excluded - excluded)
     extra = sorted(excluded - want_excluded)
     fail("excluded subtrees: missing %s, unexpected %s" % (missing, extra))
-' "$2"
+' "$@"
 }
 
+# True when the internal CA carries ADR 0006's policy: exactly the service
+# names permitted, their subdomains and all IP addresses excluded.
+internal_ca_constraints_ok() {
+  ca_name_policy_check "${PKI_DIR}/internal-ca.crt" "${INTERNAL_TLS_SERVICES[@]}" >/dev/null
+}
+
+# Create a private CA at prefix $1 (<prefix>.key, mode 600; <prefix>.crt)
+# with common name $2 and the nameConstraints value $3. It may not issue
+# intermediate CAs.
+create_ca() {
+  local prefix="$1" common_name="$2" constraints="$3"
+  (
+    umask 077
+    openssl req -x509 -new \
+      -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${prefix}.key" \
+      -out "${prefix}.crt" \
+      -days "$CA_DAYS" \
+      -subj "/O=Zero-to-Prod security lab/CN=${common_name}" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -addext "nameConstraints=critical,${constraints}" \
+      -addext "subjectKeyIdentifier=hash" \
+      2>/dev/null
+  )
+
+  chmod 600 "${prefix}.key"
+  chmod 644 "${prefix}.crt"
+}
+
+init_internal_ca() {
+  # Without python3 the policy cannot be checked; stop rather than treat an
+  # unchecked CA as invalid and replace it.
+  require_command python3
+  if [[ -f "${PKI_DIR}/internal-ca.key" ]]; then
+    if internal_ca_constraints_ok; then
+      echo "Internal CA exists: ${PKI_DIR}/internal-ca.crt"
+      return 0
+    fi
+    # An internal CA with any other policy (for example from before the
+    # subdomain exclusion). Only internal clients trust it, and start
+    # recreates them, so replace it; the certificates it issued no longer
+    # verify and are reissued below.
+    echo "Replacing the internal CA: its name constraints do not match ADR 0006 ($(ca_name_policy_check "${PKI_DIR}/internal-ca.crt" "${INTERNAL_TLS_SERVICES[@]}"))."
+    rm -f "${PKI_DIR}/internal-ca.key" "${PKI_DIR}/internal-ca.crt"
+  fi
+
+  echo "Creating internal CA (${CA_DAYS} days, name-constrained to exactly ${INTERNAL_TLS_SERVICES[*]})..."
+  create_ca "${PKI_DIR}/internal-ca" "Zero-to-Prod internal CA (${PROJECT})" "$(internal_ca_name_constraints)"
+}
+
+# A third CA, for the ingress → Keycloak hop only (ADR 0007). Only the ingress
+# trusts it, and it may issue only for the exact name keycloak. It is kept
+# apart from the internal CA so that neither CA's key can vouch for the other
+# hop, and the internal CA's policy (ADR 0006) stays unchanged.
+
+
 idp_ca_constraints_ok() {
-  idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME" >/dev/null
+  ca_name_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME" >/dev/null
 }
 
 init_idp_ca() {
@@ -707,7 +706,7 @@ init_idp_ca() {
       echo "Identity-provider CA exists: ${PKI_DIR}/idp-ca.crt"
       return 0
     fi
-    echo "Replacing the identity-provider CA: its name constraints do not match ADR 0007 ($(idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME"))."
+    echo "Replacing the identity-provider CA: its name constraints do not match ADR 0007 ($(ca_name_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME"))."
     rm -f "${PKI_DIR}/idp-ca.key" "${PKI_DIR}/idp-ca.crt"
   fi
 
@@ -1290,12 +1289,15 @@ check_secrets() {
 
   # Internal TLS (ADR 0006): each server certificate verifies for its own
   # name against the internal CA, is unexpired, and matches its key.
-  local service file
+  local service file internal_policy
   if [[ ! -f "${PKI_DIR}/internal-ca.crt" ]]; then
     echo "error: internal CA certificate missing: ${PKI_DIR}/internal-ca.crt (run: $0 init)" >&2
     failures=$((failures + 1))
-  elif ! internal_ca_constraints_ok; then
-    echo "error: the internal CA's name constraints do not limit it to exactly ${INTERNAL_TLS_SERVICES[*]} (subdomains permitted); run: $0 init" >&2
+  elif ! command -v python3 >/dev/null 2>&1; then
+    echo "error: python3 is required to check the internal CA's name constraints" >&2
+    failures=$((failures + 1))
+  elif ! internal_policy="$(ca_name_policy_check "${PKI_DIR}/internal-ca.crt" "${INTERNAL_TLS_SERVICES[@]}")"; then
+    echo "error: the internal CA's name constraints do not limit it to exactly ${INTERNAL_TLS_SERVICES[*]} (${internal_policy}); run: $0 init" >&2
     failures=$((failures + 1))
   else
     for service in "${INTERNAL_TLS_SERVICES[@]}"; do
@@ -1327,7 +1329,7 @@ check_secrets() {
   elif ! command -v python3 >/dev/null 2>&1; then
     echo "error: python3 is required to check the identity-provider CA's name constraints" >&2
     failures=$((failures + 1))
-  elif ! idp_policy="$(idp_ca_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME")"; then
+  elif ! idp_policy="$(ca_name_policy_check "${PKI_DIR}/idp-ca.crt" "$IDP_TLS_NAME")"; then
     echo "error: the identity-provider CA's name constraints do not limit it to exactly ${IDP_TLS_NAME} (${idp_policy}); run: $0 init" >&2
     failures=$((failures + 1))
   elif [[ "$(stat -c '%a' "$IDP_TLS_DIR" 2>/dev/null)" != "711" ]]; then
