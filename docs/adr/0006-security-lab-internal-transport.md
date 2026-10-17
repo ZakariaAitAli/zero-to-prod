@@ -134,8 +134,11 @@ Details:
   first version of this slice accepted that case, and review found it.
   Established connections keep the session they negotiated. `init` reissues
   a certificate within two days of expiry or when it does not verify for its
-  name. `init` also replaces an internal CA whose constraints still permit
-  subdomains, and `check-secrets` refuses one.
+  name. `check-secrets` refuses, and `init` replaces (reissuing both
+  certificates), an internal CA whose critical name constraints are not
+  exactly this policy. The check reads the DER encoding, independent of
+  order, with the same validator as ADR 0007's CA (see the 2026-10-17 entry
+  below).
 - **Ownership.** The lab operator owns both CAs and all certificates through
   `tools/security-lab-local`. Nothing renews automatically; there is no
   revocation.
@@ -223,11 +226,50 @@ encrypts the hop with a separate identity-provider CA; this ADR's internal CA
 and its exact-name policy are unchanged
 ([experiment](../experiments/issue-121-keycloak-tls.md)).
 
+### 2026-10-17 — Internal CA policy validation (follow-up to #137)
+
+Review of #137 found that the identity-provider CA's preflight checked only
+for the presence of its permitted name and subdomain exclusion. This ADR's
+internal CA used the same presence-only check (`ca_constraints_ok`).
+Reproduced in temporary state with an internal CA that also permitted
+`attacker.example`, one without IP exclusions, and one with a non-critical
+extension. In each case `init` kept the CA, reissued both datastore
+certificates from it, and `check-secrets` accepted it.
+
+- **Fix:** the internal CA is now checked by the DER validator added for ADR
+  0007 (`ca_name_policy_check`), generalized to a list of names. It accepts
+  exactly one critical `nameConstraints` with permitted { `DNS:postgres`,
+  `DNS:rabbitmq` } and excluded { `.postgres`, `.rabbitmq`, all IPv4, all
+  IPv6 }, in any order. The policy itself and the CA `init` creates are
+  unchanged. `init` and `check-secrets` now need `python3` for this check.
+- **Regression:** `scripts/test-security-lab-internal-tls.sh` (temporary
+  state, no Docker): 66 passed, 0 failed. Seven invalid policies were each
+  refused by `check-secrets` with the reason, then replaced by `init` with
+  both certificates reissued and verifying against the new CA:
+  - an extra permitted DNS name;
+  - an extra permitted IP range;
+  - only one service name;
+  - no IPv4 exclusion;
+  - no IPv6 exclusion;
+  - no IP exclusions with an extra name;
+  - non-critical.
+
+  A valid policy in another order was kept. Against `main`'s tool, 13 of
+  the new cases fail. The one that passes is `init` replacing a
+  single-name CA, which the old check already caught. The identity-provider
+  CA tests still pass (65 of 65).
+- **Applicability:** validation-only. No runtime configuration, certificate,
+  or client changed. The internal CAs of the retained `-tls` and `-kctls`
+  labs pass the new check (read-only check of their public certificates).
+  The recorded runtime evidence of #136 and #137 therefore stands without
+  reruns.
+
 Open:
 
 - the remaining plaintext hops (ingress → API and oauth2-proxy,
   oauth2-proxy → Valkey, Keycloak → its database);
-- mTLS;
+- mTLS: not adopted by this decision; revisited only under the
+  reconsideration conditions above;
 - automated renewal and monitoring;
 - the upgrade of existing labs;
 - verifiers other than OpenSSL and Go;

@@ -128,8 +128,8 @@ identity-provider CA; the ingress verifies it.
   replaces such a CA and reissues Keycloak's certificate. Review of #137 at
   `7c54810` found that the first version checked only the permitted name and
   the `.keycloak` exclusion, so it accepted additional permitted names and
-  missing IP exclusions. The datastore CA's check (ADR 0006) still has that
-  narrower form.
+  missing IP exclusions. A follow-up applied the same validator to the
+  datastore CA of ADR 0006, which had the same presence-only check.
 - **Renewal and ownership.** `issue-keycloak-certificate` issues, replaces
   the file, and succeeds only when five consecutive new connections verify
   (code 0) with the new serial; Keycloak picks the file up on its next reload.

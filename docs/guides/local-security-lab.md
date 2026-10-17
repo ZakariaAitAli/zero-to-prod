@@ -164,9 +164,14 @@ refuses an existing directory that is not this lab's state.
   for 14 days, with the Docker service name as their only name. Each client
   also checks the specific name it connects to, so the RabbitMQ certificate
   is refused at the PostgreSQL address.
-- `init` replaces an internal CA created before the subdomain exclusion
-  (`check-secrets` refuses one) and reissues both datastore certificates;
-  `start` then recreates the clients, which load the new CA.
+- `check-secrets` refuses, and `init` replaces, an internal CA whose
+  critical name constraints are not exactly: permitted `DNS:postgres` and
+  `DNS:rabbitmq`; excluded `.postgres`, `.rabbitmq`, all IPv4, and all IPv6.
+  This covers a CA created before the subdomain exclusion, extra permitted
+  names or ranges, missing exclusions, and a non-critical extension. `init`
+  reissues both datastore certificates; `start` then recreates the clients,
+  which load the new CA. The check uses `python3`, as for the
+  identity-provider CA.
 - The **identity-provider CA** is a third CA, for the ingress → Keycloak hop
   only: valid for 90 days, no intermediates, and name-constrained to exactly
   `keycloak` (subdomains and IP addresses excluded). Only the ingress trusts
