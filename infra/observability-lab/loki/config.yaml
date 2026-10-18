@@ -1,0 +1,50 @@
+# Single-process Loki on a local volume, with OTLP ingestion. Retention is
+# enforced by the compactor (see the guide for the cost reasoning).
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: "2026-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h
+  allow_structured_metadata: true
+  # Only bounded resource attributes become stream labels; trace_id, span_id,
+  # job_id and other identifiers stay structured metadata, not labels.
+  otlp_config:
+    resource_attributes:
+      ignore_defaults: true
+      attributes_config:
+        - action: index_label
+          attributes:
+            - service.name
+            - deployment.environment.name
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
+
+analytics:
+  reporting_enabled: false

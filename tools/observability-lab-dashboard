@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""Generates the Grafana dashboard for the observability lab (issue #122).
+
+Usage: tools/observability-lab-dashboard [OUTPUT]
+Default OUTPUT: infra/observability-lab/grafana/dashboards/work-items.json
+
+Edit this file, not the JSON: panel order follows the investigation order in
+docs/runbooks/work-items-observability.md (SLIs, then RED for the API, the
+asynchronous path, then USE for dependencies, then logs).
+"""
+import json
+import os
+import sys
+
+OPS = 'route!~"/health|/ready|/version|unmatched"'
+PROM = {"type": "prometheus", "uid": "prometheus"}
+LOKI = {"type": "loki", "uid": "loki"}
+
+panels = []
+next_id = 1
+y = 0
+
+
+def add(panel, w, h, x):
+    global next_id
+    panel["id"] = next_id
+    next_id += 1
+    panel["gridPos"] = {"x": x, "y": y, "w": w, "h": h}
+    panels.append(panel)
+
+
+def row(title):
+    global y
+    add({"type": "row", "title": title, "collapsed": False, "panels": []}, 24, 1, 0)
+    y += 1
+
+
+def targets(*exprs):
+    return [
+        {"refId": chr(65 + i), "datasource": PROM, "expr": e, "legendFormat": legend}
+        for i, (e, legend) in enumerate(exprs)
+    ]
+
+
+def stat(title, expr, unit, steps, description, decimals=None):
+    panel = {
+        "type": "stat",
+        "title": title,
+        "description": description,
+        "datasource": PROM,
+        "targets": targets((expr, "")),
+        "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "textMode": "value"},
+        "fieldConfig": {
+            "defaults": {
+                "unit": unit,
+                "noValue": "no traffic",
+                "thresholds": {"mode": "absolute", "steps": steps},
+            },
+            "overrides": [],
+        },
+    }
+    if decimals is not None:
+        panel["fieldConfig"]["defaults"]["decimals"] = decimals
+    return panel
+
+
+def series(title, exprs, unit, description, thresholds=None):
+    defaults = {"unit": unit, "custom": {"lineWidth": 1, "fillOpacity": 10, "showPoints": "never"}}
+    if thresholds is not None:
+        defaults["thresholds"] = {"mode": "absolute", "steps": thresholds}
+        defaults["custom"]["thresholdsStyle"] = {"mode": "line"}
+    return {
+        "type": "timeseries",
+        "title": title,
+        "description": description,
+        "datasource": PROM,
+        "targets": targets(*exprs),
+        "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+        "fieldConfig": {"defaults": defaults, "overrides": []},
+    }
+
+
+GOOD_RED = [{"color": "red", "value": None}]
+
+row("Are users succeeding? (SLIs, last hour)")
+add(stat("Availability", f"1 - work_items:availability_bad:ratio_rate1h", "percentunit",
+         GOOD_RED + [{"color": "green", "value": 0.995}],
+         "Share of business requests answered without a 5xx. SLO 99.5 %.", 2), 5, 4, 0)
+add(stat("Requests within 250 ms", "1 - work_items:latency_bad:ratio_rate1h", "percentunit",
+         GOOD_RED + [{"color": "green", "value": 0.99}],
+         "Share of business requests answered within 0.25 s. SLO 99 %.", 2), 5, 4, 5)
+add(stat("Jobs completed within 30 s", "1 - work_items:freshness_bad:ratio_rate1h", "percentunit",
+         GOOD_RED + [{"color": "green", "value": 0.99}],
+         "Share of completed jobs that finished within 30 s of acceptance. SLO 99 %. Stuck jobs are not counted here; see the oldest accepted job.", 2), 5, 4, 10)
+add(stat("Oldest accepted job", "max(work_items_processing_job_oldest_accepted_age_seconds)", "s",
+         [{"color": "green", "value": None}, {"color": "orange", "value": 30}, {"color": "red", "value": 120}],
+         "Age of the oldest accepted, unfinished job. Above 120 s for a minute pages (WorkItemsAsyncProcessingStalled)."), 4, 4, 15)
+add({
+    "type": "stat",
+    "title": "Firing alerts",
+    "description": "Prometheus alerts currently firing.",
+    "datasource": PROM,
+    "targets": targets(('sum by (alertname) (ALERTS{alertstate="firing"})', "{{alertname}}")),
+    "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "textMode": "name"},
+    "fieldConfig": {"defaults": {"noValue": "none", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": None}, {"color": "red", "value": 1}]}}, "overrides": []},
+}, 5, 4, 19)
+y += 4
+add(series("Error-budget burn rate (1 h)", [
+    ("work_items:availability_bad:ratio_rate1h / 0.005", "availability"),
+    ("work_items:latency_bad:ratio_rate1h / 0.01", "latency"),
+    ("work_items:freshness_bad:ratio_rate1h / 0.01", "freshness"),
+], "none", "1 = spending the budget exactly over 28 days. 14.4 for an hour pages; 6 for six hours opens a ticket.",
+    [{"color": "green", "value": None}, {"color": "orange", "value": 6}, {"color": "red", "value": 14.4}]), 24, 7, 0)
+y += 7
+
+row("HTTP API (rate, errors, duration)")
+add(series("Requests by route and status", [
+    (f"sum by (route, code) (rate(work_items_http_requests_total{{{OPS}}}[1m]))", "{{route}} {{code}}"),
+], "reqps", "Business routes only; health, readiness, version and unmatched paths are excluded."), 12, 8, 0)
+add(series("5xx ratio by route", [
+    (f'sum by (route) (rate(work_items_http_requests_total{{{OPS},code=~"5.."}}[1m])) / sum by (route) (rate(work_items_http_requests_total{{{OPS}}}[1m]))', "{{route}}"),
+], "percentunit", "503 persistence_unavailable means PostgreSQL could not be used within 3 s."), 12, 8, 12)
+y += 8
+add(series("Latency (business routes)", [
+    (f"histogram_quantile(0.5, sum by (le) (rate(work_items_http_request_duration_seconds_bucket{{{OPS}}}[1m])))", "p50"),
+    (f"histogram_quantile(0.95, sum by (le) (rate(work_items_http_request_duration_seconds_bucket{{{OPS}}}[1m])))", "p95"),
+    (f"histogram_quantile(0.99, sum by (le) (rate(work_items_http_request_duration_seconds_bucket{{{OPS}}}[1m])))", "p99"),
+], "s", "Quantiles are estimated from histogram buckets; 0.25 s is a bucket boundary.",
+    [{"color": "green", "value": None}, {"color": "red", "value": 0.25}]), 12, 8, 0)
+add(series("In-flight requests and API CPU", [
+    ("work_items_http_requests_in_flight", "in flight"),
+    ('rate(process_cpu_seconds_total{job="work-items-api"}[1m])', "API CPU (cores)"),
+], "short", "Concurrency against CPU use: rising in-flight with flat CPU suggests waiting on a dependency."), 12, 8, 12)
+y += 8
+
+row("Asynchronous processing")
+add(series("Backlog", [
+    ("work_items_processing_jobs_accepted", "accepted jobs"),
+    ("work_items_outbox_unpublished_messages", "unpublished outbox"),
+    ('sum(rabbitmq_detailed_queue_messages_ready{queue="work_item_processing"})', "queue ready"),
+    ('sum(rabbitmq_detailed_queue_messages_unacked{queue="work_item_processing"})', "queue unacked"),
+], "short", "Where accepted work is waiting: in the outbox (broker unreachable), in the queue (no consumer), or accepted without either (worker cannot finish)."), 12, 8, 0)
+add(series("Oldest waiting work", [
+    ("work_items_processing_job_oldest_accepted_age_seconds", "oldest accepted job"),
+    ("work_items_outbox_oldest_unpublished_age_seconds", "oldest unpublished outbox"),
+], "s", "Ages from the database clock, read by the API at scrape time.",
+    [{"color": "green", "value": None}, {"color": "red", "value": 120}]), 12, 8, 12)
+y += 8
+add(series("Outbox publisher", [
+    ("sum by (result) (rate(work_items_outbox_publish_total[1m]))", "{{result}}"),
+    ("rate(work_items_outbox_broker_connect_failures_total[1m])", "broker connect failures"),
+], "ops", "broker_error and connect failures point at RabbitMQ; store_error at PostgreSQL."), 8, 8, 0)
+add(series("Worker deliveries", [
+    ("sum by (settlement, redelivered) (rate(work_items_worker_deliveries_total[1m]))", "{{settlement}} redelivered={{redelivered}}"),
+    ("rate(work_items_worker_session_exits_total[1m])", "session restarts"),
+], "ops", "nack_requeue with redelivered=true and session restarts is a retry loop: the worker cannot finish the job."), 8, 8, 8)
+add(series("Processing time", [
+    ("histogram_quantile(0.95, sum by (le) (rate(work_items_worker_job_completion_latency_seconds_bucket[5m])))", "acceptance to completion p95"),
+    ("histogram_quantile(0.95, sum by (le) (rate(work_items_outbox_publish_lag_seconds_bucket[5m])))", "acceptance to publish p95"),
+    ("histogram_quantile(0.95, sum by (le) (rate(work_items_worker_delivery_duration_seconds_bucket[5m])))", "delivery handling p95"),
+], "s", "Completion latency minus publish lag is time in the queue plus handling.",
+    [{"color": "green", "value": None}, {"color": "red", "value": 30}]), 8, 8, 16)
+y += 8
+add(series("Processing failures and completions", [
+    ("sum by (disposition) (rate(work_items_worker_processing_failures_total[5m]))", "failure {{disposition}}"),
+    ("sum by (disposition) (rate(work_items_worker_job_completions_total[5m]))", "completion {{disposition}}"),
+], "ops", "Processor failures are retried up to three attempts, then the job fails terminally. already_terminal completions are duplicate deliveries."), 24, 6, 0)
+y += 6
+
+row("Dependencies and saturation")
+add(series("Connection pools", [
+    ("work_items_db_pool_acquired_connections", "{{job}} in use"),
+    ("work_items_db_pool_max_connections", "{{job}} max"),
+    ("rate(work_items_db_pool_empty_acquire_wait_seconds_total[1m])", "{{job}} waiting for a connection (s/s)"),
+], "short", "Waiting time above zero means requests queue for a connection: the pool is saturated."), 8, 8, 0)
+add(series("PostgreSQL", [
+    ("pg_up", "up"),
+    ("sum by (state) (pg_stat_activity_count{datname=\"zero_to_prod\"})", "sessions {{state}}"),
+    ('max(pg_stat_activity_max_tx_duration{datname="zero_to_prod"})', "longest open transaction (s)"),
+], "short", "A long-running transaction can hold the per-item lock that acceptance and completion wait for."), 8, 8, 8)
+add(series("Scrape targets up", [
+    ("up", "{{job}}"),
+], "short", "0 means Prometheus cannot reach the target; that target's metrics are missing, not zero."), 8, 8, 16)
+y += 8
+add(series("CPU", [
+    ('rate(process_cpu_seconds_total{job=~"work-items-.*"}[1m])', "{{job}}"),
+], "short", "Cores used. Compare with any CPU limit set on the container."), 8, 8, 0)
+add(series("Memory and goroutines", [
+    ('process_resident_memory_bytes{job=~"work-items-.*"}', "{{job}} RSS"),
+    ('go_memstats_heap_inuse_bytes{job=~"work-items-.*"}', "{{job}} heap in use"),
+], "bytes", "Resident memory of the API and worker processes."), 8, 8, 8)
+add(series("Telemetry pipeline", [
+    # The collector exposes these counters without a _total suffix, and the
+    # failure counters appear only after the first failure.
+    ("sum(rate(otelcol_exporter_sent_spans[1m]))", "spans sent"),
+    ("sum(rate(otelcol_exporter_sent_log_records[1m]))", "log records sent"),
+    ('sum(rate({__name__=~"otelcol_(exporter_send_failed|receiver_refused|receiver_failed)_(spans|log_records)"}[1m]))', "refused or failed"),
+], "short", "Failures here mean traces or logs are being lost; metrics are scraped separately and are unaffected."), 8, 8, 16)
+y += 8
+
+row("Warnings and errors (logs)")
+add({
+    "type": "logs",
+    "title": "API and worker warnings and errors",
+    "description": "From Loki. Open a line to follow its trace_id to Jaeger.",
+    "datasource": LOKI,
+    "targets": [{"refId": "A", "datasource": LOKI, "expr": '{service_name=~"work-items-.*"} | detected_level=~"warn|error"'}],
+    "options": {"showTime": True, "wrapLogMessage": True, "enableLogDetails": True, "sortOrder": "Descending"},
+}, 24, 10, 0)
+
+dashboard = {
+    "uid": "work-items-service-health",
+    "title": "Work Items service health",
+    "description": "Issue #122 / ADR 0012: SLIs and error budget first, then RED for the API, the asynchronous path, and USE for dependencies.",
+    "tags": ["work-items", "slo"],
+    "timezone": "utc",
+    "schemaVersion": 41,
+    "version": 1,
+    "editable": False,
+    "refresh": "10s",
+    "time": {"from": "now-1h", "to": "now"},
+    "panels": panels,
+}
+
+default_output = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                              "infra", "observability-lab", "grafana", "dashboards", "work-items.json")
+output = sys.argv[1] if len(sys.argv) > 1 else default_output
+with open(output, "w") as handle:
+    json.dump(dashboard, handle, indent=2)
+    handle.write("\n")
+print(f"{len(panels)} panels -> {output}")
