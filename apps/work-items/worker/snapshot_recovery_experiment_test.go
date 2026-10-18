@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -85,6 +86,13 @@ func (lab *experimentLab) destroyAndRestore(t *testing.T, backupPath string) {
 	lab.record.sync("validate destroy target", "volume label, container mount, port binding and project prefix verified",
 		map[string]string{"volume": volume, "project": lab.config.PostgresProject})
 
+	// Recreate the experiment's explicit network after destroy as well. The
+	// retained projects may occupy Docker's entire default address pool.
+	network := lab.config.PostgresProject + "_default"
+	subnet, err := command(ctx, "", nil, "docker", "network", "inspect", "--format", "{{(index .IPAM.Config 0).Subnet}}", network)
+	if err != nil {
+		t.Fatal(err)
+	}
 	lab.admin.Close()
 	lab.fixture.Close()
 	lab.tool(t, "postgres-local", "destroy")
@@ -99,6 +107,11 @@ func (lab *experimentLab) destroyAndRestore(t *testing.T, backupPath string) {
 		slices.Equal(present, lab.config.PresentProtected))
 	lab.record.sync("isolated PostgreSQL destroyed", "volume "+volume+" absent", nil)
 
+	if _, err := command(ctx, "", nil, "docker", "network", "create", "--subnet", subnet,
+		"--label", "com.docker.compose.project="+lab.config.PostgresProject,
+		"--label", "com.docker.compose.network=default", network); err != nil {
+		t.Fatal(err)
+	}
 	lab.tool(t, "postgres-local", "start")
 	lab.tool(t, "postgres-local", "migrate-up")
 	container, err := composeContainer(ctx, lab.config.PostgresProject, "postgres", "5432/tcp", lab.config.PostgresPort)
@@ -124,14 +137,14 @@ func outboxPublished(t *testing.T, lab *experimentLab, job int64) bool {
 	return readOutbox(t, lab, job).Published
 }
 
-func TestIssue118E12SnapshotRecovery(t *testing.T) {
+func TestIssue130131SnapshotRecovery(t *testing.T) {
 	config := requireExperimentConfig(t)
 	if os.Getenv("ISSUE118_ALLOW_DESTROY") != config.PostgresProject {
 		t.Skipf("destructive snapshot experiment requires ISSUE118_ALLOW_DESTROY=%s", config.PostgresProject)
 	}
 	lab := openExperimentLab(t, "e12-snapshot-recovery",
 		"EXTERNAL destructive loss of the isolated PostgreSQL volume, migration-first logical restore; ACTUAL API and worker processes",
-		"Which accepted, completed, and post-backup effects survive snapshot recovery, and can stale broker messages alias restored identities?")
+		"Do delivery identities reject stale messages after ID reuse, and does explicit offline redrive recover accepted jobs with lost delivery?")
 	api, baseURL := startAPI(t, lab.config, lab.record, "e12-api-a")
 	create := func(title string) int64 {
 		status, body := httpJSON(t, http.MethodPost, baseURL+"/items", map[string]string{"title": title})
@@ -241,11 +254,11 @@ func TestIssue118E12SnapshotRecovery(t *testing.T) {
 	staleCompleted := isCompletedOnce(stale, jobE)
 	lab.record.observe("stale_message_outcome", map[string]any{"completed_new_job": staleCompleted,
 		"new_job_outbox_published": outboxPublished(t, lab, jobE), "result_title": stale.Results})
-	lab.record.check("stale message for lost job D processed new job E", "E done while its own outbox row is unpublished",
-		stale, staleCompleted && !outboxPublished(t, lab, jobE) && stale.Results[0].InputTitle == stale.Title)
+	lab.record.check("stale message for lost job D cannot process new job E", "E remains accepted with no effects while its own outbox row is unpublished",
+		stale, !staleCompleted && isUntouched(stale, jobE) && !outboxPublished(t, lab, jobE))
 
 	// Resume publication: A recovers from its restored outbox row; E's own
-	// message is redundant.
+	// message is the only valid delivery for E.
 	api, baseURL = startAPI(t, lab.config, lab.record, "e12-api-c")
 	waitForState(t, lab.record, lab.admin, itemA, "A recovers from restored outbox", "done once",
 		func(s businessState) bool { return isCompletedOnce(s, jobA) })
@@ -264,6 +277,31 @@ func TestIssue118E12SnapshotRecovery(t *testing.T) {
 		fmt.Sprint(status, body), status == http.StatusConflict && body["error"] == "processing_already_active" && jsonID(t, body, "processing_job_id") == jobC)
 	checkState(t, lab.record, lab.admin, itemB, "B after recovery", "unchanged", func(s businessState) bool { return s.String() == restoredB.String() })
 	stopGracefully(t, lab.record, api)
+	var inspection struct {
+		Candidates []struct {
+			JobID        int64 `json:"job_id"`
+			WasPublished bool  `json:"was_published"`
+		} `json:"accepted_jobs"`
+	}
+	inspectionOutput := lab.tool(t, "work-items-recovery-local", "inspect")
+	if err := json.Unmarshal([]byte(inspectionOutput), &inspection); err != nil {
+		t.Fatal(err)
+	}
+	lab.record.check("offline inspection identifies C without an age threshold", "one accepted job C with published outbox", inspection,
+		len(inspection.Candidates) == 1 && inspection.Candidates[0].JobID == jobC && inspection.Candidates[0].WasPublished)
+	lab.record.observe("redrive_report", lab.tool(t, "work-items-recovery-local", "redrive-after-restore"))
+	api, baseURL = startAPI(t, lab.config, lab.record, "recovery-api")
+	worker = startWorker(t, lab.config, lab.record, "recovery-worker", nil)
+	waitForState(t, lab.record, lab.admin, itemC, "C recovered by redrive", "same job completed once", func(s businessState) bool { return isCompletedOnce(s, jobC) })
+	waitForQueue(t, lab.config, lab.record, "redrive acknowledged", queueCounts{Consumers: 1})
+	beforeDuplicate := requireBusinessState(t, context.Background(), lab.admin, itemC)
+	lab.publish(t, itemC, jobC)
+	waitForQueue(t, lab.config, lab.record, "legitimate duplicate acknowledged", queueCounts{Consumers: 1})
+	afterDuplicate := requireBusinessState(t, context.Background(), lab.admin, itemC)
+	lab.record.check("legitimate duplicate preserves business and job state", beforeDuplicate.String(), afterDuplicate.String(), beforeDuplicate.String() == afterDuplicate.String())
+	checkState(t, lab.record, lab.admin, itemB, "B unchanged after explicit redrive", "unchanged", func(s businessState) bool { return s.String() == restoredB.String() })
+	stopGracefully(t, lab.record, api)
+	stopGracefully(t, lab.record, worker)
 	present, err := presentProtectedVolumes(context.Background())
 	if err != nil {
 		t.Fatal(err)

@@ -7,6 +7,9 @@ import (
 )
 
 type stubProcessingJobCompleter struct {
+	identityErr   error
+	identityCalls int
+
 	result processingCompletion
 	err    error
 
@@ -103,7 +106,7 @@ func TestHandleWorkerMessageAcksNewCompletion(
 		store,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":101,
 			"work_item_id":201
 		}`),
@@ -150,7 +153,7 @@ func TestHandleWorkerMessageAcksTerminalRedelivery(
 		store,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":301,
 			"work_item_id":401
 		}`),
@@ -208,7 +211,7 @@ func TestHandleWorkerMessageRejectsUnsupportedContract(
 			name: "wrong type",
 			payload: `{
 				"type":"other.event",
-				"version":1,
+				"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 				"job_id":1,
 				"work_item_id":2
 			}`,
@@ -226,7 +229,7 @@ func TestHandleWorkerMessageRejectsUnsupportedContract(
 			name: "invalid job id",
 			payload: `{
 				"type":"work_item.process",
-				"version":1,
+				"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 				"job_id":0,
 				"work_item_id":2
 			}`,
@@ -235,7 +238,7 @@ func TestHandleWorkerMessageRejectsUnsupportedContract(
 			name: "invalid work item id",
 			payload: `{
 				"type":"work_item.process",
-				"version":1,
+				"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 				"job_id":1,
 				"work_item_id":0
 			}`,
@@ -301,7 +304,7 @@ func TestHandleWorkerMessageRejectsPermanentIdentityErrors(
 				store,
 				[]byte(`{
 					"type":"work_item.process",
-					"version":1,
+					"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 					"job_id":501,
 					"work_item_id":601
 				}`),
@@ -339,7 +342,7 @@ func TestHandleWorkerMessageRequeuesTransientStoreFailure(
 		store,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":701,
 			"work_item_id":801
 		}`),
@@ -372,7 +375,7 @@ func TestHandleWorkerMessageRequeuesCompletionConflict(
 		store,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":901,
 			"work_item_id":1001
 		}`),
@@ -429,7 +432,7 @@ func TestHandleWorkerMessageRunsProcessorBeforeDurableCompletion(
 		processor,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":1101,
 			"work_item_id":1201
 		}`),
@@ -492,7 +495,7 @@ func TestHandleWorkerMessageRequeuesProcessingFailureWithoutClaimingCompletion(
 		processor,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":1301,
 			"work_item_id":1401
 		}`),
@@ -552,7 +555,7 @@ func TestHandleWorkerMessageSkipsProcessorForTerminalJob(
 		processor,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":1501,
 			"work_item_id":1601
 		}`),
@@ -608,7 +611,7 @@ func TestHandleWorkerMessageRejectsUnknownJobBeforeProcessor(
 		processor,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":1701,
 			"work_item_id":1801
 		}`),
@@ -668,7 +671,7 @@ func TestHandleWorkerMessageRecordsRetryableFailureBeforeRequeue(
 		processor,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":1901,
 			"work_item_id":2001
 		}`),
@@ -749,7 +752,7 @@ func TestHandleWorkerMessageAcksDurableTerminalFailure(
 		processor,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":2101,
 			"work_item_id":2201
 		}`),
@@ -814,7 +817,7 @@ func TestHandleWorkerMessageRequeuesWhenFailureRecordIsUnavailable(
 		processor,
 		[]byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":2301,
 			"work_item_id":2401
 		}`),
@@ -848,5 +851,37 @@ func TestHandleWorkerMessageRequeuesWhenFailureRecordIsUnavailable(
 			"expected one attempted failure record, got %d",
 			store.failureCalls,
 		)
+	}
+}
+
+func (store *stubProcessingJobCompleter) VerifyDeliveryIdentity(context.Context, int64, string) error {
+	store.identityCalls++
+	return store.identityErr
+}
+
+func TestDeliveryIdentityFailureCannotInvokeProcessorOrMutateState(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		err        error
+		settlement deliverySettlement
+	}{
+		{"stale identity", errDeliveryIdentityMismatch, settlementReject},
+		{"identity database unavailable", errors.New("injected database outage"), settlementNackRequeue},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &stubProcessingJobCompleter{identityErr: test.err}
+			processed := 0
+			got, err := handleWorkerMessageWithProcessor(context.Background(), store, processingJobProcessorFunc(func(context.Context, workerMessage) error { processed++; return nil }), []byte(`{"type":"work_item.process","version":2,"delivery_id":"11111111-1111-4111-8111-111111111111","job_id":7,"work_item_id":42}`))
+			if got != test.settlement || !errors.Is(err, test.err) || processed != 0 || store.calls != 0 || store.failureCalls != 0 {
+				t.Fatalf("settlement=%s err=%v processed=%d completion=%d failure=%d", got, err, processed, store.calls, store.failureCalls)
+			}
+		})
+	}
+}
+func TestLegacyDeliveryRejectedBeforeDatabaseAccess(t *testing.T) {
+	store := &stubProcessingJobCompleter{}
+	got, err := handleWorkerMessage(context.Background(), store, []byte(`{"type":"work_item.process","version":1,"job_id":7,"work_item_id":42}`))
+	if got != settlementReject || err == nil || store.inspectCalls != 0 || store.identityCalls != 0 || store.calls != 0 {
+		t.Fatalf("settlement=%s err=%v store=%+v", got, err, store)
 	}
 }

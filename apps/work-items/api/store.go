@@ -289,7 +289,8 @@ func (store *postgresStore) AcceptProcessingJob(
 			'work_item.process',
 			jsonb_build_object(
 				'type', 'work_item.process',
-				'version', 1,
+				'version', 2,
+				'delivery_id', gen_random_uuid()::text,
 				'job_id', $1::BIGINT,
 				'work_item_id', $2::BIGINT
 			)

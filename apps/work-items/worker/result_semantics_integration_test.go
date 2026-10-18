@@ -170,6 +170,10 @@ func TestInjectedRetryExhaustionThenNewJobSucceedsIntegration(t *testing.T) {
 		fixture.WorkItemID).Scan(&secondJobID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := fixture.Pool.Exec(ctx, `INSERT INTO public.outbox_messages(processing_job_id,event_type,payload)
+        VALUES ($1,'work_item.process',$2::jsonb)`, secondJobID, string(workerPayload(secondJobID, fixture.WorkItemID))); err != nil {
+		t.Fatal(err)
+	}
 	settlement, err := handleWorkerMessage(ctx, fixture.Store, workerPayload(secondJobID, fixture.WorkItemID))
 	if err != nil || settlement != settlementAck {
 		t.Fatalf("second job: settlement=%q err=%v", settlement, err)

@@ -226,5 +226,5 @@ func inspectQueue(fixtureURL, queueName string) (amqp.Queue, error) {
 }
 
 func workerPayload(jobID, workItemID int64) []byte {
-	return []byte(fmt.Sprintf(`{"type":"work_item.process","version":1,"job_id":%d,"work_item_id":%d}`, jobID, workItemID))
+	return []byte(fmt.Sprintf(`{"type":"work_item.process","version":2,"delivery_id":"11111111-1111-4111-8111-111111111111","job_id":%d,"work_item_id":%d}`, jobID, workItemID))
 }

@@ -90,7 +90,7 @@ func TestRunWorkerDeliveryLoopContinuesAfterPermanentReject(
 		DeliveryTag:  102,
 		Body: []byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":201,
 			"work_item_id":301
 		}`),
@@ -172,7 +172,7 @@ func TestRunWorkerDeliveryLoopLeavesSessionAfterTransientRequeue(
 		DeliveryTag:  103,
 		Body: []byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":401,
 			"work_item_id":501
 		}`),
@@ -258,7 +258,7 @@ func TestRunWorkerDeliveryLoopReturnsBrokerSettlementFailure(
 		DeliveryTag:  104,
 		Body: []byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":601,
 			"work_item_id":701
 		}`),
