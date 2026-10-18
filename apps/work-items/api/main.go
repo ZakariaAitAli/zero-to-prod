@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,6 +80,13 @@ func main() {
 		rabbitMQQueue = defaultWorkItemProcessingQueue
 	}
 
+	// Read before connecting to anything, so a missing or invalid key and
+	// certificate stops the process at once instead of after the database.
+	tlsConfig, err := tlsConfigFromEnvironment(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	authenticate, err := authenticationFromEnvironment(context.Background())
 	if err != nil {
 		log.Fatal(err)
@@ -96,6 +104,7 @@ func main() {
 		address,
 		newApplicationHandler(version, readiness, store, authenticate),
 	)
+	server.TLSConfig = tlsConfig
 
 	shutdownContext, stop := signal.NotifyContext(
 		context.Background(),
@@ -104,7 +113,11 @@ func main() {
 	)
 	defer stop()
 
-	log.Printf("work-items-api version=%s listening on %s", version, address)
+	scheme := "HTTP"
+	if tlsConfig != nil {
+		scheme = "HTTPS"
+	}
+	log.Printf("work-items-api version=%s listening on %s (%s)", version, address, scheme)
 
 	publisherFactory := func() (
 		closeableBrokerMessagePublisher,
@@ -165,6 +178,11 @@ func runHTTPServer(
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		return fmt.Errorf("listen HTTP: %w", err)
+	}
+	// With a TLS configuration the listener accepts only TLS; there is no
+	// plaintext listener.
+	if server.TLSConfig != nil {
+		listener = tls.NewListener(listener, server.TLSConfig)
 	}
 	defer listener.Close()
 
