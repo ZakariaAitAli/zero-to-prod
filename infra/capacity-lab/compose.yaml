@@ -4,7 +4,7 @@ services:
   postgres:
     cpus: 1.0
   rabbitmq:
-    cpus: 0.5
+    cpus: ${CAPACITY_BROKER_CPUS:-0.5}
   api:
     image: zero-to-prod-capacity-lab-api:local
     ports: !reset []
