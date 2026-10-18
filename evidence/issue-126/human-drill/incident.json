@@ -1,0 +1,12 @@
+{
+  "fault_action_unix": 1792345491.7328146,
+  "injected_component": "api",
+  "fault_method": "stop only owned API container",
+  "operator": "Zakaria Ait Ali",
+  "mode": "supervised diagnosis; assistant executes recovery",
+  "response_pending": false,
+  "response_received": true,
+  "timeout": false,
+  "recovery_command_exit": 0,
+  "business_reads_recovered_unix": 1792345638.8537886
+}

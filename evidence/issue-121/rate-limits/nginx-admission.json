@@ -1,0 +1,64 @@
+{
+  "scope": "production nginx rules with controlled TLS upstreams; authentication and real UI not tested",
+  "checks": [
+    {
+      "check": "bearer path limited despite changing forwarding headers",
+      "statuses": {
+        "200": 48,
+        "429": 72
+      },
+      "seconds": 0.458,
+      "passed": true
+    },
+    {
+      "check": "bearer recovers after refill",
+      "passed": true
+    },
+    {
+      "check": "session path uses the same API admission policy",
+      "statuses": {
+        "200": 46,
+        "429": 74
+      },
+      "seconds": 0.359,
+      "passed": true
+    },
+    {
+      "check": "identity-provider POSTs limited",
+      "statuses": {
+        "200": 11,
+        "429": 34
+      },
+      "seconds": 0.157,
+      "passed": true
+    },
+    {
+      "check": "authentication saturation does not consume API bucket",
+      "passed": true
+    },
+    {
+      "check": "gateway sign-in initiation limited",
+      "statuses": {
+        "200": 11,
+        "429": 34
+      },
+      "seconds": 0.215,
+      "passed": true
+    },
+    {
+      "check": "static UI and discovery stay available during auth saturation",
+      "passed": true
+    },
+    {
+      "check": "rate-limited API requests never reach controlled API upstream",
+      "api_upstream_calls": 96,
+      "admitted_api_requests": 96,
+      "passed": true
+    },
+    {
+      "check": "rejection observable without credential values",
+      "passed": true
+    }
+  ],
+  "passed": true
+}

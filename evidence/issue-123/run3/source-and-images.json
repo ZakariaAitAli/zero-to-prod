@@ -1,0 +1,25 @@
+{
+  "source_sha256": {
+    "infra/capacity-lab/compose.yaml": "671504f0415636aa5b606d0a5c6ce8b6b612e63b64c7710e09eb1af086bf01af",
+    "infra/capacity-lab/nginx.conf": "7843c258069afc8a8cfc986c31ad79d3d73ed97afc409e54995eb9ddf9951259",
+    "infra/capacity-lab/prometheus.yml": "26e8298633dbc6f8c41406dc876d684d2450b18649661dfafebaac071250e7fb",
+    "tools/capacity-lab-local": "e588d9db7f87abfcee7a4d70fb1a294b69fae3950fbc4959ff7b68f5b824f560",
+    "tools/capacity-lab-experiments": "c33092140a0ef0a22901836932e90ce05c01f11b1125d1841c3b776504b5bd3d"
+  },
+  "application_tree": "db77b07e20c72cc9f35dd326f51635489455541d",
+  "code_commit": "d18ebe81960c",
+  "changes_since_run2": "2-CPU broker from startup; corrected completion clock; item prefix and broker CPU recorded in result; no publisher optimization",
+  "image_ids": [
+    "/zero-to-prod-capacity-lab-api-1 sha256:996880f36e463d9636b8c30ee32cd883503f925d090bd9dd256d3b77a524f83e 250000000",
+    "/zero-to-prod-capacity-lab-gateway-1 sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 0",
+    "/zero-to-prod-capacity-lab-grafana-1 sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572 0",
+    "/zero-to-prod-capacity-lab-jaeger-1 sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3 0",
+    "/zero-to-prod-capacity-lab-loki-1 sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193 0",
+    "/zero-to-prod-capacity-lab-otel-collector-1 sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6 0",
+    "/zero-to-prod-capacity-lab-postgres-1 sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 1000000000",
+    "/zero-to-prod-capacity-lab-postgres-exporter-1 sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e 0",
+    "/zero-to-prod-capacity-lab-prometheus-1 sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e 0",
+    "/zero-to-prod-capacity-lab-rabbitmq-1 sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95 2000000000",
+    "/zero-to-prod-capacity-lab-worker-1 sha256:7a1eb91f05f3ccc6272aa16df56a48854f285b74d6c9b7b95371894a193e0a09 250000000"
+  ]
+}

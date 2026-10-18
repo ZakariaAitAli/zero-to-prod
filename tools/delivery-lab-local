@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Dedicated local release lab. Retains its volumes and private state on stop.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export DELIVERY_STATE="${HOME}/.local/state/zero-to-prod/delivery-lab"
+export ZTP_OBSERVABILITY_LAB_STATE="$DELIVERY_STATE"
+export ZTP_OBSERVABILITY_LAB_SECRETS_DIR="$DELIVERY_STATE/secrets"
+export ZTP_OBSERVABILITY_LAB_SUBNET=10.213.23.0/24
+export ZTP_OBSERVABILITY_LAB_PROMETHEUS_PORT=19093
+export ZTP_OBSERVABILITY_LAB_GRAFANA_PORT=13003
+export ZTP_OBSERVABILITY_LAB_JAEGER_PORT=16689
+if [[ -f "$DELIVERY_STATE/releases.env" ]]; then
+  # Locally generated, private file; do not accept externally supplied shell input.
+  source "$DELIVERY_STATE/releases.env"
+fi
+export DELIVERY_BLUE_IMAGE="${DELIVERY_BLUE_IMAGE:-unconfigured}"
+export DELIVERY_GREEN_IMAGE="${DELIVERY_GREEN_IMAGE:-unconfigured}"
+compose() {
+  docker compose -p zero-to-prod-delivery-lab \
+    -f "$ROOT/infra/observability-lab/compose.yaml" \
+    -f "$ROOT/infra/delivery-lab/compose.yaml" "$@"
+}
+config() {
+  local slot="$1"
+  [[ "$slot" == api || "$slot" == green ]] || exit 2
+  # Preserve the bind-mounted inode on switch.
+  cat > "$DELIVERY_STATE/nginx.conf" <<EOF
+worker_processes 1;
+events { worker_connections 1024; }
+http {
+  access_log off;
+  upstream active { server $slot:8080; keepalive 16; }
+  server {
+    listen 8080;
+    location / {
+      proxy_pass http://active;
+      proxy_http_version 1.1;
+      proxy_set_header Connection "";
+      proxy_next_upstream off;
+    }
+  }
+}
+EOF
+}
+case "${1:-}" in
+  build)
+    bash "$ROOT/tools/observability-lab-local" init
+    compose build worker
+    compose --profile tools build migrate
+    source_sha="$(git -C "$ROOT" rev-parse HEAD)"
+    selection="${2:-both}"
+    case "$selection" in blue|green) releases=("$selection");; both) releases=(blue green);; *) exit 2;; esac
+    diff_hash="$(git -C "$ROOT" diff -- apps/work-items | sha256sum | cut -c1-12)"
+    for release in "${releases[@]}"; do
+      docker build -f "$ROOT/apps/work-items/api/Dockerfile" \
+        --build-arg "VERSION=$source_sha-$diff_hash-$release" \
+        -t "zero-to-prod-delivery-api:$release" "$ROOT/apps/work-items"
+    done
+    blue="$(docker image inspect --format '{{.Id}}' zero-to-prod-delivery-api:blue)"
+    green="$(docker image inspect --format '{{.Id}}' zero-to-prod-delivery-api:green)"
+    umask 077
+    printf 'export DELIVERY_BLUE_IMAGE=%s\nexport DELIVERY_GREEN_IMAGE=%s\n' "$blue" "$green" > "$DELIVERY_STATE/releases.env"
+    ;;
+  up)
+    [[ "$DELIVERY_BLUE_IMAGE" == sha256:* && "$DELIVERY_GREEN_IMAGE" == sha256:* ]] || { echo 'Build releases first' >&2; exit 1; }
+    python3 - <<'CHECK'
+import ipaddress,json,subprocess
+ids=subprocess.check_output(['docker','network','ls','-q'],text=True).split()
+for n in json.loads(subprocess.check_output(['docker','network','inspect',*ids])):
+    if n['Name']=='zero-to-prod-delivery-lab_lab':continue
+    for c in n['IPAM']['Config'] or []:
+        if c.get('Subnet') and ipaddress.ip_network(c['Subnet']).overlaps(ipaddress.ip_network('10.213.23.0/24')):
+            raise SystemExit('Delivery subnet overlaps '+n['Name'])
+CHECK
+    config api
+    compose up -d --wait postgres rabbitmq
+    compose --profile tools run --rm migrate up
+    compose up -d --wait api worker green gateway
+    ;;
+  switch)
+    slot="${2:?api or green}"
+    [[ "$slot" == api || "$slot" == green ]] || exit 2
+    # Readiness and the actual destination port must succeed before altering traffic.
+    compose exec -T "$slot" wget -q -O /dev/null http://127.0.0.1:8080/ready
+    cp "$DELIVERY_STATE/nginx.conf" "$DELIVERY_STATE/nginx.previous"
+    config "$slot"
+    if ! compose exec -T gateway nginx -t; then
+      cat "$DELIVERY_STATE/nginx.previous" > "$DELIVERY_STATE/nginx.conf"
+      exit 1
+    fi
+    compose exec -T gateway nginx -s reload
+    ;;
+  stop) compose --profile tools stop ;;
+  compose) shift; compose "$@" ;;
+  *) echo 'Usage: tools/delivery-lab-local build|up|switch api|green|stop|compose ARGS' >&2; exit 2 ;;
+esac

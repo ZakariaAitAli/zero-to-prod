@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Dedicated issue-126 project. Keeps its state, volumes, and network on stop.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export OPERATIONS_ROOT="$ROOT"
+export OPERATIONS_STATE="${HOME}/.local/state/zero-to-prod/operations-lab"
+export ZTP_OBSERVABILITY_LAB_API_PORT=18085
+export ZTP_OBSERVABILITY_LAB_STATE="${HOME}/.local/state/zero-to-prod/operations-lab"
+export ZTP_OBSERVABILITY_LAB_SECRETS_DIR="${ZTP_OBSERVABILITY_LAB_STATE}/secrets"
+export ZTP_OBSERVABILITY_LAB_SUBNET=10.213.24.0/24
+export ZTP_OBSERVABILITY_LAB_PROMETHEUS_PORT=19094
+export ZTP_OBSERVABILITY_LAB_GRAFANA_PORT=13004
+export ZTP_OBSERVABILITY_LAB_JAEGER_PORT=16690
+export ZTP_OBSERVABILITY_LAB_VERSION="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
+# Pin the selected release once in this private lab state; later recovery must
+# not follow a moved build tag. Stop/config remain usable without local tags.
+if [[ ! -f "$OPERATIONS_STATE/images.env" && "${1:-}" == up ]]; then
+  bash "$ROOT/tools/observability-lab-local" init
+  api_image="$(docker image inspect --format '{{.Id}}' zero-to-prod-delivery-api:green)"
+  worker_image="$(docker image inspect --format '{{.Id}}' zero-to-prod-delivery-worker:local)"
+  umask 077
+  printf 'export OPERATIONS_API_IMAGE=%s\nexport OPERATIONS_WORKER_IMAGE=%s\n' "$api_image" "$worker_image" > "$OPERATIONS_STATE/images.env"
+fi
+if [[ -f "$OPERATIONS_STATE/images.env" ]]; then
+  source "$OPERATIONS_STATE/images.env"
+fi
+export OPERATIONS_API_IMAGE="${OPERATIONS_API_IMAGE:-unconfigured}"
+export OPERATIONS_WORKER_IMAGE="${OPERATIONS_WORKER_IMAGE:-unconfigured}"
+
+compose() {
+  docker compose -p zero-to-prod-operations-lab \
+    -f "$ROOT/infra/observability-lab/compose.yaml" \
+    -f "$ROOT/infra/operations-lab/compose.yaml" "$@"
+}
+case "${1:-}" in
+  up)
+    # Check overlaps before any container starts. Existing owned network is OK.
+    python3 - <<'PY'
+import ipaddress,json,subprocess
+ids=subprocess.check_output(['docker','network','ls','-q'],text=True).split()
+for n in json.loads(subprocess.check_output(['docker','network','inspect',*ids])):
+    if n['Name']=='zero-to-prod-operations-lab_lab':continue
+    for c in n['IPAM']['Config'] or []:
+        if c.get('Subnet') and ipaddress.ip_network(c['Subnet']).overlaps(ipaddress.ip_network('10.213.24.0/24')):
+            raise SystemExit('Capacity subnet overlaps '+n['Name'])
+PY
+    bash "$ROOT/tools/observability-lab-local" init
+    mkdir -p "$OPERATIONS_STATE/notifications"
+    chmod 700 "$OPERATIONS_STATE/notifications"
+    compose --profile tools build migrate
+    compose up -d --wait postgres rabbitmq
+    compose --profile tools run --rm migrate up
+    compose up -d --wait
+    ;;
+  stop) compose stop ;;
+  compose) shift; compose "$@" ;;
+  *) echo 'Usage: tools/operations-lab-local up|stop|compose ARGS' >&2; exit 2 ;;
+esac

@@ -1,0 +1,104 @@
+up
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Starting 
+ Container zero-to-prod-delivery-lab-postgres-1 Starting 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Started 
+ Container zero-to-prod-delivery-lab-postgres-1 Started 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-delivery-lab-postgres-1 Waiting 
+ Container zero-to-prod-delivery-lab-postgres-1 Healthy 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-delivery-lab-postgres-1 Running 
+ Container zero-to-prod-delivery-lab-postgres-1 Waiting 
+ Container zero-to-prod-delivery-lab-postgres-1 Healthy 
+ Container zero-to-prod-delivery-lab-migrate-run-b072d3d21625 Creating 
+ Container zero-to-prod-delivery-lab-migrate-run-b072d3d21625 Created 
+no change
+ Container zero-to-prod-delivery-lab-postgres-1 Running 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Running 
+ Container zero-to-prod-delivery-lab-green-1 Recreate 
+ Container zero-to-prod-delivery-lab-worker-1 Recreate 
+ Container zero-to-prod-delivery-lab-worker-1 Recreated 
+ Container zero-to-prod-delivery-lab-green-1 Recreated 
+ Container zero-to-prod-delivery-lab-gateway-1 Starting 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-delivery-lab-postgres-1 Waiting 
+ Container zero-to-prod-delivery-lab-postgres-1 Waiting 
+ Container zero-to-prod-delivery-lab-postgres-1 Waiting 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-delivery-lab-gateway-1 Started 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-delivery-lab-postgres-1 Healthy 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-delivery-lab-postgres-1 Healthy 
+ Container zero-to-prod-delivery-lab-green-1 Starting 
+ Container zero-to-prod-delivery-lab-postgres-1 Healthy 
+ Container zero-to-prod-delivery-lab-api-1 Starting 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-delivery-lab-worker-1 Starting 
+ Container zero-to-prod-delivery-lab-api-1 Started 
+ Container zero-to-prod-delivery-lab-worker-1 Started 
+ Container zero-to-prod-delivery-lab-green-1 Started 
+ Container zero-to-prod-delivery-lab-postgres-1 Waiting 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-delivery-lab-api-1 Waiting 
+ Container zero-to-prod-delivery-lab-gateway-1 Waiting 
+ Container zero-to-prod-delivery-lab-green-1 Waiting 
+ Container zero-to-prod-delivery-lab-worker-1 Waiting 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-delivery-lab-postgres-1 Healthy 
+ Container zero-to-prod-delivery-lab-worker-1 Healthy 
+ Container zero-to-prod-delivery-lab-gateway-1 Healthy 
+ Container zero-to-prod-delivery-lab-api-1 Healthy 
+ Container zero-to-prod-delivery-lab-green-1 Healthy 
+
+compose exec -T postgres psql -U zero_to_prod_admin -d zero_to_prod -v ON_ERROR_STOP=1 -c ALTER TABLE work_items ADD COLUMN IF NOT EXISTS delivery_annotation text
+NOTICE:  column "delivery_annotation" of relation "work_items" already exists, skipping
+ALTER TABLE
+
+switch green
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+2026/10/18 17:31:57 [notice] 30#30: signal process started
+
+switch api
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+2026/10/18 17:32:00 [notice] 43#43: signal process started
+
+compose up -d --no-deps --force-recreate green
+ Container zero-to-prod-delivery-lab-green-1 Recreate 
+ Container zero-to-prod-delivery-lab-green-1 Recreated 
+ Container zero-to-prod-delivery-lab-green-1 Starting 
+ Container zero-to-prod-delivery-lab-green-1 Started 
+
+switch green
+service "green" is not running
+
+compose up -d --no-deps --force-recreate --wait green
+ Container zero-to-prod-delivery-lab-green-1 Recreate 
+ Container zero-to-prod-delivery-lab-green-1 Recreated 
+ Container zero-to-prod-delivery-lab-green-1 Starting 
+ Container zero-to-prod-delivery-lab-green-1 Started 
+ Container zero-to-prod-delivery-lab-green-1 Waiting 
+ Container zero-to-prod-delivery-lab-green-1 Healthy 
+
+switch green
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+2026/10/18 17:32:18 [notice] 56#56: signal process started
+
+stop
+ Container zero-to-prod-delivery-lab-gateway-1 Stopping 
+ Container zero-to-prod-delivery-lab-api-1 Stopping 
+ Container zero-to-prod-delivery-lab-worker-1 Stopping 
+ Container zero-to-prod-delivery-lab-green-1 Stopping 
+ Container zero-to-prod-delivery-lab-gateway-1 Stopped 
+ Container zero-to-prod-delivery-lab-worker-1 Stopped 
+ Container zero-to-prod-delivery-lab-green-1 Stopped 
+ Container zero-to-prod-delivery-lab-api-1 Stopped 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Stopping 
+ Container zero-to-prod-delivery-lab-postgres-1 Stopping 
+ Container zero-to-prod-delivery-lab-postgres-1 Stopped 
+ Container zero-to-prod-delivery-lab-rabbitmq-1 Stopped 
+

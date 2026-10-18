@@ -1,0 +1,42 @@
+PASS log hygiene            ingress: control request with a unique path      expected=404 observed=404
+PASS log hygiene            successful flow: authorization code obtained     expected=yes observed=yes
+PASS log hygiene            successful flow: callback redirects to the UI    expected=302 observed=302
+PASS log hygiene            successful flow: session works                   expected=200 observed=200
+PASS log hygiene            successful flow: machine token at the API        expected=200 observed=200
+INFO log hygiene            failed callback: reused authorization code       expected=observe observed=http=403
+INFO log hygiene            failed callback: Keycloak down during code redemption expected=observe observed=http=500
+PASS log hygiene            authorization request to the stopped identity provider expected=503 observed=503
+PASS log hygiene            failed callback: gateway down                    expected=503 observed=503
+  waiting 41s...
+PASS log hygiene            session refresh: request after a refresh is due  expected=200 observed=200
+PASS log hygiene            session refresh: client received a new cookie    expected=yes observed=yes
+PASS log hygiene            values collected per kind                        expected=code=3 machine-access-token=1 secret=8 session-access-token=1 session-cookie=2 state=4 observed=code=3 machine-access-token=1 secret=8 session-access-token=1 session-cookie=2 state=4
+INFO log hygiene            percent-encoded forms also searched              expected=observe observed=10
+PASS log hygiene            searched strings are distinct                    expected=29 observed=29
+PASS log hygiene            ingress: occurrences of the 29 searched strings  expected=0 observed=0
+INFO log hygiene            ingress: kinds found                             expected=observe observed=none
+INFO log hygiene            ingress: log lines in the window                 expected=observe observed=41
+PASS log hygiene            oauth2-proxy: occurrences of the 29 searched strings expected=0 observed=0
+INFO log hygiene            oauth2-proxy: kinds found                        expected=observe observed=none
+INFO log hygiene            oauth2-proxy: log lines in the window            expected=observe observed=27
+INFO log hygiene            keycloak: occurrences of the 29 searched strings expected=observe observed=0
+INFO log hygiene            keycloak: kinds found                            expected=observe observed=none
+INFO log hygiene            keycloak: log lines in the window                expected=observe observed=36
+INFO log hygiene            api: occurrences of the 29 searched strings      expected=observe observed=0
+INFO log hygiene            api: kinds found                                 expected=observe observed=none
+INFO log hygiene            api: log lines in the window                     expected=observe observed=4
+INFO log hygiene            valkey: occurrences of the 29 searched strings   expected=observe observed=0
+INFO log hygiene            valkey: kinds found                              expected=observe observed=none
+INFO log hygiene            valkey: log lines in the window                  expected=observe observed=0
+INFO log hygiene            worker: occurrences of the 29 searched strings   expected=observe observed=0
+INFO log hygiene            worker: kinds found                              expected=observe observed=none
+INFO log hygiene            worker: log lines in the window                  expected=observe observed=0
+PASS positive control       scanner finds each searched string in a synthetic log expected=29 observed=29
+PASS positive control       ingress log captured (unique control path)       expected=yes observed=yes
+PASS positive control       callback request ID in the ingress log           expected=yes observed=yes
+PASS positive control       callback request ID in the oauth2-proxy log      expected=yes observed=yes
+INFO positive control       oauth2-proxy error lines in the window (diagnostics kept) expected=observe observed=2
+INFO positive control       ingress 503 lines with upstream status in the window expected=observe observed=2
+Evidence written: evidence/integration-121-126/run1/verify-log-hygiene.json
+
+Log hygiene verification passed (38 checks).

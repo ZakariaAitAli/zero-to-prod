@@ -1,0 +1,5 @@
+{
+  "normal_up_after_promotion": "refused with exit1 before starting old primary",
+  "initialized_restore_target": "recovery entrypoint refused with exit1; preserved existing restored cluster",
+  "purpose": "explicit one-shot fixture; manual failback/reseed/activation must follow runbook, never overwrite retained data"
+}

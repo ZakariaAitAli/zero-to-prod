@@ -1,0 +1,8 @@
+{
+  "commit": "c7a64660ac3bad999ecf0fa4980fd5efefb86bad",
+  "script_sha256": "5bac87cf8205b59fe544756ced8df2c9af2efdfb76974494a93633ed42765488",
+  "started_utc": "2026-10-18T15:26:45.982775+00:00",
+  "docker": "29.6.2",
+  "host_cpus": 20,
+  "note": "Working tree harness; source hashes recorded separately before publication."
+}

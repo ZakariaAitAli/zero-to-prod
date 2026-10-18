@@ -604,3 +604,13 @@ It does not yet implement:
 - RabbitMQ state backup or broker/outbox reconciliation after recovery
 - Redis
 - Kubernetes
+
+## Delivery identity migration
+
+Migration 6 adds version 2 delivery identities to the existing outbox payloads
+and grants the worker SELECT only on `processing_job_id` and `payload` there.
+It adds no table. Stop API and workers before applying it; accepted jobs are
+returned to unpublished state and must be consumed only by version 2 workers.
+See [ADR 0009](../adr/0009-restore-delivery-recovery.md) and the
+[offline delivery recovery guide](restore-delivery-recovery.md) for rollout,
+rollback, and schema-matched restore.

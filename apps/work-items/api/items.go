@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -92,7 +92,7 @@ func registerWorkItemHandlers(
 			return
 		}
 		if err != nil {
-			log.Printf("create work item failed: %v", err)
+			slog.ErrorContext(r.Context(), "create work item failed", "error", err)
 
 			writeJSON(w, http.StatusServiceUnavailable, errorResponse{
 				Error: "persistence_unavailable",
@@ -112,7 +112,7 @@ func registerWorkItemHandlers(
 
 		items, err := store.ListWorkItems(ctx)
 		if err != nil {
-			log.Printf("list work items failed: %v", err)
+			slog.ErrorContext(r.Context(), "list work items failed", "error", err)
 
 			writeJSON(w, http.StatusServiceUnavailable, errorResponse{
 				Error: "persistence_unavailable",

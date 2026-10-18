@@ -206,3 +206,17 @@ The asynchronous path is now evidence-backed at L4, so future work should not ad
 The highest-leverage gaps remain capabilities that are still shallow or uncovered, selected only when they support a coherent engineering problem.
 
 The v2 specification remains authoritative for future capability selection.
+
+## Proposed local production-engineering slices (2026-10-18)
+
+Draft PRs #139–#145 add application-hop TLS/admission/rotation, restore delivery
+identity/redrive, observability, capacity, local HA/PITR and immutable delivery
+with vulnerability gates. These capabilities are recorded by their experiments;
+they are not all merged into main or tested as one integrated deployment.
+
+The [local readiness review](../experiments/issue-126-readiness-review.md) maps
+implemented mechanisms, observed tests and unproven guarantees separately.
+Synthetic local traffic, even sustained with fault injection, does not establish
+independent-host resilience, a 28-day SLO, human on-call coverage or a general
+production-ready/L6 claim. Preserve historical learning levels until their
+criteria and the integrated system are reviewed.

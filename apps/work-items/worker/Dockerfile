@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS build
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 
 WORKDIR /src
 
@@ -9,10 +9,12 @@ RUN go mod download
 
 COPY . .
 
+ARG VERSION=dev
+
 RUN CGO_ENABLED=0 GOOS=linux \
     go build \
     -trimpath \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.version=${VERSION}" \
     -o /out/work-items-worker \
     ./worker
 
@@ -27,6 +29,7 @@ COPY --from=build --chown=app:app /out/work-items-worker /app/work-items-worker
 
 USER app
 
-# The worker exposes no HTTP endpoint; its health is observed through its
-# process state and logs.
+# The worker serves no application HTTP endpoint. Its health is observed
+# through process state, logs, and (when WORKER_METRICS_ADDRESS is set) a
+# private Prometheus listener.
 ENTRYPOINT ["/app/work-items-worker"]

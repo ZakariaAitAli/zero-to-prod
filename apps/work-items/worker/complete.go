@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/workitems"
@@ -50,15 +51,19 @@ func (store *workerStore) CompleteProcessingJob(ctx context.Context, jobID, work
 	if result.RowsAffected() != 1 {
 		return processingCompletion{}, errProcessingJobConflict
 	}
-	job, err = scanWorkerProcessingJob(tx.QueryRow(ctx, `UPDATE public.processing_jobs
- SET state='succeeded', attempt_count=attempt_count+1, last_error_code=NULL, finished_at=CURRENT_TIMESTAMP
+	// created_at is returned for the acceptance-to-completion latency SLI; both
+	// timestamps come from the database clock.
+	var acceptedAt time.Time
+	err = tx.QueryRow(ctx, `UPDATE public.processing_jobs
+ SET state='succeeded', attempt_count=attempt_count+1, last_error_code=NULL, finished_at=clock_timestamp()
  WHERE id=$1 AND work_item_id=$2 AND state='accepted'
- RETURNING id, work_item_id, state, attempt_count, last_error_code, finished_at`, jobID, workItemID))
+ RETURNING id, work_item_id, state, attempt_count, last_error_code, finished_at, created_at`, jobID, workItemID).Scan(
+		&job.ID, &job.WorkItemID, &job.State, &job.AttemptCount, &job.LastError, &job.FinishedAt, &acceptedAt)
 	if err != nil {
 		return processingCompletion{}, fmt.Errorf("guarded job completion: %w", err)
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return processingCompletion{}, fmt.Errorf("commit business completion (outcome may be uncertain): %w", err)
 	}
-	return processingCompletion{Disposition: completionApplied, Job: job}, nil
+	return processingCompletion{Disposition: completionApplied, Job: job, AcceptedAt: acceptedAt}, nil
 }

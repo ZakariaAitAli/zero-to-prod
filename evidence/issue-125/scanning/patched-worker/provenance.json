@@ -1,0 +1,6 @@
+{
+  "image_id": "sha256:78917d8f3b4ce72dca08f396e94f8f7f196f3d0ee41ab763d97a6fe8e19f4fdb",
+  "scanner": "aquasec/trivy@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222",
+  "sbom_exit": 0,
+  "gate_exit": 0
+}

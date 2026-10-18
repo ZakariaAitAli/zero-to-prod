@@ -1,0 +1,7 @@
+2026-10-18T19:10:57Z	INFO	"--format cyclonedx" disables security scanning. Specify "--scanners vuln" explicitly if you want to include vulnerabilities in the "cyclonedx" report.
+2026-10-18T19:10:58Z	INFO	Detected OS	family="ubuntu" version="24.04"
+2026-10-18T19:10:58Z	INFO	Number of language-specific files	num=0
+2026-10-18T19:10:59Z	INFO	[vuln] Vulnerability scanning is enabled
+2026-10-18T19:10:59Z	INFO	Detected OS	family="ubuntu" version="24.04"
+2026-10-18T19:10:59Z	INFO	[ubuntu] Detecting vulnerabilities...	os_version="24.04" pkg_num=97
+2026-10-18T19:10:59Z	INFO	Number of language-specific files	num=0

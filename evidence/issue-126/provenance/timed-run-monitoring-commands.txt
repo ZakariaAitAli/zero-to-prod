@@ -1,0 +1,3 @@
+/zero-to-prod-operations-lab-prometheus-1 ["--config.file=/etc/prometheus/prometheus.yml","--storage.tsdb.path=/prometheus","--storage.tsdb.retention.time=15d","--storage.tsdb.retention.size=2GB","--web.enable-lifecycle"]
+/zero-to-prod-operations-lab-alertmanager-1 ["--config.file=/etc/alertmanager/config.yml","--cluster.listen-address="]
+/zero-to-prod-operations-lab-receiver-1 ["python","-B","/app/receiver.py"]

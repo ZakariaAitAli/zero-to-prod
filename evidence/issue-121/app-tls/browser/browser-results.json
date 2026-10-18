@@ -1,0 +1,170 @@
+[
+ {
+  "vantage": "environment",
+  "check": "browser",
+  "expected": "observe",
+  "observed": "Chromium 131.0.6778.33 (headless, Playwright 1.49.1)",
+  "result": "info"
+ },
+ {
+  "vantage": "public TLS",
+  "check": "UI document status",
+  "expected": "200",
+  "observed": "200",
+  "result": "pass"
+ },
+ {
+  "vantage": "public TLS",
+  "check": "certificate issuer (verified by Chromium against the lab CA)",
+  "expected": "observe",
+  "observed": "Zero-to-Prod security lab CA (zero-to-prod-security-lab-apptls)",
+  "result": "info"
+ },
+ {
+  "vantage": "public TLS",
+  "check": "certificate subject",
+  "expected": "observe",
+  "observed": "work-items.localhost",
+  "result": "info"
+ },
+ {
+  "vantage": "public TLS",
+  "check": "protocol",
+  "expected": "observe",
+  "observed": "TLS 1.3",
+  "result": "info"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "before sign-in: UI shows \"Sign in required\"",
+  "expected": "yes",
+  "observed": "yes",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "login form served from",
+  "expected": "auth.work-items.localhost:9443",
+  "observed": "auth.work-items.localhost:9443",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "after sign-in: back on the UI with a session (Sign out shown)",
+  "expected": "yes",
+  "observed": "yes",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "signed-in identity shown",
+  "expected": "observe",
+  "observed": "lab-user@work-items.localhost",
+  "result": "info"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "session cookie attributes (no value recorded)",
+  "expected": "secure=true httpOnly=true sameSite=Lax path=/",
+  "observed": "secure=true httpOnly=true sameSite=Lax path=/",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "session cookie host-only for work-items.localhost",
+  "expected": "work-items.localhost",
+  "observed": "work-items.localhost",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "create through the UI: POST /api/items",
+  "expected": "201",
+  "observed": "201",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "new Work Item listed",
+  "expected": "yes",
+  "observed": "yes",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "process through the UI: POST /api/items/{id}/process",
+  "expected": "202",
+  "observed": "202",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "Work Item status after processing",
+  "expected": "done",
+  "observed": "done",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "sign-out through the UI: POST /oauth2/sign_out",
+  "expected": "observe",
+  "observed": "302",
+  "result": "info"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "after sign-out: UI shows \"Sign in required\"",
+  "expected": "yes",
+  "observed": "yes",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "after sign-out: session cookie removed",
+  "expected": "yes",
+  "observed": "yes",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-user",
+  "check": "after sign-out: Keycloak asks for the password again",
+  "expected": "yes",
+  "observed": "yes",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-viewer",
+  "check": "signed in; Work Items listed (GET /api/items)",
+  "expected": "yes",
+  "observed": "yes",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-viewer",
+  "check": "create through the UI: POST /api/items",
+  "expected": "403",
+  "observed": "403",
+  "result": "pass"
+ },
+ {
+  "vantage": "lab-viewer",
+  "check": "UI explains the refusal (\"Not allowed\")",
+  "expected": "yes",
+  "observed": "yes",
+  "result": "pass"
+ },
+ {
+  "vantage": "negative control",
+  "check": "same Chromium without the lab CA: navigation",
+  "expected": "net::ERR_CERT_AUTHORITY_INVALID",
+  "observed": "net::ERR_CERT_AUTHORITY_INVALID",
+  "result": "pass"
+ },
+ {
+  "vantage": "browser",
+  "check": "console errors on the work-items pages",
+  "expected": "observe",
+  "observed": "lab-user: Failed to load resource: the server responded with a status of 401 () | lab-user: Failed to load resource: the server responded with a status of 401 () | lab-user: Failed to load resource: the server responded with a status of 401 () | lab-user: Failed to load resource: the server responded with a status of 401 () | lab-user: Failed to load resource: the server responded with a status of 401 () | lab-user: Failed to load resource: the server responded with a status of 401 () | lab-viewer: Failed to load resource: the server responded with a status of 401 () | lab-viewer: Failed to load resource: the server responded with a status of 401 () | lab-viewer: Failed to load resource: the server responded with a status of 403 ()",
+  "result": "info"
+ }
+]

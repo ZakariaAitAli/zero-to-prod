@@ -1,0 +1,11 @@
+{
+  "test": "TestCompletionTimestampIncludesTransactionLockWaitPostgresIntegration",
+  "environment": "isolated capacity PostgreSQL only, after all run2 load stopped; API and workers stopped",
+  "old_sql": "finished_at=CURRENT_TIMESTAMP",
+  "negative_control": "FAIL: finished_at predates the completion transaction lock wait (0.11s)",
+  "new_sql": "finished_at=clock_timestamp()",
+  "corrected_result": "PASS (0.08s)",
+  "method": "hold item advisory lock; wait until pg_locks reports blocked worker; record PostgreSQL clock_timestamp marker; release blocker; compare returned finished_at",
+  "credential_handling": "URLs loaded from readonly runtime secret files inside disposable test container; never argv/output",
+  "cleanup": "fixture rows and temporary compiled test binary removed; retained application data unchanged"
+}

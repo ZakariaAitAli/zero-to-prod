@@ -1,0 +1,132 @@
+INFO network inventory      postgres                                         expected=observe observed=networks=data pid1_uid=70 net_raw_effective=0 net_raw_bounding=1 no_new_privileges=no
+INFO network inventory      rabbitmq                                         expected=observe observed=networks=data pid1_uid=999 net_raw_effective=0 net_raw_bounding=1 no_new_privileges=no
+INFO network inventory      api                                              expected=observe observed=networks=app,data pid1_uid=100 net_raw_effective=0 net_raw_bounding=0 no_new_privileges=yes
+INFO network inventory      worker                                           expected=observe observed=networks=data pid1_uid=100 net_raw_effective=0 net_raw_bounding=0 no_new_privileges=yes
+INFO network inventory      ingress                                          expected=observe observed=networks=app,edge,idp pid1_uid=101 net_raw_effective=0 net_raw_bounding=0 no_new_privileges=yes
+INFO network inventory      keycloak-postgres                                expected=observe observed=networks=idp-data pid1_uid=70 net_raw_effective=0 net_raw_bounding=1 no_new_privileges=no
+INFO network inventory      keycloak                                         expected=observe observed=networks=idp,idp-data pid1_uid=1000 net_raw_effective=0 net_raw_bounding=1 no_new_privileges=no
+INFO network inventory      valkey                                           expected=observe observed=networks=session pid1_uid=0 net_raw_effective=1 net_raw_bounding=1 no_new_privileges=no
+INFO network inventory      oauth2-proxy                                     expected=observe observed=networks=app,session user=65532 cap_drop=ALL no_new_privileges=yes (no /proc reader in the image)
+INFO network inventory      migrate (on demand)                              expected=observe observed=networks=data user=image-default cap_drop=none no_new_privileges=no
+PASS baseline               postgres: openssl verify code, served serial     expected=0 1B84681E711821FF76B96BF945A91ED9 observed=0 1B84681E711821FF76B96BF945A91ED9
+PASS baseline               rabbitmq: openssl verify code, served serial     expected=0 1D25458DCF4A75CB1096BC9374252D40 observed=0 1D25458DCF4A75CB1096BC9374252D40
+PASS baseline               postgres: libpq verify-full, internal CA (TLS accepted; authentication begins) expected=fe_sendauth: no password supplied observed=fe_sendauth: no password supplied
+PASS baseline               postgres: libpq verify-full, lab CA instead of internal CA expected=SSL error: certificate verify failed observed=SSL error: certificate verify failed
+PASS baseline               postgres: libpq sslmode=disable (plaintext)      expected=FATAL: pg_hba.conf rejects connection for host "<address>", user "tls_probe", database "zero_to_prod", no encryption observed=FATAL: pg_hba.conf rejects connection for host "<address>", user "tls_probe", database "zero_to_prod", no encryption
+PASS baseline               rabbitmq: plaintext AMQP port 5672               expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS baseline               create and process                               expected=succeeded observed=succeeded
+INFO baseline               postgres: client connections                     expected=observe observed=1 zero_to_prod_app:true:TLSv1.3;1 zero_to_prod_worker:true:TLSv1.3
+INFO baseline               rabbitmq: client connections                     expected=observe observed=1 42276:true:tlsv1.3;1 49596:true:tlsv1.3
+PASS baseline               postgres: network client backends without TLS    expected=0 observed=0
+PASS baseline               rabbitmq: connections without TLS                expected=0 observed=0
+PASS postgres: untrusted    new connection: openssl verify code, served serial expected=21 6B7EF01058EC1AF65F3FCA84668924B1 observed=21 6B7EF01058EC1AF65F3FCA84668924B1
+PASS postgres: untrusted    new connection: libpq sslmode=verify-full        expected=SSL error: certificate verify failed observed=SSL error: certificate verify failed
+INFO postgres: untrusted    server log: libpq handshake                      expected=observe observed=could not accept SSL connection: tlsv1 alert unknown ca
+PASS postgres: untrusted    established connections after the change         expected=kept observed=kept
+PASS postgres: untrusted    established: create and process                  expected=succeeded observed=succeeded
+INFO postgres: untrusted    established: new postgres connections during the flow expected=observe observed=0
+PASS postgres: untrusted    restarted API: GET /api/items                    expected=503 observed=503
+PASS postgres: untrusted    restarted API: Go TLS error                      expected=x509: certificate signed by unknown authority observed=x509: certificate signed by unknown authority
+INFO postgres: untrusted    server log: workload handshakes                  expected=observe observed=could not accept SSL connection: ssl/tls alert bad certificate
+PASS postgres: untrusted    renewed: openssl verify code, served serial      expected=0 3C5C0095FB561289F697F62B2B34F9AF observed=0 3C5C0095FB561289F697F62B2B34F9AF
+PASS postgres: untrusted    renewed: same API process, GET /api/items        expected=200 observed=200
+PASS postgres: untrusted    renewed: create and process                      expected=succeeded observed=succeeded
+PASS postgres: mismatch     new connection: openssl verify code, served serial expected=62 B1F2E1259AE39D7CAAE854C3C2656488 observed=62 B1F2E1259AE39D7CAAE854C3C2656488
+PASS postgres: mismatch     new connection: libpq sslmode=verify-full        expected=server certificate for "rabbitmq" does not match host name "postgres" observed=server certificate for "rabbitmq" does not match host name "postgres"
+INFO postgres: mismatch     server log: libpq handshake                      expected=observe observed=none
+PASS postgres: mismatch     established connections after the change         expected=kept observed=kept
+PASS postgres: mismatch     established: create and process                  expected=succeeded observed=succeeded
+INFO postgres: mismatch     established: new postgres connections during the flow expected=observe observed=0
+PASS postgres: mismatch     restarted API: GET /api/items                    expected=503 observed=503
+PASS postgres: mismatch     restarted API: Go TLS error                      expected=x509: certificate is valid for rabbitmq, not postgres observed=x509: certificate is valid for rabbitmq, not postgres
+INFO postgres: mismatch     server log: workload handshakes                  expected=observe observed=could not accept SSL connection: ssl/tls alert bad certificate
+PASS postgres: mismatch     renewed: openssl verify code, served serial      expected=0 6F5543499FE12D484B3B0917C7264686 observed=0 6F5543499FE12D484B3B0917C7264686
+PASS postgres: mismatch     renewed: same API process, GET /api/items        expected=200 observed=200
+PASS postgres: mismatch     renewed: create and process                      expected=succeeded observed=succeeded
+PASS postgres: expired      new connection: openssl verify code, served serial expected=10 33C3BC2F572832735C9CC222E827721A observed=10 33C3BC2F572832735C9CC222E827721A
+PASS postgres: expired      new connection: libpq sslmode=verify-full        expected=SSL error: certificate verify failed observed=SSL error: certificate verify failed
+INFO postgres: expired      server log: libpq handshake                      expected=observe observed=could not accept SSL connection: ssl/tls alert certificate expired
+PASS postgres: expired      established connections after the change         expected=kept observed=kept
+PASS postgres: expired      established: create and process                  expected=succeeded observed=succeeded
+INFO postgres: expired      established: new postgres connections during the flow expected=observe observed=0
+PASS postgres: expired      restarted API: GET /api/items                    expected=503 observed=503
+PASS postgres: expired      restarted API: Go TLS error                      expected=x509: certificate has expired or is not yet valid observed=x509: certificate has expired or is not yet valid
+INFO postgres: expired      server log: workload handshakes                  expected=observe observed=could not accept SSL connection: ssl/tls alert bad certificate
+PASS postgres: expired      renewed: openssl verify code, served serial      expected=0 851622F9E820CBB31910C367541B97D6 observed=0 851622F9E820CBB31910C367541B97D6
+PASS postgres: expired      renewed: same API process, GET /api/items        expected=200 observed=200
+PASS postgres: expired      renewed: create and process                      expected=succeeded observed=succeeded
+PASS postgres: subdomain    new connection: openssl verify code, served serial expected=48 E0A5CBEE170293EFCAFFF25156FCC3EC observed=48 E0A5CBEE170293EFCAFFF25156FCC3EC
+PASS postgres: subdomain    new connection: libpq sslmode=verify-full        expected=SSL error: certificate verify failed observed=SSL error: certificate verify failed
+INFO postgres: subdomain    server log: libpq handshake                      expected=observe observed=could not accept SSL connection: ssl/tls alert certificate unknown
+PASS postgres: subdomain    established connections after the change         expected=kept observed=kept
+PASS postgres: subdomain    established: create and process                  expected=succeeded observed=succeeded
+INFO postgres: subdomain    established: new postgres connections during the flow expected=observe observed=0
+PASS postgres: subdomain    restarted API: GET /api/items                    expected=503 observed=503
+FAIL postgres: subdomain    restarted API: Go TLS error                      expected=x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "extra.postgres" is excluded by constraint ".postgres" observed=
+INFO postgres: subdomain    server log: workload handshakes                  expected=observe observed=could not accept SSL connection: ssl/tls alert bad certificate
+PASS postgres: subdomain    renewed: openssl verify code, served serial      expected=0 730D20542D464C7CE327525924A3EE63 observed=0 730D20542D464C7CE327525924A3EE63
+PASS postgres: subdomain    renewed: same API process, GET /api/items        expected=200 observed=200
+PASS postgres: subdomain    renewed: create and process                      expected=succeeded observed=succeeded
+PASS rabbitmq: untrusted    new connection: openssl verify code, served serial expected=21 EC8B128607F369F830972AE82862B70C observed=21 EC8B128607F369F830972AE82862B70C
+PASS rabbitmq: untrusted    established connections after the change         expected=kept observed=kept
+PASS rabbitmq: untrusted    established: create and process                  expected=succeeded observed=succeeded
+INFO rabbitmq: untrusted    established: new rabbitmq connections during the flow expected=observe observed=0
+PASS rabbitmq: untrusted    restarted worker: Go TLS error                   expected=x509: certificate signed by unknown authority observed=x509: certificate signed by unknown authority
+PASS rabbitmq: untrusted    restarted worker: broker connection              expected=absent observed=absent
+PASS rabbitmq: untrusted    job while no worker can connect                  expected=accepted observed=accepted
+INFO rabbitmq: untrusted    server log: workload handshakes                  expected=observe observed=received CLIENT ALERT: Fatal - Bad Certificate
+PASS rabbitmq: untrusted    renewed: openssl verify code, served serial      expected=0 A9571320377F45F32797A1DCA88B0306 observed=0 A9571320377F45F32797A1DCA88B0306
+PASS rabbitmq: untrusted    renewed: worker reconnects by itself             expected=present observed=present
+PASS rabbitmq: untrusted    renewed: pending job completes                   expected=succeeded observed=succeeded
+PASS rabbitmq: untrusted    renewed: create and process                      expected=succeeded observed=succeeded
+PASS rabbitmq: mismatch     new connection: openssl verify code, served serial expected=62 246AA1CA9ECD5F56D5268B94673E9D37 observed=62 246AA1CA9ECD5F56D5268B94673E9D37
+PASS rabbitmq: mismatch     established connections after the change         expected=kept observed=kept
+PASS rabbitmq: mismatch     established: create and process                  expected=succeeded observed=succeeded
+INFO rabbitmq: mismatch     established: new rabbitmq connections during the flow expected=observe observed=0
+PASS rabbitmq: mismatch     restarted worker: Go TLS error                   expected=x509: certificate is valid for postgres, not rabbitmq observed=x509: certificate is valid for postgres, not rabbitmq
+PASS rabbitmq: mismatch     restarted worker: broker connection              expected=absent observed=absent
+PASS rabbitmq: mismatch     job while no worker can connect                  expected=accepted observed=accepted
+INFO rabbitmq: mismatch     server log: workload handshakes                  expected=observe observed=received CLIENT ALERT: Fatal - Bad Certificate
+PASS rabbitmq: mismatch     renewed: openssl verify code, served serial      expected=0 2079B3F16DAA2F3C305C136CF4B83E5D observed=0 2079B3F16DAA2F3C305C136CF4B83E5D
+PASS rabbitmq: mismatch     renewed: worker reconnects by itself             expected=present observed=present
+PASS rabbitmq: mismatch     renewed: pending job completes                   expected=succeeded observed=succeeded
+PASS rabbitmq: mismatch     renewed: create and process                      expected=succeeded observed=succeeded
+PASS rabbitmq: expired      new connection: openssl verify code, served serial expected=10 663C6D80D8D66DFCAFB6160BBACEE137 observed=10 663C6D80D8D66DFCAFB6160BBACEE137
+PASS rabbitmq: expired      established connections after the change         expected=kept observed=kept
+PASS rabbitmq: expired      established: create and process                  expected=succeeded observed=succeeded
+INFO rabbitmq: expired      established: new rabbitmq connections during the flow expected=observe observed=0
+PASS rabbitmq: expired      restarted worker: Go TLS error                   expected=x509: certificate has expired or is not yet valid observed=x509: certificate has expired or is not yet valid
+PASS rabbitmq: expired      restarted worker: broker connection              expected=absent observed=absent
+PASS rabbitmq: expired      job while no worker can connect                  expected=accepted observed=accepted
+INFO rabbitmq: expired      server log: workload handshakes                  expected=observe observed=received CLIENT ALERT: Fatal - Bad Certificate
+PASS rabbitmq: expired      renewed: openssl verify code, served serial      expected=0 8B84F9D94EF30E6A8FB0F4EDF163B441 observed=0 8B84F9D94EF30E6A8FB0F4EDF163B441
+PASS rabbitmq: expired      renewed: worker reconnects by itself             expected=present observed=present
+PASS rabbitmq: expired      renewed: pending job completes                   expected=succeeded observed=succeeded
+PASS rabbitmq: expired      renewed: create and process                      expected=succeeded observed=succeeded
+PASS rabbitmq: subdomain    new connection: openssl verify code, served serial expected=48 A0D8DFECC359FE228D9FDEE367F5B3D3 observed=48 A0D8DFECC359FE228D9FDEE367F5B3D3
+PASS rabbitmq: subdomain    established connections after the change         expected=kept observed=kept
+PASS rabbitmq: subdomain    established: create and process                  expected=succeeded observed=succeeded
+INFO rabbitmq: subdomain    established: new rabbitmq connections during the flow expected=observe observed=0
+FAIL rabbitmq: subdomain    restarted worker: Go TLS error                   expected=x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "extra.rabbitmq" is excluded by constraint ".rabbitmq" observed=
+PASS rabbitmq: subdomain    restarted worker: broker connection              expected=absent observed=absent
+PASS rabbitmq: subdomain    job while no worker can connect                  expected=accepted observed=accepted
+INFO rabbitmq: subdomain    server log: workload handshakes                  expected=observe observed=received CLIENT ALERT: Fatal - Bad Certificate
+PASS rabbitmq: subdomain    renewed: openssl verify code, served serial      expected=0 2E3D436B7B2FFB667CB24E802CE0D135 observed=0 2E3D436B7B2FFB667CB24E802CE0D135
+PASS rabbitmq: subdomain    renewed: worker reconnects by itself             expected=present observed=present
+PASS rabbitmq: subdomain    renewed: pending job completes                   expected=succeeded observed=succeeded
+PASS rabbitmq: subdomain    renewed: create and process                      expected=succeeded observed=succeeded
+INFO postgres: renewal      before: openssl verify code, served serial       expected=observe observed=0 730D20542D464C7CE327525924A3EE63
+PASS postgres: renewal      after: openssl verify code, served serial        expected=0 38AA923C810461C046BC3E6FE29B2499 observed=0 38AA923C810461C046BC3E6FE29B2499
+PASS postgres: renewal      served serial changed                            expected=changed observed=changed
+PASS postgres: renewal      established connections after renewal            expected=kept observed=kept
+PASS postgres: renewal      create and process                               expected=succeeded observed=succeeded
+INFO rabbitmq: renewal      before: openssl verify code, served serial       expected=observe observed=0 2E3D436B7B2FFB667CB24E802CE0D135
+PASS rabbitmq: renewal      after: openssl verify code, served serial        expected=0 6B59B7C8AB3F335FD104E4F11FD6321D observed=0 6B59B7C8AB3F335FD104E4F11FD6321D
+PASS rabbitmq: renewal      served serial changed                            expected=changed observed=changed
+PASS rabbitmq: renewal      established connections after renewal            expected=kept observed=kept
+PASS rabbitmq: renewal      create and process                               expected=succeeded observed=succeeded
+PASS final state            check-secrets                                    expected=pass observed=pass
+INFO final state            secret values in recorded results                expected=observe observed=none (15 secrets searched)
+Evidence written: evidence/integration-121-126/run1/verify-internal-tls.json
+
+Internal TLS verification failed: 2 check(s).

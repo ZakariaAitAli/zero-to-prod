@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "tools/delivery-image-gate", line 5, in <module>
+    image=sys.argv[1]; output=Path(sys.argv[2]).resolve();output.mkdir(parents=True,exist_ok=False)
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/pathlib/__init__.py", line 939, in resolve
+    return self.with_segments(os.path.realpath(self, strict=strict))
+                              ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen posixpath>", line 426, in realpath
+FileNotFoundError: [Errno 2] No such file or directory

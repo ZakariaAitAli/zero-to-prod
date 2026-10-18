@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Combined check for the integration of #121 (security lab) and #122
+# (telemetry): with OIDC authentication, the TLS ingress, TLS to the API and
+# verified TLS to PostgreSQL and RabbitMQ all on, does the API still count
+# and log requests by route, persist and propagate trace context through the
+# outbox and RabbitMQ to the worker, and keep tokens and secrets out of the
+# new logs and metrics?
+#
+# Usage: ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab-<name> \
+#          tools/integration-security-telemetry-check <evidence.json>
+#
+# Requires a running security lab started with tools/security-lab-local.
+# Recreates only that project's api and worker containers with the metrics
+# override, and recreates them without it at the end.
+set -euo pipefail
+
+: "${ZTP_SECURITY_LAB_PROJECT:?select the security lab project explicitly}"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+OUT="${1:?evidence file}"
+PROJECT="$ZTP_SECURITY_LAB_PROJECT"
+STATE="$("$ROOT/tools/security-lab-local" state-dir)"
+CA="${STATE}/pki/ca.crt"
+BASE="https://work-items.localhost:9443"
+TOKEN_URL="https://auth.work-items.localhost:9443/realms/work-items/protocol/openid-connect/token"
+RESOLVE=(--resolve work-items.localhost:9443:127.0.0.1 --resolve auth.work-items.localhost:9443:127.0.0.1)
+WORK="$(mktemp -d)"
+umask 077
+
+compose() {
+  ZTP_SECURITY_LAB_SECRETS_DIR="${STATE}/secrets" \
+    ZTP_SECURITY_LAB_INGRESS_TLS_DIR="${STATE}/ingress-tls" \
+    ZTP_SECURITY_LAB_CA_FILE="${STATE}/pki/ca.crt" \
+    ZTP_SECURITY_LAB_INTERNAL_CA_FILE="${STATE}/pki/internal-ca.crt" \
+    ZTP_SECURITY_LAB_INTERNAL_TLS_DIR="${STATE}/internal-tls" \
+    ZTP_SECURITY_LAB_IDP_CA_FILE="${STATE}/pki/idp-ca.crt" \
+    ZTP_SECURITY_LAB_IDP_TLS_DIR="${STATE}/idp-tls" \
+    ZTP_SECURITY_LAB_APP_CA_FILE="${STATE}/pki/app-ca.crt" \
+    ZTP_SECURITY_LAB_APP_TLS_DIR="${STATE}/app-tls" \
+    docker compose --project-name "$PROJECT" -f "$ROOT/infra/security-lab/compose.yaml" "$@"
+}
+
+restore() {
+  local status=$?
+  # Always return the services to the lab's own configuration.
+  compose up -d --no-deps --no-build --wait api worker >/dev/null 2>&1 \
+    || echo "error: could not restore api/worker to the lab configuration" >&2
+  rm -rf -- "$WORK"
+  exit "$status"
+}
+trap restore EXIT
+
+started="$(date -u +%FT%TZ)"
+compose -f "$ROOT/infra/integration/security-telemetry.override.yaml" up -d --no-deps --no-build --wait api worker >/dev/null
+
+# The client secret goes to curl on standard input, never in arguments.
+printf 'user = "work-items-automation:%s"\n' "$(tr -d '\r\n' < "${STATE}/secrets/automation-client-secret")" \
+  | curl -sS --cacert "$CA" "${RESOLVE[@]}" -K - -d grant_type=client_credentials "$TOKEN_URL" > "$WORK/token.json"
+token="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["access_token"])' "$WORK/token.json")"
+
+api() { # method path [body]; prints "status body"
+  local method="$1" path="$2" body="${3:-}"
+  local args=(-sS --cacert "$CA" "${RESOLVE[@]}" -o "$WORK/body" -w '%{http_code}' -X "$method")
+  [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' -d "$body")
+  if [[ "${AUTH:-yes}" == yes ]]; then
+    printf 'header = "Authorization: Bearer %s"\n' "$token" | curl "${args[@]}" -K - "${BASE}/api${path}"
+  else
+    curl "${args[@]}" "${BASE}/api${path}"
+  fi
+  printf ' %s\n' "$(cat "$WORK/body")"
+}
+
+# The machine client holds items.read and items.process, not items.create:
+# its create attempt is the authorization-denial case (403 at the API; an
+# anonymous request is refused by the ingress before reaching the API). The
+# item to process is therefore seeded by the database administrator.
+unauth="$(AUTH=no api GET /items)"
+create="$(api POST /items '{"title":"integration telemetry check"}')"
+item_id="$(docker exec "${PROJECT}-postgres-1" psql -U zero_to_prod_admin -d zero_to_prod -Atc \
+  "INSERT INTO public.work_items (title) VALUES ('integration telemetry check') RETURNING id" | head -n 1)"
+process="$(api POST "/items/${item_id}/process")"
+job_id="$(sed -n 's/^202 {"id":\([0-9]*\).*/\1/p' <<< "$process")"
+sleep 4
+job="$(api GET "/processing-jobs/${job_id}")"
+sleep 2
+
+trace_context="$(docker exec "${PROJECT}-postgres-1" psql -U zero_to_prod_admin -d zero_to_prod -Atc \
+  "SELECT COALESCE(trace_context,'') FROM public.outbox_messages WHERE processing_job_id=${job_id:-0}")"
+trace_id="$(cut -d- -f2 <<< "$trace_context")"
+
+docker exec "${PROJECT}-api-1" wget -qO- http://127.0.0.1:9464/metrics > "$WORK/api.metrics"
+docker exec "${PROJECT}-worker-1" wget -qO- http://127.0.0.1:9465/metrics > "$WORK/worker.metrics" 2>/dev/null \
+  || echo "worker image has no wget" > "$WORK/worker.metrics"
+docker logs --since "$started" "${PROJECT}-api-1" > "$WORK/api.log" 2>&1
+docker logs --since "$started" "${PROJECT}-worker-1" > "$WORK/worker.log" 2>&1
+
+# Secrets and token material that must not appear in the new outputs.
+set +e
+python3 - "$WORK" "$STATE" "$token" "$OUT" "$started" "$unauth" "$create" "$process" "$job" "$trace_context" "$trace_id" "$PROJECT" <<'PY'
+import base64, json, pathlib, re, sys
+work, state, token, out, started, unauth, create, process, job, trace_context, trace_id, project = sys.argv[1:]
+work, state = pathlib.Path(work), pathlib.Path(state)
+api_log = (work / "api.log").read_text()
+worker_log = (work / "worker.log").read_text()
+metrics = (work / "api.metrics").read_text()
+worker_metrics = (work / "worker.metrics").read_text()
+outputs = {"api.log": api_log, "worker.log": worker_log, "api.metrics": metrics, "worker.metrics": worker_metrics}
+
+needles = {"access token": token, "token signature": token.rsplit(".", 1)[-1]}
+for path in sorted((state / "secrets").iterdir()):
+    if path.is_file() and (path.name.endswith("-password") or path.name.endswith("-secret")):
+        value = path.read_text().strip()
+        if len(value) >= 12:
+            needles[path.name] = value
+            needles[path.name + " (base64)"] = base64.b64encode(value.encode()).decode()
+leaks = sorted(f"{name} in {where}" for name, value in needles.items() for where, text in outputs.items() if value in text)
+bearer = sorted(where for where, text in outputs.items() if re.search(r"(?i)bearer\s+[A-Za-z0-9._-]{20,}", text))
+
+def records(text):
+    found = []
+    for line in text.splitlines():
+        try:
+            found.append(json.loads(line))
+        except ValueError:
+            pass
+    return found
+api_records, worker_records = records(api_log), records(worker_log)
+accepted = [r for r in api_records if r.get("msg") == "processing accepted"]
+settled = [r for r in worker_records if r.get("msg") == "delivery settled"]
+requests = [r for r in api_records if r.get("msg") == "http request"]
+
+def counter(route, code):
+    m = re.search(r'work_items_http_requests_total\{code="%s",method="[A-Z]+",route="%s"\} (\S+)' % (code, re.escape(route)), metrics)
+    return float(m.group(1)) if m else 0.0
+
+record = {
+    "check": "integration-security-telemetry", "project": project, "started": started,
+    "responses": {"unauthenticated_list": unauth.split(" ", 1)[0], "create": create.split(" ", 1)[0],
+                  "process": process.split(" ", 1)[0], "job": job[:120]},
+    "trace_context_stored": trace_context,
+    "api_accepted_trace_ids": [r.get("trace_id") for r in accepted],
+    "worker_settled": [{k: r.get(k) for k in ("trace_id", "job_id", "settlement")} for r in settled],
+    "request_log_routes": sorted({(r.get("route"), r.get("status")) for r in requests}, key=str),
+    "metrics": {"403 /items": counter("/items", "403"),
+                "202 /items/{id}/process": counter("/items/{id}/process", "202"),
+                "200 /processing-jobs/{id}": counter("/processing-jobs/{id}", "200")},
+    "secret_values_checked": len(needles), "leaks": leaks, "bearer_patterns": bearer,
+}
+checks = {
+    "unauthenticated_rejected": unauth.startswith("401 "),
+    "missing_permission_rejected": create.startswith("403 "),
+    "authenticated_flow_succeeded": process.startswith("202 ") and '"state":"succeeded"' in job,
+    "trace_context_persisted": bool(re.fullmatch(r"00-[0-9a-f]{32}-[0-9a-f]{16}-01", trace_context)),
+    "api_log_carries_stored_trace": trace_id in record["api_accepted_trace_ids"],
+    "worker_continues_trace_over_amqps": any(s.get("trace_id") == trace_id and s.get("settlement") == "ack" for s in record["worker_settled"]),
+    "authorization_denial_counted_by_route": record["metrics"]["403 /items"] >= 1,
+    "business_requests_counted": record["metrics"]["202 /items/{id}/process"] >= 1 and record["metrics"]["200 /processing-jobs/{id}"] >= 1,
+    "no_secret_or_token_in_logs_or_metrics": not leaks and not bearer,
+}
+record["checks"] = checks
+record["passed"] = all(checks.values())
+pathlib.Path(out).write_text(json.dumps(record, indent=2) + "\n")
+print(json.dumps(checks, indent=1))
+sys.exit(0 if record["passed"] else 1)
+PY
+exit $?

@@ -1,0 +1,13 @@
+# Compose override for the security lab: turns on the #122 metrics listeners
+# in the API and worker, bound to each container's loopback so no new network
+# hop (and no new plaintext hop) is added. Used only by
+# tools/integration-security-telemetry-check.
+services:
+  api:
+    environment:
+      METRICS_ADDRESS: 127.0.0.1:9464
+      LOG_LEVEL: info
+  worker:
+    environment:
+      WORKER_METRICS_ADDRESS: 127.0.0.1:9465
+      LOG_LEVEL: info

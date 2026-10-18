@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/observability"
 	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/runtimeconfig"
 )
 
@@ -36,6 +39,8 @@ const (
 	outboxPublisherIdlePollDelay   = 500 * time.Millisecond
 	outboxPublisherStoreRetryDelay = 1 * time.Second
 	defaultWorkItemProcessingQueue = "work_item_processing"
+	apiServiceName                 = "work-items-api"
+	telemetryFlushTimeout          = 5 * time.Second
 )
 
 type statusResponse struct {
@@ -59,6 +64,16 @@ func (state *readinessState) isReady() bool {
 }
 
 func main() {
+	flushTelemetry, err := observability.Setup(context.Background(), apiServiceName, version, os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
+		defer cancel()
+		_ = flushTelemetry(ctx)
+	}()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -79,6 +94,13 @@ func main() {
 		rabbitMQQueue = defaultWorkItemProcessingQueue
 	}
 
+	// Read before connecting to anything, so a missing or invalid key and
+	// certificate stops the process at once instead of after the database.
+	tlsConfig, err := tlsConfigFromEnvironment(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	authenticate, err := authenticationFromEnvironment(context.Background())
 	if err != nil {
 		log.Fatal(err)
@@ -94,8 +116,9 @@ func main() {
 	readiness := &readinessState{}
 	server := newHTTPServer(
 		address,
-		newApplicationHandler(version, readiness, store, authenticate),
+		instrumentHTTP(newApplicationHandler(version, readiness, store, authenticate)),
 	)
+	server.TLSConfig = tlsConfig
 
 	shutdownContext, stop := signal.NotifyContext(
 		context.Background(),
@@ -104,7 +127,23 @@ func main() {
 	)
 	defer stop()
 
-	log.Printf("work-items-api version=%s listening on %s", version, address)
+	// METRICS_ADDRESS (for example 0.0.0.0:9464) enables the private
+	// Prometheus listener; it is off when unset.
+	if metricsAddress := os.Getenv("METRICS_ADDRESS"); metricsAddress != "" {
+		registry := observability.NewRegistry(apiServiceName, version)
+		registerAPIMetrics(registry, store)
+		registry.MustRegister(observability.NewPoolCollector(store.pool))
+
+		if err := observability.StartMetricsServer(shutdownContext, metricsAddress, registry); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	scheme := "HTTP"
+	if tlsConfig != nil {
+		scheme = "HTTPS"
+	}
+	slog.Info("work-items-api listening", "address", address, "scheme", scheme)
 
 	publisherFactory := func() (
 		closeableBrokerMessagePublisher,
@@ -165,6 +204,11 @@ func runHTTPServer(
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
 		return fmt.Errorf("listen HTTP: %w", err)
+	}
+	// With a TLS configuration the listener accepts only TLS; there is no
+	// plaintext listener.
+	if server.TLSConfig != nil {
+		listener = tls.NewListener(listener, server.TLSConfig)
 	}
 	defer listener.Close()
 

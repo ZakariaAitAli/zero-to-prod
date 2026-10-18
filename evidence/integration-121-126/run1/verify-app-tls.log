@@ -1,0 +1,261 @@
+PASS baseline               api: openssl verify code, served serial (application CA) expected=0 6596CB4923583DA252218B7E93ABB05F observed=0 6596CB4923583DA252218B7E93ABB05F
+PASS baseline               api: verify code with the lab CA instead         expected=21 observed=21
+PASS baseline               api: verify code with the internal CA instead    expected=21 observed=21
+PASS baseline               api: verify code with the idp CA instead         expected=21 observed=21
+PASS baseline               api:8080 (former plaintext port) from the app network expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+INFO baseline               api: plaintext HTTP request to the TLS port (response body) expected=observe observed=Client sent an HTTP request to an HTTPS server.
+PASS baseline               api: plaintext HTTP request to the TLS port is refused expected=yes observed=yes
+INFO baseline               api: listening sockets (Docker DNS excluded)     expected=observe observed=:::8443
+PASS baseline               api: only the TLS port listens                   expected=yes observed=yes
+PASS baseline               api: diagnostic route through the ingress        expected=200 observed=200
+PASS baseline               api: control nginx, production directives        expected=200 observed=200
+PASS baseline               oauth2-proxy: openssl verify code, served serial (application CA) expected=0 B99055EF419CADFD5ACF079EA6F1EDD5 observed=0 B99055EF419CADFD5ACF079EA6F1EDD5
+PASS baseline               oauth2-proxy: verify code with the lab CA instead expected=21 observed=21
+PASS baseline               oauth2-proxy: verify code with the internal CA instead expected=21 observed=21
+PASS baseline               oauth2-proxy: verify code with the idp CA instead expected=21 observed=21
+PASS baseline               oauth2-proxy:4180 (former plaintext port) from the app network expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+INFO baseline               oauth2-proxy: plaintext HTTP request to the TLS port (response body) expected=observe observed=Client sent an HTTP request to an HTTPS server.
+PASS baseline               oauth2-proxy: plaintext HTTP request to the TLS port is refused expected=yes observed=yes
+INFO baseline               oauth2-proxy: listening sockets (Docker DNS excluded) expected=observe observed=:::4443
+PASS baseline               oauth2-proxy: only the TLS port listens          expected=yes observed=yes
+PASS baseline               oauth2-proxy: diagnostic route through the ingress expected=200 observed=200
+PASS baseline               oauth2-proxy: control nginx, production directives expected=200 observed=200
+PASS baseline               unauthenticated GET /api/items                   expected=401 unauthenticated observed=401 unauthenticated
+PASS baseline               gateway redirects to the public authorization endpoint expected=yes observed=yes
+PASS baseline               callback (oauth2-proxy redeems the code)         expected=302 observed=302
+PASS baseline               session: GET /api/items                          expected=200 observed=200
+PASS baseline               session access token (read over verified TLS from oauth2-proxy): issuer expected=iss=https://auth.work-items.localhost:9443/realms/work-items observed=iss=https://auth.work-items.localhost:9443/realms/work-items
+PASS baseline               session: create and process (editor)             expected=succeeded observed=succeeded
+PASS baseline               session: POST /api/items without the UI header (CSRF) expected=403 csrf_rejected observed=403 csrf_rejected
+PASS baseline               session cookie plus bearer token (ambiguous)     expected=400 ambiguous_credentials observed=400 ambiguous_credentials
+PASS baseline               machine: GET /api/items                          expected=200 observed=200
+PASS baseline               machine: POST /api/items (no items.create)       expected=403 insufficient_permissions observed=403 insufficient_permissions
+PASS baseline               lab-viewer session: GET /api/items               expected=200 observed=200
+PASS baseline               lab-viewer session: POST /api/items              expected=403 insufficient_permissions observed=403 insufficient_permissions
+PASS baseline               session refresh: request after the refresh is due expected=200 observed=200
+PASS baseline               session refresh: new session cookie returned through auth_request expected=yes observed=yes
+PASS baseline               sign-out                                         expected=302 observed=302
+PASS baseline               after sign-out: Keycloak session ended (login form) expected=login-form observed=login-form
+INFO baseline               ingress access log: upstream ports during the run expected=observe observed=11 :4443;32 :8443
+PASS baseline               ingress access log: no upstream on a former plaintext port (8080, 4180) expected=yes observed=yes
+INFO baseline               ingress: established (kept-alive) connections to api:8443 expected=observe observed=1
+PASS baseline               ingress: established connections to oauth2-proxy:4443 expected=0 observed=0
+PASS baseline               api: TLS session ticket issued to a new verified connection expected=none observed=none
+INFO baseline               api: resumption attempt                          expected=observe observed=no-saved-session
+PASS baseline               oauth2-proxy: TLS session saved from a new verified connection expected=saved observed=saved
+INFO baseline               oauth2-proxy: saved session offered on a new connection (no change) expected=observe observed=Reused verify=0
+INFO passive capture of the app hops captures started (raw sockets in the API's and oauth2-proxy's namespaces) expected=observe observed=yes
+INFO passive capture of the app hops flows during the capture: callback, session GET /api/items, machine GET /api/items expected=observe observed=callback=302 session=200 machine=200 code=obtained
+INFO passive capture of the app hops ingress-api: payload bytes captured              expected=observe observed=15015
+INFO passive capture of the app hops ingress-api: occurrences per kind                expected=observe observed=access-token-header=0 authorization-code=0 bearer-header=0 http-message=0 machine-access-token=0 session-cookie=0 session-cookie+encoded=0 state=0 state+encoded=0 tls-application-data=6
+PASS passive capture of the app hops ingress-api: credential and token-header occurrences expected=0 observed=0
+PASS passive capture of the app hops ingress-api: plaintext HTTP messages             expected=0 observed=0
+PASS passive capture of the app hops ingress-api: positive control: TLS application-data records seen expected=yes observed=yes
+INFO passive capture of the app hops ingress-oauth2-proxy: payload bytes captured     expected=observe observed=17132
+INFO passive capture of the app hops ingress-oauth2-proxy: occurrences per kind       expected=observe observed=access-token-header=0 authorization-code=0 bearer-header=0 http-message=0 machine-access-token=0 session-cookie=0 session-cookie+encoded=0 state=0 state+encoded=0 tls-application-data=32
+PASS passive capture of the app hops ingress-oauth2-proxy: credential and token-header occurrences expected=0 observed=0
+PASS passive capture of the app hops ingress-oauth2-proxy: plaintext HTTP messages    expected=0 observed=0
+PASS passive capture of the app hops ingress-oauth2-proxy: positive control: TLS application-data records seen expected=yes observed=yes
+PASS api: untrusted         new connection: served serial                    expected=A38F654A3D2CC8915F50F6F78EE3B3FF observed=A38F654A3D2CC8915F50F6F78EE3B3FF
+PASS api: untrusted         new connection: openssl verify code (application CA, name api) expected=21 observed=21
+INFO api: untrusted         TLS session saved before the change, offered on a new connection expected=observe observed=no-saved-session
+INFO api: untrusted         session GET /api/items at once (kept-alive connection may be reused) expected=observe observed=200
+INFO api: untrusted         ingress: established connections to api:8443 at once expected=observe observed=1
+PASS api: untrusted         ingress: established connections to api:8443 after the idle timeout expected=0 observed=0
+PASS api: untrusted         session GET /api/items (new connection)          expected=502 observed=502
+PASS api: untrusted         machine GET /api/items (new connection)          expected=502 observed=502
+PASS api: untrusted         gateway unaffected: new sign-in starts           expected=302 observed=302
+PASS api: untrusted         ingress: public-route upstream TLS reason lines (suppressed below crit) expected= observed=
+INFO api: untrusted         ingress access log: API routes (count status upstream statuses) expected=observe observed=2 502 upstream=502
+PASS api: untrusted         diagnostic route: status                         expected=502 observed=502
+PASS api: untrusted         diagnostic route: TLS reason in the ingress log  expected=upstream SSL certificate verify error: (21:unable to verify the first certificate) observed=upstream SSL certificate verify error: (21:unable to verify the first certificate)
+INFO api: untrusted         diagnostic route: logged line (addresses redacted) expected=observe observed=[error] <worker> upstream SSL certificate verify error: (21:unable to verify the first certificate) while SSL handshaking to upstream, client: <address>, server: , request: "GET /api-upstream HTTP/1.1", upstream: "https://<address>:8443/health", host: "<address>:8082"
+PASS api: untrusted         control nginx: production directives             expected=502 observed=502
+PASS api: untrusted         control nginx: verification off (negative control) expected=200 observed=200
+PASS api: untrusted         machine token issued before the change, at the API (local validation) expected=502 observed=502
+PASS api: untrusted         renewed: openssl verify code, served serial      expected=0 8D8853CC923FC874A69E67FA6C5E36E6 observed=0 8D8853CC923FC874A69E67FA6C5E36E6
+PASS api: untrusted         renewed: diagnostic route                        expected=200 observed=200
+PASS api: untrusted         renewed: session from before the change, GET /api/items expected=200 observed=200
+PASS api: untrusted         renewed: machine GET /api/items                  expected=200 observed=200
+PASS api: untrusted         renewed: new sign-in, then GET /api/items        expected=200 observed=200
+PASS api: lab-ca            new connection: served serial                    expected=F4A244AF590578DBEDCB8BCCC43548C7 observed=F4A244AF590578DBEDCB8BCCC43548C7
+PASS api: lab-ca            new connection: openssl verify code (application CA, name api) expected=21 observed=21
+INFO api: lab-ca            TLS session saved before the change, offered on a new connection expected=observe observed=no-saved-session
+INFO api: lab-ca            session GET /api/items at once (kept-alive connection may be reused) expected=observe observed=200
+INFO api: lab-ca            ingress: established connections to api:8443 at once expected=observe observed=1
+PASS api: lab-ca            ingress: established connections to api:8443 after the idle timeout expected=0 observed=0
+PASS api: lab-ca            session GET /api/items (new connection)          expected=502 observed=502
+PASS api: lab-ca            machine GET /api/items (new connection)          expected=502 observed=502
+PASS api: lab-ca            gateway unaffected: new sign-in starts           expected=302 observed=302
+PASS api: lab-ca            ingress: public-route upstream TLS reason lines (suppressed below crit) expected= observed=
+INFO api: lab-ca            ingress access log: API routes (count status upstream statuses) expected=observe observed=2 502 upstream=502
+PASS api: lab-ca            diagnostic route: status                         expected=502 observed=502
+PASS api: lab-ca            diagnostic route: TLS reason in the ingress log  expected=upstream SSL certificate verify error: (21:unable to verify the first certificate) observed=upstream SSL certificate verify error: (21:unable to verify the first certificate)
+INFO api: lab-ca            diagnostic route: logged line (addresses redacted) expected=observe observed=[error] <worker> upstream SSL certificate verify error: (21:unable to verify the first certificate) while SSL handshaking to upstream, client: <address>, server: , request: "GET /api-upstream HTTP/1.1", upstream: "https://<address>:8443/health", host: "<address>:8082"
+PASS api: lab-ca            control nginx: production directives             expected=502 observed=502
+PASS api: lab-ca            control nginx: verification off (negative control) expected=200 observed=200
+PASS api: lab-ca            machine token issued before the change, at the API (local validation) expected=502 observed=502
+PASS api: lab-ca            renewed: openssl verify code, served serial      expected=0 DA3CA450CF87C049B385D6AFFEB32C03 observed=0 DA3CA450CF87C049B385D6AFFEB32C03
+PASS api: lab-ca            renewed: diagnostic route                        expected=200 observed=200
+PASS api: lab-ca            renewed: session from before the change, GET /api/items expected=200 observed=200
+PASS api: lab-ca            renewed: machine GET /api/items                  expected=200 observed=200
+PASS api: lab-ca            renewed: new sign-in, then GET /api/items        expected=200 observed=200
+PASS api: mismatch          new connection: served serial                    expected=8C65FBC7859C5B73E81EAA0893039108 observed=8C65FBC7859C5B73E81EAA0893039108
+PASS api: mismatch          new connection: openssl verify code (application CA, name api) expected=62 observed=62
+INFO api: mismatch          TLS session saved before the change, offered on a new connection expected=observe observed=no-saved-session
+INFO api: mismatch          session GET /api/items at once (kept-alive connection may be reused) expected=observe observed=200
+INFO api: mismatch          ingress: established connections to api:8443 at once expected=observe observed=1
+PASS api: mismatch          ingress: established connections to api:8443 after the idle timeout expected=0 observed=0
+PASS api: mismatch          session GET /api/items (new connection)          expected=502 observed=502
+PASS api: mismatch          machine GET /api/items (new connection)          expected=502 observed=502
+PASS api: mismatch          gateway unaffected: new sign-in starts           expected=302 observed=302
+PASS api: mismatch          ingress: public-route upstream TLS reason lines (suppressed below crit) expected= observed=
+INFO api: mismatch          ingress access log: API routes (count status upstream statuses) expected=observe observed=2 502 upstream=502
+PASS api: mismatch          diagnostic route: status                         expected=502 observed=502
+PASS api: mismatch          diagnostic route: TLS reason in the ingress log  expected=upstream SSL certificate does not match "api" observed=upstream SSL certificate does not match "api"
+INFO api: mismatch          diagnostic route: logged line (addresses redacted) expected=observe observed=[error] <worker> upstream SSL certificate does not match "api" while SSL handshaking to upstream, client: <address>, server: , request: "GET /api-upstream HTTP/1.1", upstream: "https://<address>:8443/health", host: "<address>:8082"
+PASS api: mismatch          control nginx: production directives             expected=502 observed=502
+PASS api: mismatch          control nginx: verification off (negative control) expected=200 observed=200
+PASS api: mismatch          machine token issued before the change, at the API (local validation) expected=502 observed=502
+PASS api: mismatch          renewed: openssl verify code, served serial      expected=0 0AC1E8F448544C9D2FB85ABD89A79E7E observed=0 0AC1E8F448544C9D2FB85ABD89A79E7E
+PASS api: mismatch          renewed: diagnostic route                        expected=200 observed=200
+PASS api: mismatch          renewed: session from before the change, GET /api/items expected=200 observed=200
+PASS api: mismatch          renewed: machine GET /api/items                  expected=200 observed=200
+PASS api: mismatch          renewed: new sign-in, then GET /api/items        expected=200 observed=200
+PASS api: expired           new connection: served serial                    expected=CB290F30724EAE6B4014E29FE5A04D5B observed=CB290F30724EAE6B4014E29FE5A04D5B
+PASS api: expired           new connection: openssl verify code (application CA, name api) expected=10 observed=10
+INFO api: expired           TLS session saved before the change, offered on a new connection expected=observe observed=no-saved-session
+INFO api: expired           session GET /api/items at once (kept-alive connection may be reused) expected=observe observed=200
+INFO api: expired           ingress: established connections to api:8443 at once expected=observe observed=1
+PASS api: expired           ingress: established connections to api:8443 after the idle timeout expected=0 observed=0
+PASS api: expired           session GET /api/items (new connection)          expected=502 observed=502
+PASS api: expired           machine GET /api/items (new connection)          expected=502 observed=502
+PASS api: expired           gateway unaffected: new sign-in starts           expected=302 observed=302
+PASS api: expired           ingress: public-route upstream TLS reason lines (suppressed below crit) expected= observed=
+INFO api: expired           ingress access log: API routes (count status upstream statuses) expected=observe observed=2 502 upstream=502
+PASS api: expired           diagnostic route: status                         expected=502 observed=502
+PASS api: expired           diagnostic route: TLS reason in the ingress log  expected=upstream SSL certificate verify error: (10:certificate has expired) observed=upstream SSL certificate verify error: (10:certificate has expired)
+INFO api: expired           diagnostic route: logged line (addresses redacted) expected=observe observed=[error] <worker> upstream SSL certificate verify error: (10:certificate has expired) while SSL handshaking to upstream, client: <address>, server: , request: "GET /api-upstream HTTP/1.1", upstream: "https://<address>:8443/health", host: "<address>:8082"
+PASS api: expired           control nginx: production directives             expected=502 observed=502
+PASS api: expired           control nginx: verification off (negative control) expected=200 observed=200
+PASS api: expired           machine token issued before the change, at the API (local validation) expected=502 observed=502
+PASS api: expired           renewed: openssl verify code, served serial      expected=0 D54F1D5FF64086366BB0A23C8B692467 observed=0 D54F1D5FF64086366BB0A23C8B692467
+PASS api: expired           renewed: diagnostic route                        expected=200 observed=200
+PASS api: expired           renewed: session from before the change, GET /api/items expected=200 observed=200
+PASS api: expired           renewed: machine GET /api/items                  expected=200 observed=200
+PASS api: expired           renewed: new sign-in, then GET /api/items        expected=200 observed=200
+PASS oauth2-proxy: untrusted new connection: served serial                    expected=F345F71B462E1B1B19E6DF3468F87E92 observed=F345F71B462E1B1B19E6DF3468F87E92
+PASS oauth2-proxy: untrusted new connection: openssl verify code (application CA, name oauth2-proxy) expected=21 observed=21
+INFO oauth2-proxy: untrusted TLS session saved before the change, offered on a new connection expected=observe observed=New verify=21
+PASS oauth2-proxy: untrusted session GET /api/items (auth_request refused)    expected=503 authentication_unavailable observed=503 authentication_unavailable
+PASS oauth2-proxy: untrusted new sign-in                                      expected=503 observed=503
+PASS oauth2-proxy: untrusted machine GET /api/items (no gateway on the bearer path) expected=200 observed=200
+PASS oauth2-proxy: untrusted ingress: public-route upstream TLS reason lines (suppressed below crit) expected= observed=
+INFO oauth2-proxy: untrusted ingress access log: API routes (count status upstream statuses) expected=observe observed=1 200 upstream=200;1 503 upstream=-
+PASS oauth2-proxy: untrusted diagnostic route: status                         expected=502 observed=502
+PASS oauth2-proxy: untrusted diagnostic route: TLS reason in the ingress log  expected=upstream SSL certificate verify error: (21:unable to verify the first certificate) observed=upstream SSL certificate verify error: (21:unable to verify the first certificate)
+INFO oauth2-proxy: untrusted diagnostic route: logged line (addresses redacted) expected=observe observed=[error] <worker> upstream SSL certificate verify error: (21:unable to verify the first certificate) while SSL handshaking to upstream, client: <address>, server: , request: "GET /oauth2-proxy-upstream HTTP/1.1", upstream: "https://<address>:4443/ping", host: "<address>:8082"
+PASS oauth2-proxy: untrusted control nginx: production directives             expected=502 observed=502
+PASS oauth2-proxy: untrusted control nginx: verification off (negative control) expected=200 observed=200
+PASS oauth2-proxy: untrusted machine token issued before the change, at the API (local validation) expected=200 observed=200
+PASS oauth2-proxy: untrusted renewed: openssl verify code, served serial      expected=0 C9038ABF1C00FFA24E2A5068681EFF27 observed=0 C9038ABF1C00FFA24E2A5068681EFF27
+PASS oauth2-proxy: untrusted renewed: diagnostic route                        expected=200 observed=200
+PASS oauth2-proxy: untrusted renewed: session from before the change, GET /api/items expected=200 observed=200
+PASS oauth2-proxy: untrusted renewed: machine GET /api/items                  expected=200 observed=200
+PASS oauth2-proxy: untrusted renewed: new sign-in, then GET /api/items        expected=200 observed=200
+PASS oauth2-proxy: lab-ca   new connection: served serial                    expected=BC98326BDE5221580D98E481E8D6FA04 observed=BC98326BDE5221580D98E481E8D6FA04
+PASS oauth2-proxy: lab-ca   new connection: openssl verify code (application CA, name oauth2-proxy) expected=21 observed=21
+INFO oauth2-proxy: lab-ca   TLS session saved before the change, offered on a new connection expected=observe observed=New verify=21
+PASS oauth2-proxy: lab-ca   session GET /api/items (auth_request refused)    expected=503 authentication_unavailable observed=503 authentication_unavailable
+PASS oauth2-proxy: lab-ca   new sign-in                                      expected=503 observed=503
+PASS oauth2-proxy: lab-ca   machine GET /api/items (no gateway on the bearer path) expected=200 observed=200
+PASS oauth2-proxy: lab-ca   ingress: public-route upstream TLS reason lines (suppressed below crit) expected= observed=
+INFO oauth2-proxy: lab-ca   ingress access log: API routes (count status upstream statuses) expected=observe observed=1 200 upstream=200;1 503 upstream=-
+PASS oauth2-proxy: lab-ca   diagnostic route: status                         expected=502 observed=502
+PASS oauth2-proxy: lab-ca   diagnostic route: TLS reason in the ingress log  expected=upstream SSL certificate verify error: (21:unable to verify the first certificate) observed=upstream SSL certificate verify error: (21:unable to verify the first certificate)
+INFO oauth2-proxy: lab-ca   diagnostic route: logged line (addresses redacted) expected=observe observed=[error] <worker> upstream SSL certificate verify error: (21:unable to verify the first certificate) while SSL handshaking to upstream, client: <address>, server: , request: "GET /oauth2-proxy-upstream HTTP/1.1", upstream: "https://<address>:4443/ping", host: "<address>:8082"
+PASS oauth2-proxy: lab-ca   control nginx: production directives             expected=502 observed=502
+PASS oauth2-proxy: lab-ca   control nginx: verification off (negative control) expected=200 observed=200
+PASS oauth2-proxy: lab-ca   machine token issued before the change, at the API (local validation) expected=200 observed=200
+PASS oauth2-proxy: lab-ca   renewed: openssl verify code, served serial      expected=0 7559645329F367772F124CB13C0E649A observed=0 7559645329F367772F124CB13C0E649A
+PASS oauth2-proxy: lab-ca   renewed: diagnostic route                        expected=200 observed=200
+PASS oauth2-proxy: lab-ca   renewed: session from before the change, GET /api/items expected=200 observed=200
+PASS oauth2-proxy: lab-ca   renewed: machine GET /api/items                  expected=200 observed=200
+PASS oauth2-proxy: lab-ca   renewed: new sign-in, then GET /api/items        expected=200 observed=200
+PASS oauth2-proxy: mismatch new connection: served serial                    expected=8EC6BB309181C46D836F01D4B52C13A1 observed=8EC6BB309181C46D836F01D4B52C13A1
+PASS oauth2-proxy: mismatch new connection: openssl verify code (application CA, name oauth2-proxy) expected=62 observed=62
+INFO oauth2-proxy: mismatch TLS session saved before the change, offered on a new connection expected=observe observed=New verify=62
+PASS oauth2-proxy: mismatch session GET /api/items (auth_request refused)    expected=503 authentication_unavailable observed=503 authentication_unavailable
+PASS oauth2-proxy: mismatch new sign-in                                      expected=503 observed=503
+PASS oauth2-proxy: mismatch machine GET /api/items (no gateway on the bearer path) expected=200 observed=200
+PASS oauth2-proxy: mismatch ingress: public-route upstream TLS reason lines (suppressed below crit) expected= observed=
+INFO oauth2-proxy: mismatch ingress access log: API routes (count status upstream statuses) expected=observe observed=1 200 upstream=200;1 503 upstream=-
+PASS oauth2-proxy: mismatch diagnostic route: status                         expected=502 observed=502
+PASS oauth2-proxy: mismatch diagnostic route: TLS reason in the ingress log  expected=upstream SSL certificate does not match "oauth2-proxy" observed=upstream SSL certificate does not match "oauth2-proxy"
+INFO oauth2-proxy: mismatch diagnostic route: logged line (addresses redacted) expected=observe observed=[error] <worker> upstream SSL certificate does not match "oauth2-proxy" while SSL handshaking to upstream, client: <address>, server: , request: "GET /oauth2-proxy-upstream HTTP/1.1", upstream: "https://<address>:4443/ping", host: "<address>:8082"
+PASS oauth2-proxy: mismatch control nginx: production directives             expected=502 observed=502
+PASS oauth2-proxy: mismatch control nginx: verification off (negative control) expected=200 observed=200
+PASS oauth2-proxy: mismatch machine token issued before the change, at the API (local validation) expected=200 observed=200
+PASS oauth2-proxy: mismatch renewed: openssl verify code, served serial      expected=0 609F8727EB9E8C00797C24D7D116EC57 observed=0 609F8727EB9E8C00797C24D7D116EC57
+PASS oauth2-proxy: mismatch renewed: diagnostic route                        expected=200 observed=200
+PASS oauth2-proxy: mismatch renewed: session from before the change, GET /api/items expected=200 observed=200
+PASS oauth2-proxy: mismatch renewed: machine GET /api/items                  expected=200 observed=200
+PASS oauth2-proxy: mismatch renewed: new sign-in, then GET /api/items        expected=200 observed=200
+PASS oauth2-proxy: expired  new connection: served serial                    expected=1C22B78234F387FB0977B305D7234ABB observed=1C22B78234F387FB0977B305D7234ABB
+PASS oauth2-proxy: expired  new connection: openssl verify code (application CA, name oauth2-proxy) expected=10 observed=10
+INFO oauth2-proxy: expired  TLS session saved before the change, offered on a new connection expected=observe observed=New verify=10
+PASS oauth2-proxy: expired  session GET /api/items (auth_request refused)    expected=503 authentication_unavailable observed=503 authentication_unavailable
+PASS oauth2-proxy: expired  new sign-in                                      expected=503 observed=503
+PASS oauth2-proxy: expired  machine GET /api/items (no gateway on the bearer path) expected=200 observed=200
+PASS oauth2-proxy: expired  ingress: public-route upstream TLS reason lines (suppressed below crit) expected= observed=
+INFO oauth2-proxy: expired  ingress access log: API routes (count status upstream statuses) expected=observe observed=1 200 upstream=200;1 503 upstream=-
+PASS oauth2-proxy: expired  diagnostic route: status                         expected=502 observed=502
+PASS oauth2-proxy: expired  diagnostic route: TLS reason in the ingress log  expected=upstream SSL certificate verify error: (10:certificate has expired) observed=upstream SSL certificate verify error: (10:certificate has expired)
+INFO oauth2-proxy: expired  diagnostic route: logged line (addresses redacted) expected=observe observed=[error] <worker> upstream SSL certificate verify error: (10:certificate has expired) while SSL handshaking to upstream, client: <address>, server: , request: "GET /oauth2-proxy-upstream HTTP/1.1", upstream: "https://<address>:4443/ping", host: "<address>:8082"
+PASS oauth2-proxy: expired  control nginx: production directives             expected=502 observed=502
+PASS oauth2-proxy: expired  control nginx: verification off (negative control) expected=200 observed=200
+PASS oauth2-proxy: expired  machine token issued before the change, at the API (local validation) expected=200 observed=200
+PASS oauth2-proxy: expired  renewed: openssl verify code, served serial      expected=0 ED06BD027A04FF3D542C4BD85CEE2AB1 observed=0 ED06BD027A04FF3D542C4BD85CEE2AB1
+PASS oauth2-proxy: expired  renewed: diagnostic route                        expected=200 observed=200
+PASS oauth2-proxy: expired  renewed: session from before the change, GET /api/items expected=200 observed=200
+PASS oauth2-proxy: expired  renewed: machine GET /api/items                  expected=200 observed=200
+PASS oauth2-proxy: expired  renewed: new sign-in, then GET /api/items        expected=200 observed=200
+PASS api: invalid replacement (last good certificate) new connections: verify code and serial (unchanged) expected=0 D54F1D5FF64086366BB0A23C8B692467 observed=0 D54F1D5FF64086366BB0A23C8B692467
+PASS api: invalid replacement (last good certificate) session GET /api/items                           expected=200 observed=200
+PASS api: invalid replacement (last good certificate) check-secrets refuses the file                   expected=fail observed=fail
+PASS api: invalid replacement (last good certificate) API log: rejected file reported once             expected=1 observed=1
+INFO api: invalid replacement (last good certificate) API log: report (addresses and paths as logged)  expected=observe observed={"time":"2026-10-18T18:27:41.32154835Z","level":"INFO","msg":"TLS certificate file changed but holds no valid key pair, keeping the current certificate (serial D54F1D5FF64086366BB0A23C8B692467, valid until 2026-11-01T18:26:18Z): tls: failed to find any PEM data in certificate input","service":"work-items-api","version":"integration-121-126"}
+PASS api: invalid replacement (last good certificate) restored file: check-secrets                     expected=pass observed=pass
+PASS api: invalid replacement (last good certificate) restored file: verify code and serial            expected=0 D54F1D5FF64086366BB0A23C8B692467 observed=0 D54F1D5FF64086366BB0A23C8B692467
+INFO api: renewal           before: openssl verify code, served serial       expected=observe observed=0 D54F1D5FF64086366BB0A23C8B692467
+INFO api: renewal           ingress: established connections to api at renewal expected=observe observed=1
+PASS api: renewal           after: openssl verify code, served serial (no restart) expected=0 4F9151245C660E1D02D8CACDAC62FE3C observed=0 4F9151245C660E1D02D8CACDAC62FE3C
+PASS api: renewal           session GET /api/items                           expected=200 observed=200
+PASS api: renewal           machine GET /api/items                           expected=200 observed=200
+PASS api: renewal           API container not restarted                      expected=2026-10-18T18:19:05.617721688Z observed=2026-10-18T18:19:05.617721688Z
+INFO oauth2-proxy: renewal  before: openssl verify code, served serial       expected=observe observed=0 ED06BD027A04FF3D542C4BD85CEE2AB1
+PASS oauth2-proxy: renewal  without a restart: served serial after 5 s (unchanged; read at start only) expected=ED06BD027A04FF3D542C4BD85CEE2AB1 observed=ED06BD027A04FF3D542C4BD85CEE2AB1
+PASS oauth2-proxy: renewal  after restart: openssl verify code, served serial expected=0 8C9201FD27E5FF56364EF908D2D6FEE2 observed=0 8C9201FD27E5FF56364EF908D2D6FEE2
+PASS oauth2-proxy: renewal  session from before the restart (kept in Valkey), GET /api/items expected=200 observed=200
+PASS oauth2-proxy: renewal  session from before the restart: create and process expected=succeeded observed=succeeded
+PASS final state            API container not restarted                      expected=2026-10-18T18:19:05.617721688Z observed=2026-10-18T18:19:05.617721688Z
+PASS final state            ingress container not restarted                  expected=2026-10-18T18:17:35.574088674Z observed=2026-10-18T18:17:35.574088674Z
+PASS final state            check-secrets                                    expected=pass observed=pass
+PASS logs                   ingress: occurrences of the 48 searched strings  expected=0 observed=0
+INFO logs                   ingress: kinds found                             expected=observe observed=none
+PASS logs                   oauth2-proxy: occurrences of the 48 searched strings expected=0 observed=0
+INFO logs                   oauth2-proxy: kinds found                        expected=observe observed=none
+PASS logs                   api: occurrences of the 48 searched strings      expected=0 observed=0
+INFO logs                   api: kinds found                                 expected=observe observed=none
+PASS logs                   app-control: occurrences of the 48 searched strings expected=0 observed=0
+INFO logs                   app-control: kinds found                         expected=observe observed=none
+INFO logs                   keycloak: occurrences of the 48 searched strings expected=observe observed=0
+INFO logs                   keycloak: kinds found                            expected=observe observed=none
+PASS positive control       scanner finds each searched string in a synthetic log expected=48 observed=48
+PASS positive control       ingress log holds this run's diagnostic TLS reasons expected=yes observed=yes
+PASS positive control       API log holds this run's certificate reloads     expected=yes observed=yes
+INFO final state            secret values in recorded results                expected=observe observed=none (15 secrets searched)
+Evidence written: evidence/integration-121-126/run1/verify-app-tls.json
+
+Application TLS verification passed (257 checks).
+tools/security-lab-local: line 6680: syntax error near unexpected token `;;'

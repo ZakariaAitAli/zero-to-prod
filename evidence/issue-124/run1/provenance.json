@@ -1,0 +1,20 @@
+{
+  "base_commit": "9329bcd1adde36300451e3e797eaed246b30e6f2",
+  "source_sha256": {
+    "infra/availability-lab/compose.yaml": "99de3b817d2e6c5572e3a3170ff884544d3126eb115075a76fd9f54a07da372e",
+    "infra/availability-lab/proxies.conf": "41f891faed4c41d3cba0a953fafcdb41ddaddfb3b4ffe001c357ed9803bb400f",
+    "infra/availability-lab/postgres/003-replication.sh": "8bbc396333f96d99324b972630651a8acce06dc59552a757b309fc36722d1fea",
+    "infra/availability-lab/postgres/archive.sh": "966039964b564b87aa6ac4954056b9ef88294990c83ed9fece67414de41b32d0",
+    "infra/availability-lab/postgres/backup-health.sh": "34805db1bc14603630f51712d44d259f7cfd9f81d4a460280f2470fc33ba56cf",
+    "infra/availability-lab/postgres/backup.sh": "2a999235db1e56701321a12c05ec4cf22ea48777b5fb7ac966bb882ff4b66802",
+    "infra/availability-lab/postgres/primary.sh": "977df8a53bda3097b9911b55dbf8b0067f1b8c03ddbc62112bf1454c81fc9a6d",
+    "infra/availability-lab/postgres/recover.sh": "74cdd15f84004522aba247c8efdc0ebdfe5f523d38e9155262d7a246f2c89bfe",
+    "infra/availability-lab/postgres/standby.sh": "2d910d0f1b5e3bd6057ef29e04f3ae455a55028350579f61d862b11485213db0",
+    "infra/availability-lab/postgres/transfer.sh": "214129f25fa0bee480c82b5832c8679f98ea68118e21736fdac1fd42db94ab55",
+    "infra/availability-lab/rabbitmq/rabbitmq.conf": "75bb20d0c308d1f43105b5d824803b53b29a0b4d1341bf97660fbb03e67ba0db",
+    "infra/availability-lab/rabbitmq/start.sh": "3a764230d66247892f5033384552db96ad5f2868a048aa3b51cac6fa21478b82",
+    "tools/availability-lab-local": "d95f030c2a003ca8393a91ed8b5e75de4484c75d594bb9389be2535dd47a0f1d",
+    "tools/availability-lab-experiments": "052e8b6f7fc0c65cfefc7a266c7ec7cbb93d7273e5d278ced3ee98af34db9478"
+  },
+  "scope": "new dedicated single-host local lab; no independent-site durability claim"
+}

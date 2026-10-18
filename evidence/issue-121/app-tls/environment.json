@@ -1,0 +1,34 @@
+{
+  "recorded_at": "2026-10-17 (written by hand during the full run, from the commands and outputs of 14:59-15:22 UTC)",
+  "description": "Environment adjustment for the isolated zero-to-prod-security-lab-apptls project. Docker's default address pools were exhausted, so the project's networks were created with explicit subnets. No retained project, network, volume, or daemon setting was changed.",
+  "cause": {
+    "error": "failed to create network zero-to-prod-security-lab-apptls_data: Error response from daemon: all predefined address pools have been fully subnetted",
+    "first_attempt": "2026-10-17T14:59:50Z, start with the tool of main 3c1104c; it created zero-to-prod-security-lab-apptls_session, _idp, _idp-data (192.168.208.0/20, 192.168.224.0/20, 192.168.240.0/20) before failing; no container or volume was created",
+    "default_pools_in_use": "172.17.0.0/16-172.31.0.0/16 and 192.168.0.0/20-192.168.240.0/20 (31 networks): bridge, zero-to-prod-local_default, zero-to-prod-rabbitmq_default, the six networks of each of zero-to-prod-security-lab, -authz, -tls, -kctls (all stopped, no containers attached), and the three networks of the failed attempt"
+  },
+  "routes_checked": {
+    "wsl": ["default via 172.27.240.1", "172.27.240.0/20 (eth0)", "10.255.255.254/32 (lo)"],
+    "windows": ["0.0.0.0/0 via 10.1.1.1 (WiFi)", "10.1.1.0/24 (WiFi)", "172.27.0.0/20 (vEthernet Default Switch)", "172.27.240.0/20 (vEthernet WSL)"],
+    "docker_desktop_vm": ["192.168.65.0/24 (eth0)", "one route per Docker network listed above"],
+    "vpn": "no VPN adapter or route present (adapters: WiFi, Ethernet disconnected, Bluetooth PAN disconnected, two Hyper-V vEthernet)",
+    "chosen_range": "10.213.0.0/16, used by no route or network above"
+  },
+  "compose_adoption_test": "A throwaway project (ztp-netadopt-probe) with one internal network: a pre-created network carrying the labels com.docker.compose.project and com.docker.compose.network and an explicit subnet (10.213.240.0/24) was adopted by docker compose up (same network ID, internal kept, container address 10.213.240.2) and removed by docker compose down. Nothing of it remains.",
+  "removed_networks_of_this_attempt": [
+    "zero-to-prod-security-lab-apptls_idp (created 2026-10-17T14:59:50.88Z, 0 containers)",
+    "zero-to-prod-security-lab-apptls_idp-data (created 2026-10-17T14:59:50.93Z, 0 containers)",
+    "zero-to-prod-security-lab-apptls_session (created 2026-10-17T14:59:50.84Z, 0 containers)"
+  ],
+  "networks_created": {
+    "method": "docker network create [--internal] --subnet <cidr> --label com.docker.compose.project=zero-to-prod-security-lab-apptls --label com.docker.compose.network=<key> --label com.docker.compose.version=5.3.1 zero-to-prod-security-lab-apptls_<key>",
+    "zero-to-prod-security-lab-apptls_edge": {"subnet": "10.213.1.0/24", "internal": false},
+    "zero-to-prod-security-lab-apptls_app": {"subnet": "10.213.2.0/24", "internal": true},
+    "zero-to-prod-security-lab-apptls_data": {"subnet": "10.213.3.0/24", "internal": true},
+    "zero-to-prod-security-lab-apptls_idp": {"subnet": "10.213.4.0/24", "internal": true},
+    "zero-to-prod-security-lab-apptls_idp-data": {"subnet": "10.213.5.0/24", "internal": true},
+    "zero-to-prod-security-lab-apptls_session": {"subnet": "10.213.6.0/24", "internal": true}
+  },
+  "isolation": "The internal flags match compose.yaml (only edge is not internal). Membership was unchanged: after start (main) and start (branch), app had 3 containers, data 4, edge 1, idp 2, idp-data 2, session 2. verify's reachability checks ran on these networks.",
+  "tool_networks": "ZTP_SECURITY_LAB_TOOL_SUBNETS=\"unrelated-probe=10.213.250.0/24 ipcontrol=10.213.251.0/24\" for every branch tool command (verify's unrelated probe network and verify-keycloak-tls's isolated control network). Both are removed by the tool after use.",
+  "used_by": "The before lab (main's tool and Compose file) and the upgraded lab (this branch) both ran on these networks; Compose adopted them without change."
+}

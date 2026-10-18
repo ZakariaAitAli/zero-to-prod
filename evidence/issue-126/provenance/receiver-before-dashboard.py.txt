@@ -1,0 +1,19 @@
+"""Local evidence receiver; no external notification or credentials."""
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json,time
+from pathlib import Path
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self,*args):pass
+    def do_GET(self):
+        data=Path('/data/receipts.jsonl')
+        raw=data.read_bytes() if data.exists() else b''
+        self.send_response(200);self.end_headers();self.wfile.write(raw)
+    def do_POST(self):
+        size=int(self.headers.get('Content-Length','0'))
+        if size>1048576:self.send_error(413);return
+        try:payload=json.loads(self.rfile.read(size))
+        except ValueError:self.send_error(400);return
+        with Path('/data/receipts.jsonl').open('a') as f:
+            f.write(json.dumps({'received_unix':time.time(),'payload':payload})+'\n')
+        self.send_response(200);self.end_headers()
+HTTPServer(('0.0.0.0',8080),Handler).serve_forever()

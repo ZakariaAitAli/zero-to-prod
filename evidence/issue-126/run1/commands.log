@@ -1,0 +1,27 @@
+compose up -d --wait postgres rabbitmq api worker
+ Container zero-to-prod-operations-lab-worker-1 Running 
+ Container zero-to-prod-operations-lab-postgres-1 Running 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Running 
+ Container zero-to-prod-operations-lab-api-1 Running 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-api-1 Waiting 
+ Container zero-to-prod-operations-lab-worker-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-api-1 Healthy 
+ Container zero-to-prod-operations-lab-worker-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+
+compose exec -T postgres psql -U zero_to_prod_admin -d zero_to_prod -Atc SELECT json_build_object('jobs',count(*),'succeeded',count(*) FILTER(WHERE state='succeeded'),'accepted',count(*) FILTER(WHERE state='accepted'),'fresh',count(*) FILTER(WHERE state='succeeded' AND completed_at-accepted_at<=interval '30 seconds')) FROM processing_jobs
+ERROR:  column "completed_at" does not exist
+LINE 1: ...resh',count(*) FILTER(WHERE state='succeeded' AND completed_...
+                                                             ^
+

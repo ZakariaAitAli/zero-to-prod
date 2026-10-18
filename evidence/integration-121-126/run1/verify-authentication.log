@@ -1,0 +1,91 @@
+PASS unauthenticated        GET /api/items without credentials               expected=401 observed=401
+PASS unauthenticated        static UI without a session                      expected=200 observed=200
+PASS unauthenticated        Basic credentials are not accepted               expected=401 observed=401
+PASS machine client         client-credentials token issued                  expected=yes observed=yes
+INFO machine client         token summary                                    expected=observe observed=alg=RS256 iss=https://auth.work-items.localhost:9443/realms/work-items aud=work-items-api azp=work-items-automation typ=Bearer lifetime=300
+PASS machine client         GET /api/items with bearer token                 expected=200 observed=200
+PASS machine client         POST /api/items/{id}/process accepts a job       expected=yes observed=yes
+PASS machine client         polled processing job reaches succeeded          expected=succeeded observed=succeeded
+PASS machine client         processing a done Work Item again                expected=409 work_item_already_done observed=409 work_item_already_done
+PASS machine client         state change without CSRF header (no ambient credential) expected=202 observed=202
+PASS machine client         create is not permitted (authorization, not CSRF) expected=403 insufficient_permissions observed=403 insufficient_permissions
+PASS token validation       payload changed under the original signature     expected=401 observed=401
+PASS token validation       rejection challenge names invalid_token          expected=yes observed=yes
+PASS token validation       unsigned token (alg none)                        expected=401 observed=401
+PASS token validation       malformed token                                  expected=401 observed=401
+INFO token validation       ID token summary (issuer-signed, other audience) expected=observe observed=alg=RS256 iss=https://auth.work-items.localhost:9443/realms/work-items aud=work-items-automation typ=ID
+PASS token validation       issuer-signed ID token (audience is the client)  expected=401 observed=401
+INFO token validation       API rejection categories logged                  expected=observe observed=algorithm=1 audience=1 malformed=1 signature=1
+PASS browser session        sign-in through Keycloak's form returns to the UI expected=yes observed=yes
+INFO browser session        session cookie attributes                        expected=observe observed=httponly=yes path=/ secure=TRUE bytes=180
+PASS browser session        GET /api/items with the session                  expected=200 observed=200
+PASS browser session        POST /api/items creates a Work Item              expected=201 observed=201
+PASS browser session        POST /api/items/{id}/process accepts a job       expected=202 observed=202
+PASS browser session        polled processing job reaches succeeded          expected=succeeded observed=succeeded
+PASS browser session        processing a done Work Item again                expected=409 work_item_already_done observed=409 work_item_already_done
+INFO browser session        forwarded access token summary                   expected=observe observed=alg=RS256 iss=https://auth.work-items.localhost:9443/realms/work-items aud=work-items-api azp=work-items-gateway typ=Bearer lifetime=300
+PASS browser session        session with a bearer token is ambiguous         expected=400 observed=400
+PASS browser session        Keycloak session active (silent sign-in)         expected=silent-sign-in observed=silent-sign-in
+PASS csrf                   session POST without the UI header               expected=403 observed=403
+PASS csrf                   session POST from another origin                 expected=403 observed=403
+PASS csrf                   session POST with Sec-Fetch-Site: cross-site     expected=403 observed=403
+PASS csrf                   session POST with Sec-Fetch-Site: same-site      expected=403 observed=403
+PASS csrf                   session POST with header, Origin, and fetch metadata (control) expected=201 observed=201
+PASS csrf                   session GET needs no header                      expected=200 observed=200
+PASS csrf                   sign-out by GET                                  expected=405 observed=405
+PASS csrf                   sign-out as a no-referrer form post (Origin: null) expected=403 observed=403
+PASS csrf                   sign-out with Origin: null even with the UI header expected=403 observed=403
+PASS csrf                   sign-out without the UI header                   expected=403 observed=403
+PASS csrf                   sign-out without Origin                          expected=403 observed=403
+PASS csrf                   sign-out from another origin                     expected=403 observed=403
+PASS csrf                   sign-out with Sec-Fetch-Site: cross-site         expected=403 observed=403
+PASS csrf                   session still valid after refused sign-outs      expected=200 observed=200
+PASS logout                 captured session token at the API before sign-out expected=200 observed=200
+PASS logout                 sign-out as the UI's fetch sends it              expected=302 observed=302
+PASS logout                 sign-out response clears the session cookie      expected=yes observed=yes
+INFO logout                 sign-out redirect target                         expected=observe observed=/
+PASS logout                 same browser after sign-out                      expected=401 observed=401
+PASS logout                 replayed copy of the session cookie              expected=401 observed=401
+PASS logout                 Keycloak session ended (login form on next sign-in) expected=login-form observed=login-form
+PASS logout                 captured token at Keycloak userinfo (session-bound) expected=401 observed=401
+PASS replay                 captured token at the API after sign-out, before expiry expected=200 observed=200
+INFO replay                 captured token remaining lifetime at sign-out    expected=observe observed=expires_in=298
+PASS session refresh        request before a refresh is due                  expected=200 observed=200
+PASS session refresh        no session cookie issued before a refresh is due expected=0 observed=0
+  waiting 70s...
+PASS session refresh        request after a refresh is due                   expected=200 observed=200
+PASS session refresh        refreshed session cookie reaches the client      expected=1 observed=1
+PASS session refresh        refreshed cookie attributes                      expected=Path=/ HttpOnly Secure SameSite=Lax Max-Age=28800 observed=Path=/ HttpOnly Secure SameSite=Lax Max-Age=28800
+PASS session refresh        security headers on the refresh response         expected=4 observed=4
+PASS session refresh        client stored a new cookie value                 expected=yes observed=yes
+INFO session refresh        signed issue time advanced (s)                   expected=observe observed=70
+PASS session refresh        next request with the refreshed cookie           expected=200 observed=200
+PASS session refresh        no further cookie right after the refresh        expected=0 observed=0
+PASS session refresh        refreshed cookie used for a state change         expected=201 observed=201
+PASS session refresh        machine client gets no session cookie            expected=0 observed=0
+PASS idp outage             existing session, refresh not yet due            expected=200 observed=200
+PASS idp outage             machine token with cached signing keys           expected=200 observed=200
+PASS idp outage             new sign-in reaches an explicit 503              expected=503 observed=503
+PASS idp outage             client-credentials token endpoint                expected=503 observed=503
+PASS idp outage             API cold start: unexpired token cannot be judged expected=503 authentication_unavailable observed=503 authentication_unavailable
+PASS idp outage             API cold start: no token is still 401            expected=401 observed=401
+  waiting 59s...
+INFO idp outage             existing session after a refresh is due (API keys not cached) expected=observe observed=http=503
+PASS idp outage             API recovers signing keys after Keycloak returns expected=200 observed=200
+SKIP idp outage             session whose token expired while the IdP is down expected=run observed=--skip-slow
+SKIP replay                 captured token after expiry                      expected=run observed=--skip-slow
+PASS idp outage             sign-in works after Keycloak returns             expected=200 observed=200
+PASS gateway outage         existing session                                 expected=503 observed=503
+PASS gateway outage         machine client (bearer path)                     expected=200 observed=200
+PASS gateway outage         no credentials                                   expected=503 observed=503
+PASS gateway outage         existing session after restore, without sign-in  expected=200 observed=200
+PASS readiness classification store up: invalid session cookie                 expected=401 observed=401
+PASS readiness classification store down: existing session                     expected=503 observed=503
+PASS readiness classification store down: invalid session cookie (cannot be checked) expected=503 observed=503
+PASS readiness classification store down: no session cookie                    expected=401 observed=401
+PASS store outage           machine client (bearer path)                     expected=200 observed=200
+PASS store outage           existing session after restore (sessions not persisted) expected=401 observed=401
+PASS store outage           sign-in works after the store returns            expected=200 observed=200
+Evidence written: evidence/integration-121-126/run1/verify-authentication.json
+
+Authentication verification passed (86 checks).

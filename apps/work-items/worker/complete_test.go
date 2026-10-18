@@ -124,7 +124,7 @@ func TestCompletionBeginFailureDoesNotAttemptTransaction(t *testing.T) {
 
 func TestInconsistentBusinessStateRejectsDelivery(t *testing.T) {
 	store := &stubProcessingJobCompleter{err: fmt.Errorf("completion: %w", errWorkItemNotPending)}
-	settlement, err := handleWorkerMessage(context.Background(), store, []byte(`{"type":"work_item.process","version":1,"job_id":7,"work_item_id":42}`))
+	settlement, err := handleWorkerMessage(context.Background(), store, []byte(`{"type":"work_item.process","version":2,"delivery_id":"11111111-1111-4111-8111-111111111111","job_id":7,"work_item_id":42}`))
 	if settlement != settlementReject || !errors.Is(err, errWorkItemNotPending) {
 		t.Fatalf("settlement=%s err=%v", settlement, err)
 	}
