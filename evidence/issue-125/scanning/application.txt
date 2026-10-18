@@ -1,0 +1,37 @@
+govulncheck: loading packages: 
+There are errors with the provided package patterns:
+
+/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/delivery/apps/work-items/internal/authz/authz.go:3:1: package requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/internal/poll/splice_linux.go:237:21: unknown field rfd in struct literal of type splicePipe
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/internal/poll/splice_linux.go:237:34: unknown field wfd in struct literal of type splicePipe
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/math/rand/v2/rand.go:213:17: method must have no type parameters
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/math/rand/v2/rand.go:213:33: Int (function) is not a type
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/math/rand/v2/rand.go:213:38: Int (function) is not a type
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/math/rand/v2/rand.go:217:13: too many arguments in call to Int
+	have (uint64)
+	want ()
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/vendor/golang.org/x/text/unicode/bidi/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/vendor/golang.org/x/text/unicode/norm/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.27.1.linux-amd64/src/vendor/golang.org/x/net/idna/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/github.com/lestrrat-go/dsig@v1.4.0/mldsa.go:3:9: file requires newer Go version go1.27 (application built with go1.26)
+/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/delivery/apps/work-items/internal/authn/config.go:3:1: package requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/text@v0.42.0/unicode/norm/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/text@v0.42.0/cases/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/text@v0.42.0/unicode/bidi/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/text@v0.42.0/width/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/text@v0.42.0/secure/precis/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/github.com/prometheus/common@v0.72.0/model/value_float127.go:16:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/github.com/prometheus/common@v0.72.0/model/value_histogram127.go:16:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/net@v0.59.0/idna/tables17.0.0.go:5:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/net@v0.59.0/http2/client_priority_go127.go:7:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/net@v0.59.0/http2/server_wrap.go:9:9: file requires newer Go version go1.27 (application built with go1.26)
+/home/zakaria_ait_ali/go/pkg/mod/golang.org/x/net@v0.59.0/http2/transport_wrap.go:9:9: file requires newer Go version go1.27 (application built with go1.26)
+/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/delivery/apps/work-items/internal/observability/logging.go:3:1: package requires newer Go version go1.27 (application built with go1.26)
+/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/delivery/apps/work-items/internal/runtimeconfig/value.go:2:1: package requires newer Go version go1.27 (application built with go1.26)
+/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/delivery/apps/work-items/internal/workitems/model.go:2:1: package requires newer Go version go1.27 (application built with go1.26)
+/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/delivery/apps/work-items/api/application.go:1:1: package requires newer Go version go1.27 (application built with go1.26)
+/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/delivery/apps/work-items/cmd/redrive-after-restore/main.go:4:1: package requires newer Go version go1.27 (application built with go1.26)
+/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/delivery/apps/work-items/worker/complete.go:1:1: package requires newer Go version go1.27 (application built with go1.26)
+
+For details on package patterns, see https://pkg.go.dev/cmd/go#hdr-Package_lists_and_patterns.
+

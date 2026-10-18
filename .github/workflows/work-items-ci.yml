@@ -193,6 +193,12 @@ jobs:
 
           echo "All Go files are correctly formatted."
 
+      - name: Reject reachable Go vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          # Plain-text mode exits nonzero for reachable findings and tool errors.
+          govulncheck ./...
+
       - name: Run Go vet
         run: |
           go vet ./...
@@ -408,6 +414,23 @@ jobs:
 
           echo "Worker image: ${image} (user ${configured_user})"
 
+      - name: Scan release images and produce SBOMs
+        working-directory: .
+        run: |
+          tools/delivery-image-gate "zero-to-prod-work-items-api:${GITHUB_SHA}" /tmp/ztp-api-scan
+          tools/delivery-image-gate "zero-to-prod-work-items-worker:${GITHUB_SHA}" /tmp/ztp-worker-scan
+
+      - name: Retain release security reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-security-reports
+          path: |
+            /tmp/ztp-api-scan
+            /tmp/ztp-worker-scan
+          if-no-files-found: warn
+          retention-days: 14
+
   frontend-validation:
     name: Validate Work Items frontend
     needs: changes
@@ -484,6 +507,10 @@ jobs:
           bash -n tools/security-lab-local
           bash -n tools/observability-lab-local
           bash -n tools/capacity-lab-local
+          bash -n tools/delivery-lab-local
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/delivery-lab-experiments", "tools/delivery-image-gate")]'
+          DELIVERY_STATE=/nonexistent DELIVERY_BLUE_IMAGE=sha256:unavailable DELIVERY_GREEN_IMAGE=sha256:unavailable ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml -f infra/delivery-lab/compose.yaml --profile tools config --quiet
           bash -n tools/availability-lab-local
           for script in infra/availability-lab/postgres/*.sh infra/availability-lab/rabbitmq/*.sh; do sh -n "$script"; done
           python3 -c 'import ast, pathlib; ast.parse(pathlib.Path("tools/availability-lab-experiments").read_text())'

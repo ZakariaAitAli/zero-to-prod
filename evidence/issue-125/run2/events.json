@@ -1,0 +1,52 @@
+[
+  {
+    "name": "blue business",
+    "start": 0.0006732730034855194,
+    "end": 0.5348948540049605
+  },
+  {
+    "name": "switch green",
+    "start": 2.535280882002553,
+    "end": 3.0331027730062488
+  },
+  {
+    "name": "green business",
+    "start": 5.03319548300351,
+    "end": 5.555917596000654
+  },
+  {
+    "name": "rollback blue",
+    "start": 5.55591906200425,
+    "end": 6.013587079003628
+  },
+  {
+    "name": "bad candidate startup",
+    "start": 8.013755758001935,
+    "end": 14.970104397005343
+  },
+  {
+    "name": "bad candidate switch refused",
+    "start": 16.970515776003595,
+    "end": 17.0679297040042
+  },
+  {
+    "name": "blue survives failed rollout",
+    "start": 17.06793701100105,
+    "end": 17.59984722500667
+  },
+  {
+    "name": "restore green",
+    "start": 17.599848966005084,
+    "end": 23.8096640770018
+  },
+  {
+    "name": "switch restored green",
+    "start": 23.809669030000805,
+    "end": 24.26633928400406
+  },
+  {
+    "name": "restored green business",
+    "start": 26.266427063004812,
+    "end": 26.38301598000544
+  }
+]

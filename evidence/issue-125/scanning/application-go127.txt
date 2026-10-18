@@ -1,0 +1,398 @@
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6617
+    HTTP/2 server crash due to HPACK encoder race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6617
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.59.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.ConnectionError.Error
+      #2: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.ErrCode.String
+      #3: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.FrameHeader.String
+      #4: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.FrameType.String
+      #5: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrame
+      #6: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrameForHeader
+      #7: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrameHeader
+      #8: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteContinuation
+      #9: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteGoAway
+      #10: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteHeaders
+      #11: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WritePing
+      #12: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteRSTStream
+      #13: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteSettings
+      #14: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteSettingsAck
+      #15: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteWindowUpdate
+      #16: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.SettingID.String
+      #17: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.SettingsFrame.ForeachSetting
+      #18: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.StreamError.Error
+      #19: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #20: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.connError.Error
+      #21: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.duplicatePseudoHeaderError.Error
+      #22: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.headerFieldNameError.Error
+      #23: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.headerFieldValueError.Error
+      #24: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.pseudoHeaderError.Error
+
+  Standard library
+    Found in: net/http/internal/http2@go1.27.1
+    Fixed in: net/http/internal/http2@go1.27.2
+    Example traces found:
+      #1: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.Close
+      #2: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.Close
+      #3: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.RoundTrip
+      #4: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.RoundTrip
+      #5: internal/observability/metrics.go:65:22: observability.StartMetricsServer calls http.Server.Shutdown, which calls http2.Server.GracefulShutdown
+      #6: internal/observability/metrics.go:65:22: observability.StartMetricsServer calls http.Server.Shutdown, which calls http2.Server.GracefulShutdown
+      #7: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.Server.ServeConn
+      #8: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.Server.ServeConn
+      #9: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.AddConn
+      #10: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.AddConn
+      #11: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.NewClientConn
+      #12: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.NewClientConn
+      #13: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #14: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #15: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.bufferedWriterTimeoutWriter.Write
+      #16: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.bufferedWriterTimeoutWriter.Write
+      #17: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.chunkWriter.Write
+      #18: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.chunkWriter.Write
+      #19: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.gzipReader.Close
+      #20: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.gzipReader.Close
+      #21: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.gzipReader.Read
+      #22: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.gzipReader.Read
+      #23: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.requestBody.Close
+      #24: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.requestBody.Close
+      #25: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which calls http2.responseWriter.Write
+      #26: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which calls http2.responseWriter.Write
+      #27: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteHeader
+      #28: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteHeader
+      #29: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteString
+      #30: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteString
+      #31: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.stickyErrWriter.Write
+      #32: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.stickyErrWriter.Write
+      #33: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.transportResponseBody.Close
+      #34: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.transportResponseBody.Close
+      #35: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.transportResponseBody.Read
+      #36: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.transportResponseBody.Read
+
+Vulnerability #2: GO-2026-6613
+    HTTP/1 server connection desynchronization after 2xx CONNECT response in
+    net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6613
+  Standard library
+    Found in: net/http@go1.27.1
+    Fixed in: net/http@go1.27.2
+    Example traces found:
+      #1: internal/observability/tracing.go:13:2: observability.init calls otlptracehttp.init, which eventually calls http.CanonicalHeaderKey
+      #2: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.Client.Do
+      #3: worker/main.go:15:2: worker.init calls prometheus.init, which eventually calls http.HandleFunc
+      #4: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http.Header.Add
+      #5: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.Header.Get
+      #6: internal/observability/tracing.go:73:35: observability.Setup calls otlploghttp.New, which eventually calls http.Header.Set
+      #7: internal/observability/tracing.go:73:35: observability.Setup calls otlploghttp.New, which eventually calls http.NewRequestWithContext
+      #8: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.ParseTime
+      #9: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http.ReadResponse
+      #10: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http.Request.Write
+      #11: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http.Response.Write
+      #12: internal/observability/metrics.go:45:12: observability.StartMetricsServer calls http.ServeMux.Handle
+      #13: api/main.go:266:16: api.newApplicationHandler calls http.ServeMux.HandleFunc
+      #14: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve
+      #15: internal/observability/metrics.go:65:22: observability.StartMetricsServer calls http.Server.Shutdown
+      #16: internal/authn/validator.go:102:60: authn.httpClient calls http.Transport.Clone
+      #17: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.body.Close
+      #18: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.body.Read
+      #19: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.bodyEOFSignal.Close
+      #20: cmd/redrive-after-restore/main.go:48:26: redrive.main calls pgx.Connect, which eventually calls http.bodyEOFSignal.Read
+      #21: cmd/redrive-after-restore/main.go:112:23: redrive.recoverAccepted calls pgx.dbTx.Query, which eventually calls http.bodyLocked.Read
+      #22: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http.bufioFlushWriter.Write
+      #23: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.cancelTimerBody.Close
+      #24: cmd/redrive-after-restore/main.go:48:26: redrive.main calls pgx.Connect, which eventually calls http.cancelTimerBody.Read
+      #25: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http.checkConnErrorWriter.Write
+      #26: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http.chunkWriter.Write
+      #27: cmd/redrive-after-restore/main.go:112:23: redrive.recoverAccepted calls pgx.dbTx.Query, which eventually calls http.connReader.Read
+      #28: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.expectContinueReader.Close
+      #29: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.expectContinueReader.Read
+      #30: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.gzipReader.Close
+      #31: cmd/redrive-after-restore/main.go:48:26: redrive.main calls pgx.Connect, which eventually calls http.gzipReader.Read
+      #32: cmd/redrive-after-restore/main.go:48:26: redrive.main calls pgx.Connect, which eventually calls http.loggingConn.Read
+      #33: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http.loggingConn.Write
+      #34: cmd/redrive-after-restore/main.go:112:23: redrive.recoverAccepted calls pgx.dbTx.Query, which eventually calls http.maxBytesReader.Read
+      #35: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #36: cmd/redrive-after-restore/main.go:112:23: redrive.recoverAccepted calls pgx.dbTx.Query, which eventually calls http.persistConn.Read
+      #37: cmd/redrive-after-restore/main.go:112:23: redrive.recoverAccepted calls pgx.dbTx.Query, which eventually calls http.persistConnWriter.ReadFrom
+      #38: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http.persistConnWriter.Write
+      #39: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.readTrackingBody.Close
+      #40: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.readTrackingBody.Read
+      #41: cmd/redrive-after-restore/main.go:48:26: redrive.main calls pgx.Connect, which eventually calls http.readWriteCloserBody.Read
+      #42: cmd/redrive-after-restore/main.go:112:23: redrive.recoverAccepted calls pgx.dbTx.Query, which eventually calls http.response.ReadFrom
+      #43: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which calls http.response.Write
+      #44: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http.response.WriteString
+      #45: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which calls http.timeoutWriter.Write
+      #46: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http.transportReadFromServerError.Error
+
+Vulnerability #3: GO-2026-6612
+    Double flow control refund on HTTP/2 server streams in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6612
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.59.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.ConnectionError.Error
+      #2: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.ErrCode.String
+      #3: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.FrameHeader.String
+      #4: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.FrameType.String
+      #5: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrame
+      #6: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrameForHeader
+      #7: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrameHeader
+      #8: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteContinuation
+      #9: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteGoAway
+      #10: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteHeaders
+      #11: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WritePing
+      #12: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteRSTStream
+      #13: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteSettings
+      #14: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteSettingsAck
+      #15: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteWindowUpdate
+      #16: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.SettingID.String
+      #17: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.SettingsFrame.ForeachSetting
+      #18: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.StreamError.Error
+      #19: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #20: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.connError.Error
+      #21: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.duplicatePseudoHeaderError.Error
+      #22: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.headerFieldNameError.Error
+      #23: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.headerFieldValueError.Error
+      #24: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.pseudoHeaderError.Error
+
+  Standard library
+    Found in: net/http/internal/http2@go1.27.1
+    Fixed in: net/http/internal/http2@go1.27.2
+    Example traces found:
+      #1: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.Server.ServeConn
+      #2: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.Server.ServeConn
+      #3: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.requestBody.Close
+      #4: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.requestBody.Close
+      #5: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.requestBody.Read
+      #6: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.requestBody.Read
+
+Vulnerability #4: GO-2026-6611
+    Excessive CPU consumption from repeated initial window changes in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6611
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.59.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.ConnectionError.Error
+      #2: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.ErrCode.String
+      #3: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.FrameHeader.String
+      #4: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.FrameType.String
+      #5: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrame
+      #6: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrameForHeader
+      #7: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrameHeader
+      #8: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteContinuation
+      #9: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteGoAway
+      #10: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteHeaders
+      #11: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WritePing
+      #12: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteRSTStream
+      #13: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteSettings
+      #14: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteSettingsAck
+      #15: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteWindowUpdate
+      #16: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.SettingID.String
+      #17: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.SettingsFrame.ForeachSetting
+      #18: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.StreamError.Error
+      #19: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #20: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.connError.Error
+      #21: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.duplicatePseudoHeaderError.Error
+      #22: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.headerFieldNameError.Error
+      #23: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.headerFieldValueError.Error
+      #24: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.pseudoHeaderError.Error
+
+  Standard library
+    Found in: net/http/internal/http2@go1.27.1
+    Fixed in: net/http/internal/http2@go1.27.2
+    Example traces found:
+      #1: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.Close
+      #2: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.Close
+      #3: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.RoundTrip
+      #4: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.RoundTrip
+      #5: internal/observability/metrics.go:65:22: observability.StartMetricsServer calls http.Server.Shutdown, which calls http2.Server.GracefulShutdown
+      #6: internal/observability/metrics.go:65:22: observability.StartMetricsServer calls http.Server.Shutdown, which calls http2.Server.GracefulShutdown
+      #7: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.Server.ServeConn
+      #8: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.Server.ServeConn
+      #9: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.AddConn
+      #10: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.AddConn
+      #11: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.NewClientConn
+      #12: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.NewClientConn
+      #13: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #14: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #15: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.bufferedWriterTimeoutWriter.Write
+      #16: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.bufferedWriterTimeoutWriter.Write
+      #17: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.chunkWriter.Write
+      #18: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.chunkWriter.Write
+      #19: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.gzipReader.Close
+      #20: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.gzipReader.Close
+      #21: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.gzipReader.Read
+      #22: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.gzipReader.Read
+      #23: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.requestBody.Close
+      #24: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.requestBody.Close
+      #25: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which calls http2.responseWriter.Write
+      #26: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which calls http2.responseWriter.Write
+      #27: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteHeader
+      #28: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteHeader
+      #29: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteString
+      #30: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteString
+      #31: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.stickyErrWriter.Write
+      #32: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.stickyErrWriter.Write
+      #33: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.transportResponseBody.Close
+      #34: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.transportResponseBody.Close
+      #35: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.transportResponseBody.Read
+      #36: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.transportResponseBody.Read
+
+Vulnerability #5: GO-2026-6610
+    HTTP/2 transport accepts malformed framing-related headers in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6610
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.59.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+
+  Standard library
+    Found in: net/http/internal/http2@go1.27.1
+    Fixed in: net/http/internal/http2@go1.27.2
+    Example traces found:
+      #1: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.AddConn
+      #2: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.AddConn
+      #3: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.NewClientConn
+      #4: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.NewClientConn
+      #5: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #6: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+
+Vulnerability #6: GO-2026-6608
+    Memory limit bypass when parsing MIME headers in net/textproto,
+    mime/multipart
+  More info: https://pkg.go.dev/vuln/GO-2026-6608
+  Standard library
+    Found in: net/textproto@go1.27.1
+    Fixed in: net/textproto@go1.27.2
+    Example traces found:
+      #1: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls multipart.Reader.ReadForm
+      #2: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls textproto.Reader.ReadMIMEHeader
+
+Vulnerability #7: GO-2026-6607
+    Reject malformed ECH outer extension references in crypto/tls
+  More info: https://pkg.go.dev/vuln/GO-2026-6607
+  Standard library
+    Found in: crypto/tls@go1.27.1
+    Fixed in: crypto/tls@go1.27.2
+    Example traces found:
+      #1: api/rabbitmq_publisher.go:32:30: api.newRabbitMQPublisher calls amqp091.Dial, which eventually calls tls.Conn.Handshake
+      #2: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls tls.Conn.HandshakeContext
+      #3: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls tls.Conn.Read
+      #4: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls tls.Conn.Write
+      #5: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls tls.Dialer.DialContext
+
+Vulnerability #8: GO-2026-6605
+    HTTP/1 client connection desynchronization after CONNECT rejection in
+    net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6605
+  Standard library
+    Found in: net/http@go1.27.1
+    Fixed in: net/http@go1.27.2
+    Example traces found:
+      #1: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http.Client.Do
+
+Vulnerability #9: GO-2026-6603
+    HTTP/2 server memory exhaustion due to Trailer headers in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6603
+  Module: golang.org/x/net
+    Found in: golang.org/x/net@v0.59.0
+    Fixed in: golang.org/x/net@v0.60.0
+    Example traces found:
+      #1: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.ConnectionError.Error
+      #2: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.ErrCode.String
+      #3: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.FrameHeader.String
+      #4: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.FrameType.String
+      #5: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrame
+      #6: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrameForHeader
+      #7: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.ReadFrameHeader
+      #8: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteContinuation
+      #9: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteGoAway
+      #10: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteHeaders
+      #11: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WritePing
+      #12: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteRSTStream
+      #13: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteSettings
+      #14: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteSettingsAck
+      #15: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.Framer.WriteWindowUpdate
+      #16: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.SettingID.String
+      #17: api/store.go:500:18: api.postgresStore.Close calls pgxpool.Pool.Close, which eventually calls http2.SettingsFrame.ForeachSetting
+      #18: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.StreamError.Error
+      #19: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #20: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.connError.Error
+      #21: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.duplicatePseudoHeaderError.Error
+      #22: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.headerFieldNameError.Error
+      #23: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.headerFieldValueError.Error
+      #24: cmd/redrive-after-restore/main.go:61:45: redrive.main calls json.Encoder.Encode, which eventually calls http2.pseudoHeaderError.Error
+
+  Standard library
+    Found in: net/http/internal/http2@go1.27.1
+    Fixed in: net/http/internal/http2@go1.27.2
+    Example traces found:
+      #1: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.Close
+      #2: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.Close
+      #3: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.RoundTrip
+      #4: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.NetHTTPClientConn.RoundTrip
+      #5: internal/observability/metrics.go:65:22: observability.StartMetricsServer calls http.Server.Shutdown, which calls http2.Server.GracefulShutdown
+      #6: internal/observability/metrics.go:65:22: observability.StartMetricsServer calls http.Server.Shutdown, which calls http2.Server.GracefulShutdown
+      #7: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.Server.ServeConn
+      #8: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.Server.ServeConn
+      #9: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.AddConn
+      #10: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.AddConn
+      #11: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.NewClientConn
+      #12: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.NewClientConn
+      #13: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #14: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.Transport.RoundTrip
+      #15: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.bufferedWriterTimeoutWriter.Write
+      #16: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.bufferedWriterTimeoutWriter.Write
+      #17: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.chunkWriter.Write
+      #18: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.chunkWriter.Write
+      #19: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.gzipReader.Close
+      #20: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.gzipReader.Close
+      #21: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.gzipReader.Read
+      #22: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.gzipReader.Read
+      #23: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.requestBody.Close
+      #24: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.requestBody.Close
+      #25: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which calls http2.responseWriter.Write
+      #26: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which calls http2.responseWriter.Write
+      #27: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteHeader
+      #28: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteHeader
+      #29: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteString
+      #30: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.responseWriter.WriteString
+      #31: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.stickyErrWriter.Write
+      #32: cmd/redrive-after-restore/main.go:38:15: redrive.main calls fmt.Fprintln, which eventually calls http2.stickyErrWriter.Write
+      #33: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.transportResponseBody.Close
+      #34: internal/authn/validator.go:84:28: authn.NewValidator calls jwk.NewCache, which eventually calls http2.transportResponseBody.Close
+      #35: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.transportResponseBody.Read
+      #36: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls http2.transportResponseBody.Read
+
+Vulnerability #10: GO-2026-6600
+    Recognize yield as regexp preceder keyword in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-6600
+  Standard library
+    Found in: html/template@go1.27.1
+    Fixed in: html/template@go1.27.2
+    Example traces found:
+      #1: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls template.Template.Execute
+      #2: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls template.Template.ExecuteTemplate
+
+Vulnerability #11: GO-2026-6599
+    Reset context tracking on consecutive template expressions in html/template
+  More info: https://pkg.go.dev/vuln/GO-2026-6599
+  Standard library
+    Found in: html/template@go1.27.1
+    Fixed in: html/template@go1.27.2
+    Example traces found:
+      #1: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls template.Template.Execute
+      #2: internal/observability/metrics.go:57:25: observability.StartMetricsServer calls http.Server.Serve, which eventually calls template.Template.ExecuteTemplate
+
+Your code is affected by 11 vulnerabilities from the Go standard library.
+This scan also found 2 vulnerabilities in packages you import and 1
+vulnerability in modules you require, but your code doesn't appear to call these
+vulnerabilities.
+Use '-show verbose' for more details.
