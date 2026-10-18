@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Summarize recorded issue-123 stages; no Docker mutation or price lookup.
+Usage: python3 tools/capacity-lab-report RUN_DIRECTORY
+"""
+import json
+from pathlib import Path
+import re
+import statistics
+import sys
+
+def gib(value):
+ match=re.fullmatch(r'([\d.]+)(B|kB|MB|GB|KiB|MiB|GiB)',value.strip())
+ if not match:raise ValueError(value)
+ return float(match[1])*{'B':1,'kB':1e3,'MB':1e6,'GB':1e9,'KiB':1024,'MiB':1024**2,'GiB':1024**3}[match[2]]/1024**3
+
+rows=[]
+for path in sorted(Path(sys.argv[1]).glob('*.json')):
+ result=json.loads(path.read_text())
+ if 'stage' not in result:continue
+ samples=result['resources'];successes=result['jobs']['succeeded']
+ def avg_cpu(filter_name):
+  values=[sum(float(c['CPUPerc'].rstrip('%'))/100 for c in sample['containers'] if filter_name(c['Name'])) for sample in samples]
+  return statistics.mean(values) if values else None
+ cpu=avg_cpu(lambda _:True)
+ mem=statistics.mean([sum(gib(c['MemUsage'].split(' / ')[0]) for c in sample['containers']) for sample in samples]) if samples else None
+ sec=result['including_tail_s']+result['drain_seconds']
+ row={'stage':result['stage'],'requests_s':result['requests_per_second_including_tail'],
+ 'p99_ms':result['request_p99_s']*1000,'availability':result['availability_fraction'],
+ 'within_250ms':result['within_250ms_fraction'],'client_drops':result['client_dropped_iterations'],
+ 'status_counts':result['status_counts'],'accepted':result['jobs']['accepted'],'succeeded':successes,
+ 'within_30s':result['jobs']['within_30_seconds']/successes if successes else None,
+ 'job_p99_s':result['jobs']['latency_p99'],'drain_s':result['drain_seconds'],
+ 'sampled_stack_cpu_cores_mean':cpu,'sampled_stack_memory_gib_mean':mem,
+ 'approx_stack_cpu_seconds_per_1000_successes':cpu*sec/successes*1000 if successes and cpu is not None else None,
+ 'approx_stack_gib_hours_per_1000_successes':mem*sec/3600/successes*1000 if successes and mem is not None else None,
+ 'sampled_api_cpu_cores_mean':avg_cpu(lambda n:'-api-' in n),
+ 'sampled_worker_cpu_cores_mean':avg_cpu(lambda n:'-worker-' in n),
+ 'sampled_postgres_cpu_cores_mean':avg_cpu(lambda n:'-postgres-' in n and '-exporter-' not in n),
+ 'resource_samples':len(samples),'invariants':result['invariants'],'duplicate_probe':result.get('duplicate_probe')}
+ rows.append(row)
+print(json.dumps(rows,indent=2))

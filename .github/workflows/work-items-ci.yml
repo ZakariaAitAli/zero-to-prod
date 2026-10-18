@@ -483,6 +483,10 @@ jobs:
           bash -n tools/rabbitmq-local
           bash -n tools/security-lab-local
           bash -n tools/observability-lab-local
+          bash -n tools/capacity-lab-local
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/capacity-lab-experiments", "tools/capacity-lab-report")]'
+          CAPACITY_ROOT="$PWD" ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml -f infra/capacity-lab/compose.yaml --profile tools config --quiet
           bash -n infra/observability-lab/postgres/init/002-monitoring.sh
           python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/observability-lab-experiments", "tools/observability-lab-dashboard")]'
           ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
