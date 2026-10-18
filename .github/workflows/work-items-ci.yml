@@ -216,6 +216,10 @@ jobs:
             -run '^TestValidateSharesOneRefreshAcrossConcurrentUnknownKeys$' \
             -count=5
 
+      - name: Exercise ingress rate limiting with controlled TLS upstreams
+        working-directory: .
+        run: bash scripts/test-security-lab-rate-limits.sh
+
       - name: Start local integration dependencies
         working-directory: .
         run: |
@@ -462,6 +466,7 @@ jobs:
           bash -n scripts/test-security-lab-startup-warning.sh
           bash -n scripts/test-security-lab-internal-tls.sh
           bash -n scripts/test-security-lab-keycloak-tls.sh
+          bash -n scripts/test-security-lab-rate-limits.sh
           bash -n scripts/test-security-lab-app-tls.sh
           bash -n tools/work-items-api-local
           bash -n tools/postgres-local
@@ -469,6 +474,8 @@ jobs:
           bash -n tools/postgres-backup-local
           bash -n tools/work-items-worker-local
           bash -n tools/rabbitmq-local
+          bash -n tools/security-lab-rotate-app-db
+          bash -n scripts/test-security-lab-secret-rotation.sh
           bash -n tools/security-lab-local
           bash -n infra/local/postgres/init/001-roles.sh
           bash -n infra/security-lab/postgres/init/001-security-lab-roles.sh

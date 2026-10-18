@@ -22,7 +22,9 @@ Proposed). The API and oauth2-proxy serve only **HTTPS** too, and the ingress
 verifies them against a fourth, application CA
 ([ADR 0008](../adr/0008-security-lab-application-transport.md), Proposed).
 oauth2-proxy → Valkey and Keycloak → its database stay plaintext by decision.
-Rate limiting and secret rotation are not implemented yet. It does not
+Ingress rate limiting (ADR 0010) and recoverable API database password
+rotation (ADR 0011) are implemented. Other secret types still need rotation
+procedures. It does not
 complete Issue #121.
 
 The development lab ([local Work Items guide](local-work-items.md)) is
@@ -1045,6 +1047,66 @@ export ZTP_SECURITY_LAB_TOOL_SUBNETS="unrelated-probe=10.213.250.0/24 ipcontrol=
 Compose reuses networks that carry its project and network labels. The
 application TLS experiment records the exact commands.
 
+## Rotate the API database password (ADR 0011)
+
+Use `./tools/security-lab-local rotate-app-db-password` with the same project,
+state and custom image overrides used for start. It rotates only the API's
+PostgreSQL password. Do not run init/start or another operator change at the
+same time. Back up protected state before maintenance; do not display or copy
+credential values into a command line.
+
+The command persists a private planned-value journal, changes the role,
+updates its source and derived files, terminates existing connections for that
+API database identity, recreates the API, and checks its database readiness.
+Requests can fail during this maintenance. There is no zero-downtime promise.
+The old password is not silently re-enabled after a failure. If interrupted,
+rerun the same command with the same state to resume the planned rotation;
+**do not delete its pending journal**. Missing/corrupt protected state needs
+operator recovery. The command lock coordinates this command only.
+
+The tested failure/resume procedure is
+`scripts/test-security-lab-secret-rotation.sh`; it requires an explicitly
+selected disposable lab and actually rotates its password. Set
+`ZTP_ROTATION_TEST_EVIDENCE` to a fresh JSON path to record results. It is not a
+read-only check. `tools/security-lab-image-secrets` separately scans configured
+known values/private keys in all saved image layers, metadata/history, source
+files and Git objects, with a scanner positive control; set
+`ZTP_IMAGE_AUDIT_EVIDENCE` for its JSON report. Unsupported compression or failed
+export fails the audit. Neither report prints credential values.
+
+Changing a Keycloak realm import file does not rotate an existing realm's
+client/user credentials. Valkey, OAuth clients, user passwords, cookie keys,
+CA roots and the migrator credential need their own propagation/revocation
+procedures. See ADR 0011 and the [rotation experiment](../experiments/issue-121-secret-rotation.md).
+
+## Rate limiting (ADR 0010)
+
+The ingress immediately rejects excess API traffic with 429, JSON
+`{"error":"rate_limited"}`, `Retry-After: 1`, and a request ID. API budgets
+are 20 requests/s per connecting IP and 100/s aggregate, with bursts of 40/200.
+Authentication budgets are 5/s per IP and 20/s aggregate, bursts 10/40, for
+gateway sign-in/callback/sign-out and realm POSTs. Static resources and
+identity discovery remain available. Both session and bearer API paths share
+the API budget. Caller-provided forwarding headers cannot change the key.
+
+These are local illustrative limits, not measured production capacity.
+Docker/NAT clients may share a source address. The state is per ingress and
+resets on restart; it is not a distributed quota or password lockout. On 429,
+wait at least Retry-After and back off; avoid blind retries of ambiguous writes.
+Use the request ID and `limit=REJECTED` access-log field to distinguish shedding
+from authentication or dependency failure.
+
+`bash scripts/test-security-lab-rate-limits.sh` exercises the real nginx
+configuration against controlled TLS upstreams. It uses disposable containers,
+a disposable CA/state directory, and an ephemeral loopback host port; it does
+not verify real authentication or the UI. Set `ZTP_RATE_TEST_SUBNET` to a free
+explicit subnet if Docker's default pools are exhausted. Set
+`ZTP_RATE_TEST_EVIDENCE` to a new JSON output path to record its results.
+
+For separate experimental builds, `ZTP_SECURITY_LAB_INGRESS_IMAGE` and
+`ZTP_SECURITY_LAB_WORKER_IMAGE` override their image tags; their defaults keep
+the existing local tags. Use the same overrides for start and later commands.
+
 ## Stop and remove
 
 ```bash
@@ -1155,7 +1217,8 @@ manually when no longer needed.
 - In the verified environment, the ingress saw every host client as the edge
   network gateway address, so per-address limits would treat all host clients
   as one.
-- No secret rotation procedure yet. The migrator URL is visible in the migrate
+- Only the API database password has a tested rotation procedure (ADR 0011).
+  Other secret types remain separate work. The migrator URL is visible in the migrate
   container's process arguments while it runs; it is the one known secret in
   a process argument. The tool passes passwords, client secrets, tokens,
   cookies, and codes to curl, docker, grep, and Python on standard input, and

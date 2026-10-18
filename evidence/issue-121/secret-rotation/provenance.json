@@ -1,0 +1,64 @@
+{
+  "base_commit": "e85268ef16629455b70893bd4bef7e863ed936e9",
+  "scope": "local Docker; separate -limit lab; no retained labs started",
+  "tested_files_sha256": {
+    "infra/security-lab/ingress/nginx.conf": "608577f47b37700a770fe942f43932b6e6cda29e69f14fe1aa15730650f6bce4",
+    "infra/security-lab/compose.yaml": "039904aba6af8daf4e3327afed73bab39be9bf81411e2fdba09f1eafb4eb1792",
+    "tools/security-lab-local": "21bf7ca40c07f722cde85b0131850c8aa062a7dc75ec699b131149d1ad481c70",
+    "tools/security-lab-rotate-app-db": "f867a1730eac673e77c6d263e67fd1b84270481d5b99eaaca502031cab87cb05",
+    "tools/security-lab-image-secrets": "c7b2e3fa35fe8e375134b88921d325c772d42f9540a2f92ff3e4473743e729d3",
+    "scripts/test-security-lab-rate-limits.sh": "9a95b4e0a1339c4d180571477177a181ddeb4cbd7e9230360b25948aba03b19f",
+    "scripts/test-security-lab-secret-rotation.sh": "00af95a5aa6204d62c30bbde8f301312d61c61afe87bb4d742635f05a4f350df"
+  },
+  "authentication_tool_sha256": "c13f2aad4b10911695cf9b904bb90a613baeb5321192b45c0321b47b48ee68b8",
+  "authentication_tool_difference": "Only later rotation usage/case dispatch added; authentication code unchanged. The earlier tool is reconstructed by removing those additions.",
+  "images": {
+    "api": "sha256:dc640ef9942ea41d00742bfa9d061dcee56f79956dfa9bb723554cca0ba5d89c",
+    "worker": "sha256:323a794837dd57d718f62963ce920746e03804b391cb8ba041926834b41d38a9",
+    "ingress": "sha256:a41feccf0e58548fda8d9b161923c296bc76d7fa286a86c8afaa8444dd582ff7",
+    "postgres": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+    "keycloak": "sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741",
+    "keycloak-postgres": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+    "oauth2-proxy": "sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916",
+    "valkey": "sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11",
+    "rabbitmq": "sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95"
+  },
+  "results": {
+    "controlled_admission": {
+      "passed": true,
+      "checks": 9
+    },
+    "real_authentication": {
+      "passed": 77,
+      "failed": 0,
+      "observations": 10
+    },
+    "rotation_final_cli_rerun": {
+      "passed": true,
+      "checks": 12
+    },
+    "post_rotation_browser": {
+      "passed": 17,
+      "failed": 0,
+      "observations": 7,
+      "note": "Before final journal-parent fsync refinement, which the final CLI rotation rerun covers. Browser/API images unchanged."
+    },
+    "image_source_history_audit": {
+      "passed": true,
+      "images": 9
+    }
+  },
+  "environment": {
+    "project": "zero-to-prod-security-lab-limit",
+    "subnets": [
+      "10.213.7.0/24",
+      "10.213.8.0/24",
+      "10.213.9.0/24",
+      "10.213.10.0/24",
+      "10.213.11.0/24",
+      "10.213.12.0/24"
+    ],
+    "custom_image_suffix": "limit",
+    "final_state": "stopped; containers, 3 volumes, networks and protected state retained; no pending rotation journal"
+  }
+}
