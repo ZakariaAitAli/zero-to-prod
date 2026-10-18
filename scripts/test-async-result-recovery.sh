@@ -70,7 +70,12 @@ UPDATE public.work_items SET status='done';
 UPDATE public.processing_jobs SET state='succeeded',attempt_count=1,finished_at=now();
 INSERT INTO public.outbox_messages(processing_job_id,event_type,payload,published_at) SELECT id,'work_item.process','{}',now() FROM public.processing_jobs;
 SQL
-sql "$restore_db" -1 < "$root_dir/apps/work-items/migrations/000005_add_title_analysis.up.sql" >/dev/null
+# Restore into the current schema, just like the source upgraded above.
+# The initial four migrations were applied when creating the empty target.
+for migration in "$root_dir"/apps/work-items/migrations/*.up.sql; do
+ case "${migration##*/}" in 00000[1-4]_*) continue ;; esac
+ sql "$restore_db" -1 < "$migration" >/dev/null
+done
 ZTP_POSTGRES_DB="$legacy_db" "$root_dir/tools/postgres-backup-local" create "$artifact_dir/current.dump"
 "$root_dir/tools/postgres-backup-local" validate "$artifact_dir/current.dump"
 ZTP_POSTGRES_DB="$restore_db" "$root_dir/tools/postgres-backup-local" restore "$artifact_dir/current.dump"
