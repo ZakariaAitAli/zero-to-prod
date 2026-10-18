@@ -99,3 +99,11 @@ included in stack measurements and can dominate a small application.
 Use actual target-environment prices and redundancy/retention requirements
 before estimating a deployment budget. Ten minutes of sustained load cannot
 prove day/week/month stability, memory-leak absence or production capacity.
+
+To regenerate the sampled-resource summary without rerunning load:
+
+```sh
+python3 tools/capacity-lab-report evidence/issue-123/run2 > evidence/issue-123/run2/analysis.json
+```
+
+The helper excludes its own `analysis.json` output from stage inputs.

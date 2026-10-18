@@ -15,6 +15,9 @@ def gib(value):
 
 rows=[]
 for path in sorted(Path(sys.argv[1]).glob('*.json')):
+ # Allow redirecting output to RUN_DIRECTORY/analysis.json: the shell opens
+ # that file before this process scans its inputs. It is never a raw stage.
+ if path.name=='analysis.json':continue
  result=json.loads(path.read_text())
  if 'stage' not in result:continue
  samples=result['resources'];successes=result['jobs']['succeeded']
