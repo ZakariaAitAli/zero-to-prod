@@ -1,0 +1,457 @@
+{
+  "experiment": "e8-worker-cannot-complete",
+  "started": "2026-10-18T14:58:34Z",
+  "checks": {
+    "stalled_alert_fired": true,
+    "requeue_loop_visible": true,
+    "session_restarts_visible": true,
+    "error_logs_name_permission_sqlstate": true,
+    "infrastructure_failures_do_not_consume_attempts": true,
+    "backlog_drained": true
+  },
+  "fault": {
+    "action": "REVOKE INSERT ON work_item_results FROM zero_to_prod_worker",
+    "at": "2026-10-18T14:58:34Z"
+  },
+  "alerts": [
+    {
+      "alert": "WorkItemsAsyncProcessingStalled",
+      "fired": true,
+      "seconds_until_firing": 200.1,
+      "active_at": "2026-10-18T15:00:44.363959511Z",
+      "summary": "An accepted job has waited more than two minutes without completing.",
+      "description": "The oldest accepted job is 3m 7s old. Users waiting on processing see no result.",
+      "runbook": "docs/runbooks/work-items-observability.md#async-stalled"
+    }
+  ],
+  "during_fault": {
+    "availability_bad_5m": [],
+    "availability_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:availability_bad:ratio_rate1h"
+        },
+        "value": 0.11922901344478119
+      }
+    ],
+    "latency_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate5m"
+        },
+        "value": 0.0
+      }
+    ],
+    "latency_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate1h"
+        },
+        "value": 0.16443918118761636
+      }
+    ],
+    "freshness_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate5m"
+        },
+        "value": 0.8580388670867148
+      }
+    ],
+    "freshness_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate1h"
+        },
+        "value": 0.2474193019826314
+      }
+    ],
+    "requests_by_route_code_1m": [
+      {
+        "metric": {
+          "code": "200",
+          "route": "/processing-jobs/{id}"
+        },
+        "value": 4.000240014400864
+      },
+      {
+        "metric": {
+          "code": "201",
+          "route": "/items"
+        },
+        "value": 4.000240014400864
+      },
+      {
+        "metric": {
+          "code": "202",
+          "route": "/items/{id}/process"
+        },
+        "value": 4.000240014400864
+      }
+    ],
+    "latency_p95_1m": [
+      {
+        "metric": {},
+        "value": 0.004789915966386554
+      }
+    ],
+    "accepted_jobs": [
+      {
+        "metric": {
+          "__name__": "work_items_processing_jobs_accepted",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 790.0
+      }
+    ],
+    "oldest_accepted_age_s": [
+      {
+        "metric": {
+          "__name__": "work_items_processing_job_oldest_accepted_age_seconds",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 197.64098
+      }
+    ],
+    "outbox_unpublished": [
+      {
+        "metric": {
+          "__name__": "work_items_outbox_unpublished_messages",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "oldest_unpublished_age_s": [
+      {
+        "metric": {
+          "__name__": "work_items_outbox_oldest_unpublished_age_seconds",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "backlog_scrape_success": [
+      {
+        "metric": {
+          "__name__": "work_items_backlog_scrape_success",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "queue_ready": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_messages_ready",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 765.0
+      }
+    ],
+    "queue_unacked": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_messages_unacked",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 0.0
+      }
+    ],
+    "queue_consumers": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_consumers",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 0.0
+      }
+    ],
+    "outbox_publish_rate_1m": [
+      {
+        "metric": {
+          "result": "published"
+        },
+        "value": 4.020241214472869
+      },
+      {
+        "metric": {
+          "result": "broker_error"
+        },
+        "value": 0.0
+      }
+    ],
+    "broker_connect_failures_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "worker_deliveries_1m": [
+      {
+        "metric": {
+          "redelivered": "false",
+          "settlement": "ack"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "redelivered": "false",
+          "settlement": "nack_requeue"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "redelivered": "true",
+          "settlement": "nack_requeue"
+        },
+        "value": 1.000060003600216
+      }
+    ],
+    "worker_session_exits_1m": [
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 1.000060003600216
+      }
+    ],
+    "completion_latency_p95_5m": [
+      {
+        "metric": {},
+        "value": 277.0746894293579
+      }
+    ],
+    "pool_acquired": [
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "pool_wait_s_per_s_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "cpu_cores_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0158009480568834
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.005000300018001081
+      }
+    ],
+    "rss_bytes": [
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 32522240.0
+      },
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 32501760.0
+      }
+    ],
+    "pg_up": [
+      {
+        "metric": {
+          "__name__": "pg_up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      }
+    ],
+    "targets_up": [
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "otel-collector:8888",
+          "job": "otel-collector"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "loki:3100",
+          "job": "loki"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues"
+        },
+        "value": 1.0
+      }
+    ]
+  },
+  "stuck_job": {
+    "job_id": 7013,
+    "attempt_count": "0",
+    "state": "accepted"
+  },
+  "worker_logs": [
+    {
+      "service": "work-items-worker",
+      "trace_id": "3fd46b45e7175ca781df140eed6b67ad",
+      "level": "warn",
+      "line": "delivery handled with error",
+      "error": "processing job completion unavailable: ERROR: permission denied for table work_item_results (SQLSTATE 42501)"
+    },
+    {
+      "service": "work-items-worker",
+      "trace_id": "3fd46b45e7175ca781df140eed6b67ad",
+      "level": "warn",
+      "line": "delivery handled with error",
+      "error": "processing job completion unavailable: ERROR: permission denied for table work_item_results (SQLSTATE 42501)"
+    },
+    {
+      "service": "work-items-worker",
+      "trace_id": "3fd46b45e7175ca781df140eed6b67ad",
+      "level": "warn",
+      "line": "delivery handled with error",
+      "error": "processing job completion unavailable: ERROR: permission denied for table work_item_results (SQLSTATE 42501)"
+    },
+    {
+      "service": "work-items-worker",
+      "trace_id": null,
+      "level": "warn",
+      "line": "worker session ended; retrying",
+      "error": "run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure\nprocessing job completion unavailable: ERROR: permission denied for table work_item_results (SQLSTATE 42501)"
+    },
+    {
+      "service": "work-items-worker",
+      "trace_id": null,
+      "level": "warn",
+      "line": "worker session ended; retrying",
+      "error": "run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure\nprocessing job completion unavailable: ERROR: permission denied for table work_item_results (SQLSTATE 42501)"
+    },
+    {
+      "service": "work-items-worker",
+      "trace_id": null,
+      "level": "warn",
+      "line": "worker session ended; retrying",
+      "error": "run worker delivery loop: leave worker session after requeue: worker delivery requeued after transient handling failure\nprocessing job completion unavailable: ERROR: permission denied for table work_item_results (SQLSTATE 42501)"
+    }
+  ],
+  "restore": {
+    "action": "GRANT INSERT ON work_item_results TO zero_to_prod_worker",
+    "at": "2026-10-18T15:01:55Z"
+  },
+  "recovery": {
+    "backlog_drained": true,
+    "stuck_job_state": "succeeded",
+    "stuck_job_attempt_count": "1"
+  },
+  "quiet": {
+    "pages_resolved": true,
+    "seconds_until_no_pages": 310.1,
+    "still_firing": [
+      "WorkItemsAvailabilitySlowBurn"
+    ]
+  },
+  "finished": "2026-10-18T15:07:15Z",
+  "passed": true
+}

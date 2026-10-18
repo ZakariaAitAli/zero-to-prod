@@ -1,0 +1,89 @@
+{
+  "experiment": "e3-slow-lock",
+  "started": "2026-10-18T14:38:51Z",
+  "checks": {
+    "request_failed_with_503_after_timeout": true,
+    "error_log_carries_trace_id": true,
+    "trace_shows_lock_wait_span": true,
+    "lock_span_marked_error": true,
+    "retry_after_lock_release_accepted": true
+  },
+  "request": {
+    "item_id": 4858,
+    "status": 503,
+    "body": {
+      "error": "persistence_unavailable"
+    },
+    "elapsed_s": 3.002
+  },
+  "investigation": {
+    "error_logs": [
+      {
+        "service": "work-items-api",
+        "trace_id": "1a6a91d78c8570ee03be7243996f7238",
+        "level": "error",
+        "line": "accept processing job failed",
+        "error": "timeout: context deadline exceeded"
+      }
+    ],
+    "trace_id": "1a6a91d78c8570ee03be7243996f7238",
+    "spans": [
+      {
+        "service": "work-items-api",
+        "name": "POST /items/{id}/process",
+        "span_id": "094a3db1ec1e517a",
+        "parent": [],
+        "kind": "server",
+        "duration_ms": 3000.499,
+        "error": true,
+        "status_description": "503"
+      },
+      {
+        "service": "work-items-api",
+        "name": "BEGIN postgresql",
+        "span_id": "cb1a28023e8dd3e8",
+        "parent": [
+          "094a3db1ec1e517a"
+        ],
+        "kind": "client",
+        "duration_ms": 0.189,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "SELECT postgresql",
+        "span_id": "53b29f1498e6f5bd",
+        "parent": [
+          "094a3db1ec1e517a"
+        ],
+        "kind": "client",
+        "duration_ms": 3000.102,
+        "error": true,
+        "status_description": "deadline exceeded"
+      },
+      {
+        "service": "work-items-api",
+        "name": "ROLLBACK postgresql",
+        "span_id": "9a43319611bc4c68",
+        "parent": [
+          "094a3db1ec1e517a"
+        ],
+        "kind": "client",
+        "duration_ms": 0.019,
+        "error": true,
+        "status_description": "query failed"
+      }
+    ]
+  },
+  "quiet": {
+    "pages_resolved": true,
+    "seconds_until_no_pages": 0.0,
+    "still_firing": [
+      "WorkItemsAvailabilitySlowBurn",
+      "WorkItemsLatencySlowBurn"
+    ]
+  },
+  "finished": "2026-10-18T14:39:07Z",
+  "passed": true
+}

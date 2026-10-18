@@ -47,12 +47,15 @@ Architecture documents describe the current or retained Zero-to-Prod system boun
 - [Local PostgreSQL and schema migrations](guides/local-postgresql.md)
 - [Offline delivery recovery after restore](guides/restore-delivery-recovery.md) — inspect and redrive accepted jobs without creating new jobs.
 - [Local security lab](guides/local-security-lab.md) — opt-in HTTPS ingress with private backends for Issue #121 (intermediate)
+- [Local observability lab](guides/local-observability-lab.md) — metrics, traces, logs, dashboards, and SLO alerts for Issue #122 (intermediate)
 
 Guides are procedural: they answer **how do I perform this workflow?**
 
 ## Runbooks
 
 Current recovery: [Work Items result recovery](runbooks/work-items-recovery.md).
+
+Alerts: [Work Items alerts](runbooks/work-items-observability.md) — investigation steps for each SLO and symptom alert.
 
 Historical recovery procedures and experiments remain in the Sprint runbooks:
 
@@ -74,6 +77,7 @@ ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
 - [ADR 0007 — Security lab identity-provider hop](adr/0007-security-lab-identity-provider-transport.md) — **Proposed:** Keycloak serves only HTTPS with a certificate from a third CA, limited to exactly `keycloak` and trusted only by the ingress, which verifies chain and name without session reuse; lab CA, extended internal CA, pinning, mTLS, and passthrough compared.
 
 - [ADR 0009 — restore delivery recovery](adr/0009-restore-delivery-recovery.md) — **Proposed:** durable random delivery identity and explicit offline redrive.
+- [ADR 0012 — Work Items observability](adr/0012-work-items-observability.md) — **Proposed:** Prometheus metrics, OpenTelemetry traces and logs, trace context persisted in the outbox and carried in AMQP headers, bounded labels, and the SLOs.
 
 ## Experiments
 
@@ -82,6 +86,7 @@ Experiment records answer **what did we test and what happened?** Focused experi
 - [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
 - [Issue #117 — result implementation validation](experiments/issue-117-result-validation.md) — title-analysis results, atomic business completion, migration refusal, and result backup compatibility.
 - [Issues #130/#131 — restore delivery recovery](experiments/issue-130-131-restore-recovery.md) — stale delivery rejection after ID reuse, offline redrive, and legitimate duplicate delivery.
+- [Issue #122 — observability](experiments/issue-122-observability.md) — one trace across the asynchronous boundary, and lock contention, CPU pressure, PostgreSQL, API, RabbitMQ, and worker failures each detected by its alert and investigated through metrics, logs, and traces.
 - [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
 - [Issue #121 — TLS to Keycloak](experiments/issue-121-keycloak-tls.md) — the ingress → Keycloak hop in a separate lab: a passive capture before and after, unchanged public metadata and redirects, untrusted, lab-CA, wrong-name, expired, excluded-subdomain, and excluded-IP certificates (with an isolated unconstrained-CA control) with new versus established connections and TLS session resumption, recovery and renewal without restarts, and regression runs, rerun with the final files; browser sign-in blocked by the untrusted lab CA.
 - [Issue #121 — internal TLS](experiments/issue-121-internal-tls.md) — verified TLS to PostgreSQL and RabbitMQ in a separate lab: plaintext refusal, untrusted issuer, hostname mismatch, and expiry with new versus established connections, recovery by renewal without client restarts, and regression runs of the earlier checks.
