@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/observability"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -66,6 +67,10 @@ func (publisher *rabbitMQPublisher) Publish(
 	ctx context.Context,
 	message outboxMessage,
 ) error {
+	// Only W3C trace context travels in headers; the body is unchanged.
+	headers := amqp.Table{}
+	observability.InjectHeaders(ctx, observability.HeaderCarrier(headers))
+
 	confirmation, err := publisher.channel.
 		PublishWithDeferredConfirmWithContext(
 			ctx,
@@ -80,6 +85,7 @@ func (publisher *rabbitMQPublisher) Publish(
 				CorrelationId: strconv.FormatInt(message.ProcessingJobID, 10),
 				Type:          message.EventType,
 				Timestamp:     time.Now().UTC(),
+				Headers:       headers,
 				Body:          message.Payload,
 			},
 		)

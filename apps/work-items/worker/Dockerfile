@@ -9,10 +9,12 @@ RUN go mod download
 
 COPY . .
 
+ARG VERSION=dev
+
 RUN CGO_ENABLED=0 GOOS=linux \
     go build \
     -trimpath \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.version=${VERSION}" \
     -o /out/work-items-worker \
     ./worker
 
@@ -27,6 +29,7 @@ COPY --from=build --chown=app:app /out/work-items-worker /app/work-items-worker
 
 USER app
 
-# The worker exposes no HTTP endpoint; its health is observed through its
-# process state and logs.
+# The worker serves no application HTTP endpoint. Its health is observed
+# through process state, logs, and (when WORKER_METRICS_ADDRESS is set) a
+# private Prometheus listener.
 ENTRYPOINT ["/app/work-items-worker"]

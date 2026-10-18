@@ -4,17 +4,26 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/observability"
 	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/runtimeconfig"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+// version is replaced at build time with -ldflags="-X main.version=<sha>" and
+// reported in logs, spans, and work_items_build_info.
+var version = "dev"
 
 const (
 	defaultWorkerQueue      = "work_item_processing"
 	workerSessionRetryDelay = 1 * time.Second
+	workerServiceName       = "work-items-worker"
+	telemetryFlushTimeout   = 5 * time.Second
 )
 
 type workerConfig struct {
@@ -129,6 +138,16 @@ func runWorkerProcess(
 }
 
 func main() {
+	flushTelemetry, err := observability.Setup(context.Background(), workerServiceName, version, os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
+		defer cancel()
+		_ = flushTelemetry(ctx)
+	}()
+
 	config, err := loadWorkerConfig(
 		os.Getenv,
 	)
@@ -146,6 +165,18 @@ func main() {
 	)
 	defer stop()
 
+	// WORKER_METRICS_ADDRESS (for example 0.0.0.0:9465) enables the private
+	// Prometheus listener; it is off when unset.
+	var registry *prometheus.Registry
+	if metricsAddress := os.Getenv("WORKER_METRICS_ADDRESS"); metricsAddress != "" {
+		registry = observability.NewRegistry(workerServiceName, version)
+		registerWorkerMetrics(registry)
+
+		if err := observability.StartMetricsServer(shutdownContext, metricsAddress, registry); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	storeFactory := func(
 		ctx context.Context,
 		databaseURL string,
@@ -153,10 +184,17 @@ func main() {
 		workerRuntimeStore,
 		error,
 	) {
-		return newPostgresWorkerStore(
+		store, err := newPostgresWorkerStore(
 			ctx,
 			databaseURL,
 		)
+		if err != nil {
+			return nil, err
+		}
+		if registry != nil {
+			registry.MustRegister(observability.NewPoolCollector(store.pool))
+		}
+		return instrumentedWorkerStore{store}, nil
 	}
 
 	sessionFactory := func(
@@ -174,24 +212,27 @@ func main() {
 		)
 	}
 
+	// The message texts are matched by the worker experiment harness.
 	reportExit := func(err error) {
+		workerSessionExits.Inc()
+
 		if err == nil {
-			log.Printf(
+			slog.Warn(
 				"worker session ended unexpectedly without error; retrying",
 			)
 
 			return
 		}
 
-		log.Printf(
-			"worker session ended; retrying: %v",
-			err,
+		slog.Warn(
+			"worker session ended; retrying",
+			"error", err,
 		)
 	}
 
-	log.Printf(
-		"worker starting queue=%s",
-		config.QueueName,
+	slog.Info(
+		"worker starting",
+		"queue", config.QueueName,
 	)
 
 	if err := runWorkerProcess(
@@ -207,7 +248,7 @@ func main() {
 		)
 	}
 
-	log.Printf(
+	slog.Info(
 		"worker shutdown complete",
 	)
 }
