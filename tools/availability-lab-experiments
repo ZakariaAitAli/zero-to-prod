@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Issue124 isolated failover/quorum/PITR experiment. NEW_OUTPUT_DIR required.
+Destroys ONLY this newly created project's verified primary volume, after
+fencing it; never prunes Docker or alters retained projects. Stops on exit.
+"""
+import base64
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+ROOT=Path(__file__).resolve().parent.parent
+DRIVER=ROOT/'tools/availability-lab-local'
+PROJECT='zero-to-prod-availability-lab'
+STATE=Path.home()/'.local/state/zero-to-prod/availability-lab'
+API='http://127.0.0.1:18083'
+NODES={'rabbit@rabbitmq':'rabbitmq','rabbit@rabbit2':'rabbit2','rabbit@rabbit3':'rabbit3'}
+
+def compose(*args):
+ return subprocess.check_output(['bash',str(DRIVER),'compose',*args],cwd=ROOT,text=True,stderr=subprocess.PIPE).strip()
+
+def sql(service,query):
+ return compose('exec','-T',service,'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U','zero_to_prod_admin','-d','zero_to_prod','-c',query)
+
+def inspect(name):
+ r=json.loads(subprocess.check_output(['docker','inspect',name],text=True))[0]
+ assert r['Config']['Labels'].get('com.docker.compose.project')==PROJECT,'foreign container'
+ return r
+
+def stop_container(service,kill=False):
+ name=f'{PROJECT}-{service}-1';inspect(name)
+ subprocess.run(['docker','kill',name] if kill else ['docker','stop','-t','10',name],check=True,stdout=subprocess.DEVNULL)
+
+def wait_until(fn,timeout=60):
+ end=time.monotonic()+timeout
+ while time.monotonic()<end:
+  try:
+   r=fn()
+   if r:return r
+  except (subprocess.CalledProcessError,urllib.error.URLError,ConnectionError):pass
+  time.sleep(.25)
+ raise TimeoutError('condition did not become true')
+
+def request(path,method='GET',body=None):
+ req=urllib.request.Request(API+path,data=None if body is None else json.dumps(body).encode(),method=method,headers={'Content-Type':'application/json'})
+ try:
+  with urllib.request.urlopen(req,timeout=5) as r:return r.status,json.load(r)
+ except urllib.error.HTTPError as e:return e.code,{}
+ except (urllib.error.URLError,TimeoutError):return 0,{}
+
+def submit(title):
+ status,item=request('/items','POST',{'title':title});assert status==201,status
+ status,job=request(f"/items/{item['id']}/process",'POST');assert status==202,status
+ return job['id']
+
+def completed(job):
+ code,result=request(f'/processing-jobs/{job}')
+ return code==200 and result['state']=='succeeded'
+
+def rabbit(path):
+ password=(STATE/'secrets/rabbitmq-admin-password').read_text().strip()
+ auth='Basic '+base64.b64encode(('ha_admin:'+password).encode()).decode()
+ for port in (15675,15676,15677):
+  try:
+   req=urllib.request.Request(f'http://127.0.0.1:{port}/api/'+path,headers={'Authorization':auth})
+   with urllib.request.urlopen(req,timeout=2) as r:return json.load(r)
+  except (urllib.error.URLError,TimeoutError):pass
+ raise ConnectionError('no live local management endpoint')
+
+def quorum():return rabbit('queues/zero_to_prod/work_item_processing')
+def all_brokers():return len([n for n in rabbit('nodes') if n['running']])==3
+
+def main():
+ output=Path(sys.argv[1]);output.mkdir(parents=True,exist_ok=False)
+ assert (STATE/'.ha-lab-owned').read_text().strip()==PROJECT
+ assert not (STATE/'.ha-failover-active').exists(),'already promoted: manual recovery required'
+ checks=[]
+ def record(name,details):
+  checks.append({'name':name,'time_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),**details})
+  (output/'results.json').write_text(json.dumps(checks,indent=2)+'\n')
+  print(name+': '+json.dumps(details),flush=True)
+ paths=list((ROOT/'infra/availability-lab').rglob('*'))+[DRIVER,Path(__file__).resolve()]
+ (output/'provenance.json').write_text(json.dumps({'base_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'source_sha256':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()},'scope':'new dedicated single-host local lab; no independent-site durability claim'},indent=2)+'\n')
+ try:
+  wait_until(lambda:request('/ready')[0]==200)
+  initial_id=sql('postgres','SELECT system_identifier FROM pg_control_system()')
+  assert sql('pg-standby','SELECT system_identifier FROM pg_control_system()')==initial_id
+  assert sql('pg-standby','SELECT pg_is_in_recovery()')=='t'
+  assert len(quorum()['members'])==3
+  backup_count=int(compose('exec','-T','backup','sh','-c',"ls -1d /backups/20* | grep -v '\\.partial$' | wc -l"))
+  assert backup_count>=2,'wait for scheduled verified backups before experimenting'
+  assert backup_count<=3,'retention exceeded'
+  wait_until(lambda:inspect(PROJECT+'-backup-1')['State']['Health']['Status']=='healthy')
+  record('topology-and-scheduled-backups',{'system_identifier':initial_id,'standby_in_recovery':True,'quorum_members':3,'verified_backup_generations':backup_count,'backup_health':'healthy','retention_max':3})
+
+  # Continuous business reads through the live gateway around API loss.
+  samples=[];stop=threading.Event()
+  def load():
+   while not stop.is_set():
+    before=time.monotonic();code,_=request('/items');samples.append((time.monotonic(),code,time.monotonic()-before));stop.wait(.05)
+  thread=threading.Thread(target=load);thread.start();time.sleep(1)
+  failed_at=time.monotonic();stop_container('api',kill=True)
+  job=submit('ha accepted during API instance loss');wait_until(lambda:completed(job),30)
+  time.sleep(6);stop.set();thread.join()
+  post=[x for x in samples if x[0]>=failed_at]
+  last_error=max([x[0]-failed_at for x in post if x[1]!=200],default=0)
+  assert last_error<=10
+  compose('up','-d','--no-deps','--scale','api=2','api')
+  record('api-instance-loss',{'requests':len(post),'errors':sum(x[1]!=200 for x in post),'last_error_after_failure_s':last_error,'accepted_job_completed':job,'objective_s':10})
+
+  # Known confirmed messages remain queued while the worker is stopped.
+  compose('stop','worker')
+  jobs=[submit('ha quorum confirmed '+str(i)) for i in range(25)]
+  id_list=','.join(map(str,jobs))
+  wait_until(lambda:sql('postgres',f'SELECT count(*) FROM outbox_messages WHERE processing_job_id IN ({id_list}) AND published_at IS NOT NULL')=='25')
+  q=quorum();leader=q['leader'];assert leader in NODES
+  failed_at=time.monotonic();stop_container(NODES[leader],kill=True)
+  compose('start','worker')
+  wait_until(lambda:all(completed(j) for j in jobs),60)
+  rto=time.monotonic()-failed_at;assert rto<=60
+  compose('start',NODES[leader]);wait_until(all_brokers,120)
+  record('quorum-leader-loss',{'leader':leader,'known_confirmed_messages':25,'jobs_completed':25,'rto_s':rto,'objective_s':60,'nodes_rejoined':3})
+
+  # Losing a majority must not silently turn durable confirms into success.
+  compose('stop','worker')
+  staged=[submit('ha majority backlog '+str(i)) for i in range(10)]
+  staged_ids=','.join(map(str,staged))
+  wait_until(lambda:sql('postgres',f'SELECT count(*) FROM outbox_messages WHERE processing_job_id IN ({staged_ids}) AND published_at IS NOT NULL')=='10')
+  q=quorum();survivor=q['leader'];lost=[n for n in q['members'] if n!=survivor];assert len(lost)==2
+  for n in lost:stop_container(NODES[n])
+  extra=submit('ha accepted while quorum unavailable');time.sleep(3)
+  assert sql('postgres',f'SELECT published_at IS NULL FROM outbox_messages WHERE processing_job_id={extra}')=='t'
+  resumed=time.monotonic();compose('start',NODES[lost[0]]);compose('start','worker')
+  wait_until(lambda:all(completed(j) for j in staged+[extra]),60)
+  resumed_seconds=time.monotonic()-resumed
+  compose('start',NODES[lost[1]]);wait_until(all_brokers,120)
+  record('quorum-majority-loss',{'previously_confirmed_jobs':10,'accepted_without_confirm':extra,'not_marked_published_without_majority':True,'all_11_eventually_completed':True,'resume_s':resumed_seconds})
+
+  # Freeze the selected backup BEFORE the PITR restore point. Never choose a
+  # newer base backup that already contains the destructive transaction.
+  compose('stop','backup')
+  selected=compose('exec','-T','postgres','sh','-c','printf ready')
+  sql('postgres',"CREATE TABLE public.ha_markers(name text PRIMARY KEY, committed_at timestamptz NOT NULL DEFAULT clock_timestamp()); INSERT INTO public.ha_markers(name) VALUES ('before_target');")
+  sql('postgres',"SELECT pg_create_restore_point('ha_before_delete')")
+  marker=sql('postgres',"SELECT committed_at FROM public.ha_markers WHERE name='before_target'")
+  sql('postgres',"DELETE FROM public.ha_markers WHERE name='before_target'; INSERT INTO public.ha_markers(name) VALUES ('after_target');")
+  archived=sql('postgres','SELECT pg_walfile_name(pg_current_wal_lsn())')
+  sql('postgres','SELECT pg_switch_wal()')
+  wait_until(lambda:compose('exec','-T','postgres','sh','-c','test -s /wal-archive/'+archived+' && echo archived')=='archived')
+  transfer_started=time.monotonic()
+  compose('--profile','tools','run','--rm','offsite-transfer')
+  record('verified-transfer-and-pitr-target',{'target_name':'ha_before_delete','target_marker_timestamp':marker,'archived_wal':archived,'transfer_s':time.monotonic()-transfer_started,'boundary':'separate local volume, primary cannot mount it; same physical host/disk, not independent-site durability'})
+
+  # Show asynchronous read staleness; wait for replay before planned failover.
+  sql('pg-standby','SELECT pg_wal_replay_pause()')
+  sql('postgres',"INSERT INTO public.ha_markers(name) VALUES ('async_gap')")
+  assert sql('pg-standby',"SELECT count(*) FROM public.ha_markers WHERE name='async_gap'")=='0'
+  sql('pg-standby','SELECT pg_wal_replay_resume()')
+  wait_until(lambda:sql('pg-standby',"SELECT count(*) FROM public.ha_markers WHERE name='async_gap'")=='1')
+  assert sql('pg-standby',"SELECT count(*) FROM public.ha_markers WHERE name='after_target'")=='1'
+  (STATE/'.ha-failover-active').write_text('old primary must remain fenced; reseed/reconcile before failback\n')
+  failed_at=time.monotonic();stop_container('postgres')
+  assert not inspect(PROJECT+'-postgres-1')['State']['Running']
+  assert sql('pg-standby','SELECT pg_promote(true,60)')=='t'
+  conf=STATE/'proxies.conf';text=conf.read_text();assert 'server postgres:5432 resolve;' in text
+  conf.write_text(text.replace('server postgres:5432 resolve;','server pg-standby:5432 resolve;'))
+  compose('exec','-T','proxies','nginx','-t');compose('exec','-T','proxies','nginx','-s','reload')
+  wait_until(lambda:request('/ready')[0]==200,120)
+  after_failover=submit('ha after fenced PostgreSQL promotion');wait_until(lambda:completed(after_failover),120)
+  rto=time.monotonic()-failed_at;assert rto<=120
+  assert sql('pg-standby','SELECT pg_is_in_recovery()')=='f'
+  record('postgres-fenced-promotion',{'old_primary_running':False,'new_primary':'pg-standby','caught_up_marker_preserved':True,'async_staleness_observed_then_replayed':True,'rto_s':rto,'observed_marker_rpo_s':0,'rpo_limit':'caught-up local case only; no bound proved for unreceived WAL/partitions','post_failover_job_completed':after_failover})
+
+  # Stop every app/DB writer before the destructive recovery boundary.
+  compose('stop','api','worker','pg-standby','proxies')
+  original=inspect(PROJECT+'-postgres-1');assert not original['State']['Running']
+  data=[m for m in original['Mounts'] if m['Destination']=='/var/lib/postgresql'];assert len(data)==1
+  volume=data[0]['Name'];assert volume==PROJECT+'_postgres_data'
+  info=json.loads(subprocess.check_output(['docker','volume','inspect',volume],text=True))[0]
+  assert info['Labels'].get('com.docker.compose.project')==PROJECT
+  dr_started=time.monotonic()
+  compose('rm','-f','postgres')
+  subprocess.run(['docker','volume','rm',volume],check=True,stdout=subprocess.DEVNULL)
+  compose('--profile','recovery','up','-d','--no-deps','--wait','pg-recover')
+  wait_until(lambda:sql('pg-recover','SELECT pg_is_in_recovery()')=='f',120)
+  assert sql('pg-recover','SELECT system_identifier FROM pg_control_system()')==initial_id
+  assert sql('pg-recover',"SELECT count(*) FROM public.ha_markers WHERE name='before_target'")=='1'
+  assert sql('pg-recover',"SELECT count(*) FROM public.ha_markers WHERE name IN ('after_target','async_gap')")=='0'
+  assert sql('pg-recover',f'SELECT count(*) FROM processing_jobs WHERE id={after_failover}')=='0'
+  mounts=inspect(PROJECT+'-pg-recover-1')['Mounts']
+  assert not any(m.get('Name') in (PROJECT+'_backups',PROJECT+'_wal_archive',PROJECT+'_standby_data',volume) for m in mounts)
+  rto=time.monotonic()-dr_started;assert rto<=600
+  record('destructive-primary-volume-pitr',{'destroyed_volume':volume,'ownership_and_stopped_state_verified':True,'restored_system_identifier':initial_id,'restore_source':'verified local transferred copy only','original_backup_archive_standby_not_mounted':True,'before_target_marker_restored':True,'after_target_and_post_failover_data_absent':True,'rto_s':rto,'objective_s':600,'rpo':'intentional named-point recovery; later commits deliberately discarded, not zero-loss DR','target_timestamp':marker})
+  (output/'summary.json').write_text(json.dumps({'experiments_completed':len(checks),'all_assertions_passed':True,'final_state':'all containers stopped; volumes/archive/backup copy retained except the explicitly destroyed primary volume','remaining_limits':['one host and proxy/operator failure domain','async data loss under unreceived WAL not bounded','no actual independent-site backup survival','no automatic consensus/fencing controller','WAL retention conservative/unbounded across timelines; storage monitoring required']},indent=2)+'\n')
+ finally:
+  compose('--profile','recovery','--profile','tools','stop')
+if __name__=='__main__':main()

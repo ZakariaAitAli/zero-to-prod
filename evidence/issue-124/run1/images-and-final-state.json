@@ -1,0 +1,24 @@
+{
+  "containers": [
+    "/zero-to-prod-availability-lab-pg-recover-1 sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 exited",
+    "/zero-to-prod-availability-lab-pg-standby-1 sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 exited",
+    "/zero-to-prod-availability-lab-backup-1 sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 exited",
+    "/zero-to-prod-availability-lab-otel-collector-1 sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6 exited",
+    "/zero-to-prod-availability-lab-gateway-1 sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 exited",
+    "/zero-to-prod-availability-lab-grafana-1 sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572 exited",
+    "/zero-to-prod-availability-lab-prometheus-1 sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e exited",
+    "/zero-to-prod-availability-lab-api-1 sha256:18c72dcb77739a7062b67accd8ea11b17643df046345f8e388ba69472f2f3411 exited",
+    "/zero-to-prod-availability-lab-worker-1 sha256:6fc63d91f2a4664022196bc954b267cfac2bcae93a5100411bf8bf6fc915b18d exited",
+    "/zero-to-prod-availability-lab-proxies-1 sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 exited",
+    "/zero-to-prod-availability-lab-loki-1 sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193 exited",
+    "/zero-to-prod-availability-lab-api-2 sha256:18c72dcb77739a7062b67accd8ea11b17643df046345f8e388ba69472f2f3411 exited",
+    "/zero-to-prod-availability-lab-jaeger-1 sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3 exited",
+    "/zero-to-prod-availability-lab-postgres-exporter-1 sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e exited",
+    "/zero-to-prod-availability-lab-rabbit3-1 sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95 exited",
+    "/zero-to-prod-availability-lab-rabbitmq-1 sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95 exited",
+    "/zero-to-prod-availability-lab-rabbit2-1 sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95 exited"
+  ],
+  "all_stopped": true,
+  "source_change_after_run": "only cleanup dispatch now includes recovery/tools profiles",
+  "raw_backups_and_secret_state": "retained outside Git"
+}
