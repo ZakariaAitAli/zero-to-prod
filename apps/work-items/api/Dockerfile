@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.27.1-alpine AS build
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 
 WORKDIR /src
 
@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
     -o /out/work-items-api \
     ./api
 
-FROM alpine:3.22 AS runtime
+FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 AS runtime
 
 RUN addgroup -S app \
     && adduser -S -G app app
