@@ -35,7 +35,7 @@ in [provenance.json](../../evidence/issue-122/run2/provenance.json). After the r
 Prometheus rule tests under `infra/observability-lab`: a healthy service with
 no 5xx series now reports zero bad requests instead of no data. Those rule
 tests passed in the pinned Prometheus image; the long fault experiments were
-not repeated for this correction. The `apps/work-items` tree differs only by
+not repeated for this correction. At initial publication, the `apps/work-items` tree differed only by
 one unit test added after the run
 (`TestInstrumentedStoreCountsFailureDispositions`), which is not part of the
 built binaries. Docker 29.6.2,
@@ -233,3 +233,16 @@ infrastructure failures retry without consuming attempts.
 - Run 2 started with two slow-burn tickets still open from run 1; they were
   recorded in each experiment's `quiet` field and do not affect the pages
   each experiment checked.
+
+## Follow-up review: completion timestamp
+
+A subsequent review found that the worker used transaction-start time for
+`finished_at`, silently excluding waits inside the completion transaction.
+The final-update timestamp now uses `clock_timestamp()`. A real PostgreSQL
+regression held the item lock until the worker was blocked, recorded a database
+clock marker, then released it: the old timestamp predates the marker (test
+fails), the corrected timestamp follows it (test passes). See
+[`completion-clock-regression.json`](../../evidence/issue-122/completion-clock-regression.json).
+The eight long experiments were not repeated for this focused change; their
+built source trees remain recorded unchanged. New Go tests/vet and CI cover
+the follow-up source. The timestamp still precedes commit acknowledgement.
