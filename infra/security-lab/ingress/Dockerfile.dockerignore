@@ -4,3 +4,5 @@ apps/work-items/web/node_modules/
 apps/work-items/web/dist/
 !infra/security-lab/ingress/nginx.conf
 !infra/security-lab/ingress/keycloak-upstream.conf
+!infra/security-lab/ingress/api-upstream.conf
+!infra/security-lab/ingress/oauth2-proxy-upstream.conf
