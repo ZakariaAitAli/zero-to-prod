@@ -35,6 +35,14 @@ IDP_TLS_NAME=keycloak
 IDP_TLS_PORT=8443
 # Keycloak rereads its certificate files on this period (more than 30 s).
 KEYCLOAK_TLS_RELOAD_SECONDS=35
+# Key and certificate of the API and oauth2-proxy (ADR 0008), one directory
+# per service, signed by the application CA, which may issue only for these
+# names and is trusted only by the ingress. The names are the Docker service
+# names the ingress dials.
+APP_TLS_DIR="${STATE_DIR}/app-tls"
+APP_TLS_SERVICES=(api oauth2-proxy)
+API_TLS_PORT=8443
+OAUTH2_PROXY_TLS_PORT=4443
 # Fixed: the issuer URL, client registrations, and the ingress's internal
 # listener all carry it.
 HTTPS_PORT=9443
@@ -121,6 +129,7 @@ usage() {
 Usage:
   ./tools/security-lab-local init
   ./tools/security-lab-local check-secrets
+  ./tools/security-lab-local rotate-app-db-password
   ./tools/security-lab-local start
   ./tools/security-lab-local verify [--evidence <file>]
   ./tools/security-lab-local verify-failures [--evidence <file>]
@@ -141,6 +150,10 @@ Usage:
   ./tools/security-lab-local check-keycloak-upstream
   ./tools/security-lab-local capture-idp-hop [--evidence <file>]
   ./tools/security-lab-local verify-keycloak-tls [--evidence <file>]
+  ./tools/security-lab-local issue-app-certificate <api|oauth2-proxy>
+  ./tools/security-lab-local check-app-upstream
+  ./tools/security-lab-local capture-app-hops [--evidence <file>]
+  ./tools/security-lab-local verify-app-tls [--evidence <file>]
   ./tools/security-lab-local check-serial-streak "<code> <serial>" [required] [attempts] < observations
   ./tools/security-lab-local ca-certificate
   ./tools/security-lab-local stop
@@ -158,9 +171,10 @@ oauth2-proxy and Keycloak, machine clients use client credentials.
 Commands:
   init               Create the lab CA, ingress certificate, internal CA,
                      PostgreSQL and RabbitMQ certificates, identity-provider
-                     CA, Keycloak certificate, and runtime secrets outside the
-                     repository. Keeps existing CAs and passwords; reissues
-                     certificates near expiry.
+                     CA, Keycloak certificate, application CA, API and
+                     oauth2-proxy certificates, and runtime secrets outside
+                     the repository. Keeps existing CAs and passwords;
+                     reissues certificates near expiry.
   check-secrets      Verify the required runtime secret files and certificate.
   start              Check secrets, build images, start the lab, apply
                      identities and migrations, and wait until healthy.
@@ -231,6 +245,26 @@ Commands:
                      control), new versus established connections, session
                      resumption, recovery, and renewal. Installs bad
                      certificates temporarily; takes about 15 minutes.
+  issue-app-certificate <api|oauth2-proxy>
+                     Issue a new API or oauth2-proxy certificate from the
+                     application CA. The API rereads it (no restart);
+                     oauth2-proxy is restarted (sessions are kept in Valkey).
+                     Succeeds when five consecutive new connections verify
+                     the new serial.
+  check-app-upstream Fetch the API's health and oauth2-proxy's ping through
+                     the ingress's diagnostic routes and print nginx's TLS
+                     verdict.
+  capture-app-hops   Capture the ingress-API and ingress-oauth2-proxy hops
+                     passively during a sign-in, a session request, and a
+                     machine request, and count credentials, token headers,
+                     and plaintext HTTP in them (values are never recorded).
+                     Works on labs created before ADR 0008.
+  verify-app-tls     Exercise both application hops: baseline, scripted
+                     flows, passive capture, untrusted CA, lab CA, other
+                     name, expired, new versus kept-alive connections,
+                     session resumption, recovery, and renewal. Installs bad
+                     certificates temporarily and restarts oauth2-proxy;
+                     takes about 15 minutes.
   check-serial-streak
                      Test hook: apply the renewal confirmation rule (N
                      consecutive equal observations within M attempts) to
@@ -249,6 +283,10 @@ Environment overrides:
                                outside the repository and not containing home
   ZTP_SECURITY_LAB_CA_DAYS    lab CA validity in days (default: 90)
   ZTP_SECURITY_LAB_CERT_DAYS   ingress certificate validity in days (default: 14)
+  ZTP_SECURITY_LAB_TOOL_SUBNETS
+                               explicit subnets for networks the tool creates,
+                               "unrelated-probe=<cidr> ipcontrol=<cidr>"
+                               (only when Docker's address pools are exhausted)
 
 State directory: ${STATE_DIR}
 EOF_USAGE
@@ -261,6 +299,18 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+# Creates a network the tool itself needs (the unrelated probe network, the
+# isolated TLS control network). $1 is its key in ZTP_SECURITY_LAB_TOOL_SUBNETS
+# ("unrelated-probe=<cidr> ipcontrol=<cidr>"), which gives it an explicit
+# subnet on an engine whose default address pools are exhausted (see the
+# guide); without it Docker allocates one. $2: the name; the rest: options.
+tool_network_create() {
+  local key="$1" name="$2" subnet
+  shift 2
+  subnet="$(tr ' ' '\n' <<< "${ZTP_SECURITY_LAB_TOOL_SUBNETS:-}" | sed -n "s|^${key}=||p" | head -n 1)"
+  docker network create "$@" ${subnet:+--subnet "$subnet"} "$name"
 }
 
 check_configuration() {
@@ -334,10 +384,11 @@ check_state_dir() {
   INTERNAL_TLS_DIR="${STATE_DIR}/internal-tls"
   IDP_TLS_DIR="${STATE_DIR}/idp-tls"
   IDP_TLS_FILE="${IDP_TLS_DIR}/tls.pem"
+  APP_TLS_DIR="${STATE_DIR}/app-tls"
   STATE_MARKER="${STATE_DIR}/.zero-to-prod-security-lab"
 }
 
-STATE_ENTRIES=(.zero-to-prod-security-lab pki secrets ingress-tls internal-tls idp-tls)
+STATE_ENTRIES=(.zero-to-prod-security-lab pki secrets ingress-tls internal-tls idp-tls app-tls)
 
 # Prints entries of the state directory that the lab does not create.
 unexpected_state_entries() {
@@ -397,6 +448,8 @@ compose() {
     ZTP_SECURITY_LAB_INTERNAL_TLS_DIR="$INTERNAL_TLS_DIR" \
     ZTP_SECURITY_LAB_IDP_CA_FILE="${PKI_DIR}/idp-ca.crt" \
     ZTP_SECURITY_LAB_IDP_TLS_DIR="$IDP_TLS_DIR" \
+    ZTP_SECURITY_LAB_APP_CA_FILE="${PKI_DIR}/app-ca.crt" \
+    ZTP_SECURITY_LAB_APP_TLS_DIR="$APP_TLS_DIR" \
     docker compose \
       --project-name "$PROJECT" \
       -f "$COMPOSE_FILE" \
@@ -715,6 +768,39 @@ init_idp_ca() {
     "permitted;DNS:${IDP_TLS_NAME},excluded;DNS:.${IDP_TLS_NAME},excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
 }
 
+# A fourth CA, for the ingress → API and ingress → oauth2-proxy hops only
+# (ADR 0008). Only the ingress trusts it, and it may issue only for the exact
+# names api and oauth2-proxy. It is kept apart from the other CAs so that
+# their policies (ADR 0006, ADR 0007) stay unchanged and no key vouches for
+# more than one trust domain.
+app_ca_constraints_ok() {
+  ca_name_policy_check "${PKI_DIR}/app-ca.crt" "${APP_TLS_SERVICES[@]}" >/dev/null
+}
+
+app_ca_name_constraints() {
+  local service permitted="" excluded=""
+  for service in "${APP_TLS_SERVICES[@]}"; do
+    permitted+="permitted;DNS:${service},"
+    excluded+="excluded;DNS:.${service},"
+  done
+  echo "${permitted}${excluded}excluded;IP:0.0.0.0/0.0.0.0,excluded;IP:::/::"
+}
+
+init_app_ca() {
+  require_command python3
+  if [[ -f "${PKI_DIR}/app-ca.key" ]]; then
+    if app_ca_constraints_ok; then
+      echo "Application CA exists: ${PKI_DIR}/app-ca.crt"
+      return 0
+    fi
+    echo "Replacing the application CA: its name constraints do not match ADR 0008 ($(ca_name_policy_check "${PKI_DIR}/app-ca.crt" "${APP_TLS_SERVICES[@]}"))."
+    rm -f "${PKI_DIR}/app-ca.key" "${PKI_DIR}/app-ca.crt"
+  fi
+
+  echo "Creating application CA (${CA_DAYS} days, name-constrained to exactly ${APP_TLS_SERVICES[*]})..."
+  create_ca "${PKI_DIR}/app-ca" "Zero-to-Prod application CA (${PROJECT})" "$(app_ca_name_constraints)"
+}
+
 # Write a new key and a server certificate for the subjectAltName list $3
 # ("DNS:a,DNS:b"), signed by the CA at prefix $2, to the file $1 (key and
 # certificate in one file, replaced by a single rename). Remaining arguments
@@ -842,6 +928,39 @@ issue_keycloak_certificate() {
     die "issuing the ${kind} certificate for ${IDP_TLS_NAME} failed"
 }
 
+# Issue the API's or oauth2-proxy's certificate (ADR 0008) and replace
+# app-tls/<service>/tls.pem by a single rename. Only "valid" is used in
+# normal operation; the other kinds exist for verify-app-tls:
+#   valid      application CA, the service's own name, CERT_DAYS
+#   untrusted  the right name, signed by the CA in directory $3
+#   lab-ca     the right name, signed by the browser-trusted lab CA
+#   mismatch   application CA, the other application service's name
+#   expired    application CA, the right name, ended a day ago
+issue_app_certificate() {
+  local service="$1" kind="${2:-valid}"
+  local dir="${APP_TLS_DIR}/${service}" ca="${PKI_DIR}/app-ca" san="DNS:${1}" other
+  local validity=()
+
+  [[ -f "${ca}.key" ]] || die "application CA missing; run: $0 init"
+  [[ -d "$dir" ]] || die "application TLS directory missing: ${dir}; run: $0 init"
+
+  case "$kind" in
+    valid) ;;
+    untrusted) ca="${3:?untrusted requires a CA directory}/ca" ;;
+    lab-ca) ca="${PKI_DIR}/ca" ;;
+    mismatch)
+      for other in "${APP_TLS_SERVICES[@]}"; do
+        [[ "$other" != "$service" ]] && san="DNS:${other}" && break
+      done
+      ;;
+    expired) read -r -a validity <<< "$(expired_validity)" ;;
+    *) die "unknown certificate kind: ${kind}" ;;
+  esac
+
+  write_server_certificate "${dir}/tls.pem" "$ca" "$san" "${validity[@]}" ||
+    die "issuing the ${kind} certificate for ${service} failed"
+}
+
 # True when the service's certificate verifies against the internal CA for
 # its own name and stays valid for at least $2 seconds.
 internal_certificate_ok() {
@@ -860,6 +979,16 @@ keycloak_certificate_ok() {
     openssl verify -CAfile "${PKI_DIR}/idp-ca.crt" -verify_hostname "$IDP_TLS_NAME" \
       -purpose sslserver "$IDP_TLS_FILE" >/dev/null 2>&1 &&
     openssl x509 -checkend "$seconds" -noout -in "$IDP_TLS_FILE" >/dev/null 2>&1
+}
+
+# True when the API's or oauth2-proxy's certificate verifies against the
+# application CA for its own name and stays valid for at least $2 seconds.
+app_certificate_ok() {
+  local service="$1" seconds="${2:-0}" file="${APP_TLS_DIR}/${1}/tls.pem"
+  [[ -s "$file" ]] &&
+    openssl verify -CAfile "${PKI_DIR}/app-ca.crt" -verify_hostname "$service" \
+      -purpose sslserver "$file" >/dev/null 2>&1 &&
+    openssl x509 -checkend "$seconds" -noout -in "$file" >/dev/null 2>&1
 }
 
 # Serial of the certificate the ingress serves on a new, verified connection.
@@ -1109,6 +1238,10 @@ EOF_REALM
   # Sign-out deletes the Valkey session and calls Keycloak's end-session
   # endpoint with the session's ID token (backend_logout_url), so ending the
   # gateway session also ends the identity-provider session.
+  #
+  # HTTPS only (ADR 0008): http_address "-" disables the plaintext listener
+  # (measured: only the HTTPS port listens). oauth2-proxy reads the key and
+  # certificate at start; a renewal restarts it.
   cat <<EOF_OAUTH2 | write_file "${SECRETS_DIR}/oauth2-proxy.cfg" 644
 provider = "keycloak-oidc"
 oidc_issuer_url = "${ISSUER}"
@@ -1118,7 +1251,11 @@ redirect_url = "${APP_URL}/oauth2/callback"
 code_challenge_method = "S256"
 email_domains = ["*"]
 provider_ca_files = ["/lab-ca/ca.crt"]
-http_address = "0.0.0.0:4180"
+http_address = "-"
+https_address = "0.0.0.0:${OAUTH2_PROXY_TLS_PORT}"
+tls_cert_file = "/run/oauth2-proxy-tls/tls.pem"
+tls_key_file = "/run/oauth2-proxy-tls/tls.pem"
+tls_min_version = "TLS1.2"
 reverse_proxy = true
 upstreams = ["static://202"]
 set_xauthrequest = true
@@ -1165,6 +1302,7 @@ init_state() {
   init_ca
   init_internal_ca
   init_idp_ca
+  init_app_ca
 
   # Mounted into PostgreSQL and RabbitMQ as their TLS directories; mode 711
   # like ingress-tls. Reissue when missing, within two days of expiry, or
@@ -1177,6 +1315,17 @@ init_state() {
     if ! internal_certificate_ok "$service" 172800; then
       echo "Issuing internal certificate for ${service} (${CERT_DAYS} days)..."
       issue_internal_certificate "$service" valid
+    fi
+  done
+
+  # Mounted into the API and oauth2-proxy (ADR 0008); same layout, modes,
+  # and reissue rule.
+  for service in "${APP_TLS_SERVICES[@]}"; do
+    (umask 077; mkdir -p "${APP_TLS_DIR}/${service}")
+    chmod 711 "$APP_TLS_DIR" "${APP_TLS_DIR}/${service}"
+    if ! app_certificate_ok "$service" 172800; then
+      echo "Issuing application certificate for ${service} (${CERT_DAYS} days)..."
+      issue_app_certificate "$service" valid
     fi
   done
 
@@ -1358,6 +1507,49 @@ check_secrets() {
     failures=$((failures + 1))
   fi
 
+  # Application hops (ADR 0008): the API's and oauth2-proxy's certificates
+  # verify for their own names against the application CA, are unexpired,
+  # and match their keys; the CA carries exactly its policy.
+  local app_policy
+  if [[ ! -f "${PKI_DIR}/app-ca.crt" ]]; then
+    echo "error: application CA certificate missing: ${PKI_DIR}/app-ca.crt (run: $0 init)" >&2
+    failures=$((failures + 1))
+  elif ! command -v python3 >/dev/null 2>&1; then
+    echo "error: python3 is required to check the application CA's name constraints" >&2
+    failures=$((failures + 1))
+  elif ! app_policy="$(ca_name_policy_check "${PKI_DIR}/app-ca.crt" "${APP_TLS_SERVICES[@]}")"; then
+    echo "error: the application CA's name constraints do not limit it to exactly ${APP_TLS_SERVICES[*]} (${app_policy}); run: $0 init" >&2
+    failures=$((failures + 1))
+  else
+    for service in "${APP_TLS_SERVICES[@]}"; do
+      file="${APP_TLS_DIR}/${service}/tls.pem"
+      if [[ "$(stat -c '%a' "${APP_TLS_DIR}/${service}" 2>/dev/null)" != "711" ]]; then
+        echo "error: ${APP_TLS_DIR}/${service} missing or not mode 711 (run: $0 init)" >&2
+        failures=$((failures + 1))
+      elif [[ ! -s "$file" ]]; then
+        echo "error: required application TLS file missing or empty: ${file} (run: $0 init)" >&2
+        failures=$((failures + 1))
+      elif ! app_certificate_ok "$service" 0; then
+        echo "error: the ${service} certificate does not verify for the name ${service} against the application CA, or has expired; run: $0 issue-app-certificate ${service}" >&2
+        failures=$((failures + 1))
+      elif [[ "$(openssl x509 -noout -pubkey -in "$file" | openssl sha256)" != \
+              "$(openssl pkey -pubout -in "$file" | openssl sha256)" ]]; then
+        echo "error: the ${service} key does not match its certificate" >&2
+        failures=$((failures + 1))
+      fi
+    done
+  fi
+
+  # oauth2-proxy must serve only HTTPS; a configuration from an older init
+  # (a plaintext http_address) is refused rather than started.
+  if [[ -s "${SECRETS_DIR}/oauth2-proxy.cfg" ]] &&
+     ! { grep -qx 'http_address = "-"' "${SECRETS_DIR}/oauth2-proxy.cfg" &&
+         grep -qx "https_address = \"0.0.0.0:${OAUTH2_PROXY_TLS_PORT}\"" "${SECRETS_DIR}/oauth2-proxy.cfg" &&
+         grep -qx 'tls_cert_file = "/run/oauth2-proxy-tls/tls.pem"' "${SECRETS_DIR}/oauth2-proxy.cfg"; }; then
+    echo "error: oauth2-proxy.cfg does not restrict oauth2-proxy to HTTPS (ADR 0008); run: $0 init" >&2
+    failures=$((failures + 1))
+  fi
+
   # Every internal connection URL requests verified TLS; a plaintext or
   # unverified URL (for example from an older init) is refused here rather
   # than discovered at runtime.
@@ -1391,6 +1583,9 @@ check_secrets() {
     )."
   done
   echo "Keycloak certificate valid until $(openssl x509 -noout -enddate -in "$IDP_TLS_FILE" | cut -d= -f2)."
+  for service in "${APP_TLS_SERVICES[@]}"; do
+    echo "Application ${service} certificate valid until $(openssl x509 -noout -enddate -in "${APP_TLS_DIR}/${service}/tls.pem" | cut -d= -f2)."
+  done
 }
 
 show_ca_certificate() {
@@ -1406,9 +1601,10 @@ show_ca_certificate() {
   echo "  SHA-1:        $(openssl x509 -noout -fingerprint -sha1 -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
   echo "  Valid until:  $(openssl x509 -noout -enddate -in "${PKI_DIR}/ca.crt" | cut -d= -f2)"
   echo "The CA private key never leaves ${PKI_DIR}."
-  echo "The internal CA (${PKI_DIR}/internal-ca.crt) and the identity-provider CA"
-  echo "(${PKI_DIR}/idp-ca.crt) are for service-to-service TLS inside the lab only;"
-  echo "browsers and Windows do not need them."
+  echo "The internal CA (${PKI_DIR}/internal-ca.crt), the identity-provider CA"
+  echo "(${PKI_DIR}/idp-ca.crt), and the application CA (${PKI_DIR}/app-ca.crt) are"
+  echo "for service-to-service TLS inside the lab only; browsers and Windows do not"
+  echo "need them."
 }
 
 # ---------------------------------------------------------------------------
@@ -1777,7 +1973,11 @@ tls_flow() {
 
 # The Go TLS verification error in a service's log since $2.
 go_tls_reason() {
+  # The API and worker log JSON (ADR 0012), which escapes the quotes in
+  # "DNS name ... is excluded by constraint ..." as \"; unescape before
+  # matching so plain-text and JSON logs give the same reason.
   { compose logs --no-log-prefix --since "$2" "$1" 2>/dev/null \
+      | sed 's/\\"/"/g' \
       | grep -oE 'x509: (certificate (signed by unknown authority|is valid for [a-z0-9.-]+, not [a-z0-9.-]+|has expired or is not yet valid)|a root or intermediate certificate is not authorized to sign for this name: DNS name "[a-z0-9.-]+" is excluded by constraint "[a-z0-9.-]+")' \
       || true; } | sort -u | paste -sd ';' -
 }
@@ -2085,7 +2285,7 @@ verify_internal_tls() {
 IDP_PROBE="${PROJECT}-idp-probe"
 NGINX_CONTROL="${PROJECT}-nginx-control"
 DISCOVERY_PATH=/realms/work-items/.well-known/openid-configuration
-INGRESS_IMAGE=zero-to-prod-security-lab-ingress:local
+INGRESS_IMAGE="${ZTP_SECURITY_LAB_INGRESS_IMAGE:-zero-to-prod-security-lab-ingress:local}"
 
 # A TLS client on the idp network. It holds no secret: only the three CA
 # certificates (public) are mounted, to show which of them verifies Keycloak.
@@ -2152,7 +2352,15 @@ issue_keycloak_certificate_command() {
 # Status of one request through the ingress's diagnostic route, which fetches
 # issuer discovery from Keycloak with the production TLS settings.
 keycloak_upstream_check() {
-  { compose exec -T ingress wget -q -S -O /dev/null "http://127.0.0.1:8082/keycloak-upstream" 2>&1 || true; } \
+  diagnostic_status keycloak-upstream
+}
+
+# Status of one request to the ingress's loopback diagnostic route $1
+# (keycloak-upstream, api-upstream, api-version, oauth2-proxy-upstream). Each
+# opens a new upstream connection with the production TLS directives and
+# carries no credentials.
+diagnostic_status() {
+  { compose exec -T ingress wget -q -S -O /dev/null "http://127.0.0.1:8082/$1" 2>&1 || true; } \
     | grep -oE 'HTTP/1\.[01] [0-9]{3}' | tail -n 1 | cut -d' ' -f2
 }
 
@@ -2229,10 +2437,31 @@ container_started_at() {
   docker inspect --format '{{.State.StartedAt}}' "$(compose ps -q "$1")" 2>/dev/null
 }
 
-# ESTABLISHED TCP connections in the container $1 to remote port $2.
+# ESTABLISHED TCP connections in the container $1 to remote port $2, and,
+# when $3 is given, to the remote IPv4 address $3 only. The address matters
+# since Keycloak and the API both listen on 8443 (ADR 0007, ADR 0008).
 established_to_port() {
-  docker exec "$1" cat /proc/net/tcp /proc/net/tcp6 2>/dev/null \
-    | awk -v port=":$(printf '%04X' "$2")" '$3 ~ port"$" && $4 == "01" {n++} END {print n + 0}'
+  docker exec "$1" cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | python3 -I -c '
+import ipaddress, sys
+port, want = int(sys.argv[1]), (sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None)
+n = 0
+for line in sys.stdin:
+    f = line.split()
+    if len(f) < 4 or f[3] != "01" or ":" not in f[2]:
+        continue
+    addr, p = f[2].split(":")
+    if int(p, 16) != port:
+        continue
+    raw = bytes.fromhex(addr)
+    # /proc prints each 32-bit word in host (little-endian) order.
+    raw = b"".join(raw[i:i + 4][::-1] for i in range(0, len(raw), 4))
+    ip = ipaddress.ip_address(raw)
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if want is None or str(ip) == want:
+        n += 1
+print(n)
+' "$2" "${3:-}"
 }
 
 # Keycloak's listening TCP sockets ("<address>:<port>", sorted).
@@ -2443,10 +2672,17 @@ PY
 # request (automation client secret) cross the hop. The capture stays in a
 # temporary file and is deleted; only counts are recorded, never values.
 # $1: observe (record only) or encrypted (expect no plaintext).
+#
+# Script arguments: two IPv4 addresses, seconds, and optionally a
+# comma-separated list of TCP ports; with ports, only segments to or from one
+# of them are kept (capture-app-hops uses this to leave out other traffic
+# between the same two containers, such as the API's TLS calls to the issuer
+# through the ingress).
 CAPTURE_SCRIPT='
 use strict; use warnings; use Socket qw(inet_aton);
-my ($x, $y, $secs) = @ARGV;
+my ($x, $y, $secs, $ports) = @ARGV;
 my ($ia, $ib) = (inet_aton($x), inet_aton($y));
+my %keep = map { $_ => 1 } split /,/, ($ports // "");
 socket(my $s, 17, 3, 0x0300) or die "socket: $!\n";
 binmode STDOUT; $| = 1;
 print STDERR "ready\n";
@@ -2462,6 +2698,10 @@ while (time < $end) {
   next unless ($src eq $ia && $dst eq $ib) || ($src eq $ib && $dst eq $ia);
   my $end_ip = 14 + unpack("n", substr($buf, 16, 2));
   my $tcp = 14 + (ord(substr($buf, 14, 1)) & 15) * 4;
+  if (%keep) {
+    my ($sp, $dp) = unpack("nn", substr($buf, $tcp, 4));
+    next unless $keep{$sp} || $keep{$dp};
+  }
   my $data = $tcp + (ord(substr($buf, $tcp + 12, 1)) >> 4) * 4;
   print substr($buf, $data, $end_ip - $data) if $end_ip > $data;
 }
@@ -2630,7 +2870,7 @@ keycloak_tls_failure_case() {
   expect "$area" "machine token issued before the change, at the API (local validation)" "200" \
     "$(bearer_status "$machine_before" "${APP_URL}/api/items")"
   expect "$area" "ingress: established connections to Keycloak:8443" "0" \
-    "$(established_to_port "$(compose ps -q ingress)" "$IDP_TLS_PORT")"
+    "$(established_to_port "$(compose ps -q ingress)" "$IDP_TLS_PORT" "$(container_ip keycloak idp)")"
 
   # Control variants on the same certificate.
   since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -2797,7 +3037,7 @@ keycloak_ip_constraint_control() {
   local anchor_before
   anchor_before="$(compose exec -T ingress sha256sum /run/idp-ca/ca.crt 2>/dev/null | cut -d' ' -f1)"
   stop_ipcontrol
-  docker network create --internal "$IPCONTROL_NETWORK" >/dev/null
+  tool_network_create ipcontrol "$IPCONTROL_NETWORK" --internal >/dev/null
   expect "$area" "valid keycloak certificate, identity-provider CA trusted (setup works)" "200 reason=none" \
     "$(ipcontrol_observe "${dir}/valid/tls.pem" "${PKI_DIR}/idp-ca.crt")"
   expect "$area" "keycloak plus IP:127.0.0.1 from the identity-provider CA, identity-provider CA trusted" \
@@ -2975,7 +3215,7 @@ verify_keycloak_tls() {
     "$(tr ';' '\n' <<< "$observed" | awk '$3 ~ /^upstream=[0-9]/' | grep -q . &&
        ! tr ';' '\n' <<< "$observed" | awk '$3 ~ /^upstream=[0-9]/' | grep -qv 'port=8443$' && echo yes || echo no)"
   expect "$area" "ingress: established connections to Keycloak:8443 after the requests" "0" \
-    "$(established_to_port "$(compose ps -q ingress)" "$IDP_TLS_PORT")"
+    "$(established_to_port "$(compose ps -q ingress)" "$IDP_TLS_PORT" "$(container_ip keycloak idp)")"
 
   # Control variants with the valid certificate.
   local since
@@ -2989,7 +3229,7 @@ verify_keycloak_tls() {
   expect "$area" "control nginx: hostname-check reason" 'upstream SSL certificate does not match "postgres"' \
     "$(control_tls_reason_since "$since")"
   record "$area" "control nginx: keep-alive connections held to Keycloak:8443" "observe" \
-    "$(established_to_port "$NGINX_CONTROL" "$IDP_TLS_PORT")" info
+    "$(established_to_port "$NGINX_CONTROL" "$IDP_TLS_PORT" "$(container_ip keycloak idp)")" info
 
   expect "$area" "TLS session saved from a new verified connection" "saved" "$(save_idp_session)"
   record "$area" "saved TLS session offered on a new connection (no change)" "observe" "$(resume_idp_session)" info
@@ -3063,6 +3303,740 @@ verify_keycloak_tls() {
   [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
     "verify-keycloak-tls: ingress to Keycloak over TLS with the identity-provider CA. Baseline (listeners, plaintext refusal, CA separation, public metadata and redirects, sign-in, machine token, sign-out), passive capture of the hop, control nginx variants (session reuse, keep-alive, another dialed name, verification off), failure cases (untrusted CA, lab CA, name outside the CA's constraints, expired, excluded subdomain, excluded IP address) with new versus established connections, saved-session resumption, and recovery by renewal without restarts; an isolated control in which the same nginx verifier accepts the keycloak-plus-IP certificate from an unconstrained CA; renewal; log search. Scripted clients only."
   finish_checks "Keycloak TLS verification"
+}
+
+# ---------------------------------------------------------------------------
+# Application hops: ingress → API and ingress → oauth2-proxy over TLS
+# (ADR 0008)
+# ---------------------------------------------------------------------------
+
+APP_PROBE="${PROJECT}-app-probe"
+APP_CONTROL="${PROJECT}-app-control"
+
+app_tls_port() {
+  case "$1" in
+    api) echo "$API_TLS_PORT" ;;
+    oauth2-proxy) echo "$OAUTH2_PROXY_TLS_PORT" ;;
+  esac
+}
+
+# The service's former plaintext port, which must stay closed.
+app_plaintext_port() {
+  case "$1" in
+    api) echo 8080 ;;
+    oauth2-proxy) echo 4180 ;;
+  esac
+}
+
+# A path that answers without credentials on each service.
+app_probe_path() {
+  case "$1" in
+    api) echo /health ;;
+    oauth2-proxy) echo /ping ;;
+  esac
+}
+
+# A TLS client on the app network. It holds no secret: only the four CA
+# certificates (public) are mounted, to show which of them verifies each
+# service.
+start_app_probe() {
+  docker rm -fv "$APP_PROBE" >/dev/null 2>&1 || true
+  docker run -d --rm --name "$APP_PROBE" --network "${PROJECT}_app" \
+    --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp --user 999:999 \
+    -v "${PKI_DIR}/app-ca.crt:/probe-ca/app-ca.crt:ro" \
+    -v "${PKI_DIR}/ca.crt:/probe-ca/lab-ca.crt:ro" \
+    -v "${PKI_DIR}/internal-ca.crt:/probe-ca/internal-ca.crt:ro" \
+    -v "${PKI_DIR}/idp-ca.crt:/probe-ca/idp-ca.crt:ro" \
+    --entrypoint sleep "$RABBITMQ_IMAGE" infinity >/dev/null
+}
+
+stop_app_probe() {
+  docker rm -fv "$APP_PROBE" >/dev/null 2>&1 || true
+}
+
+# "<verify code> <served serial>" for one new connection to the service $1,
+# verified for its own name against the CA $2: app (default), lab, internal,
+# or idp.
+app_tls_probe() {
+  tls_probe "$APP_PROBE" "$1" "$(app_tls_port "$1")" "/probe-ca/${2:-app}-ca.crt"
+}
+
+app_served_serial() {
+  local observed
+  observed="$(app_tls_probe "$1")"
+  echo "${observed#* }"
+}
+
+# Makes the service $1 serve its current certificate file. The API rereads
+# the file by itself (within a second); oauth2-proxy reads it only at start
+# and is restarted. Its sessions are in Valkey and survive.
+apply_app_certificate() {
+  if [[ "$1" == oauth2-proxy ]]; then
+    compose restart oauth2-proxy >/dev/null 2>&1 || die "oauth2-proxy did not restart"
+  fi
+  return 0
+}
+
+# Wait until five consecutive new connections to the service $1 show the
+# observation $2 of the function $3 (app_tls_probe or app_served_serial).
+wait_for_app() {
+  await_observation_streak "$2" 5 90 1 "$3" "$1"
+}
+
+issue_app_certificate_command() {
+  local service="${1:-}" expected observed
+  case "$service" in
+    api | oauth2-proxy) ;;
+    *) die "usage: $0 issue-app-certificate <api|oauth2-proxy>" ;;
+  esac
+  require_owned_state
+
+  issue_app_certificate "$service" valid
+  expected="$(certificate_serial "${APP_TLS_DIR}/${service}/tls.pem")"
+  if [[ -z "$(compose ps -q --status running "$service" 2>/dev/null)" ]]; then
+    echo "Issued ${service} serial ${expected}; ${service} is not running."
+    return 0
+  fi
+
+  if [[ "$service" == oauth2-proxy ]]; then
+    echo "Restarting oauth2-proxy, which reads its certificate at start (sessions are kept in Valkey)..."
+  else
+    echo "Waiting for the API to reread its certificate (no restart)..."
+  fi
+  apply_app_certificate "$service"
+  start_app_probe
+  if ! observed="$(wait_for_app "$service" "0 ${expected}" app_tls_probe)"; then
+    stop_app_probe
+    die "renewal of ${service} not confirmed: ${observed} (verify code, serial)"
+  fi
+  stop_app_probe
+  echo "${service} serves the new certificate; five consecutive new connections verified serial ${expected}."
+}
+
+# nginx's verdict for the API and oauth2-proxy through the diagnostic routes.
+check_app_upstream() {
+  local route since status rc=0
+  for route in api-upstream oauth2-proxy-upstream; do
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    status="$(diagnostic_status "$route")"
+    sleep 1
+    echo "Diagnostic request ${route}: HTTP ${status:-none}"
+    if [[ "$status" != 200 ]]; then
+      echo "  Reason in the ingress log: $(ingress_tls_reason_since "$since")"
+      rc=1
+    fi
+  done
+  [[ "$rc" -eq 0 ]] && echo "The API's and oauth2-proxy's certificates verified for their names."
+  return "$rc"
+}
+
+# A second nginx on the app network, from the ingress image, used only by
+# verify-app-tls: the production directives, and verification off (the
+# negative control showing the test detects missing verification). It has the
+# application CA and no secret; it is reachable only from inside itself.
+start_app_control() {
+  local conf="${AUTH_WORK}/app-control.conf" _
+  cat > "$conf" <<EOF_NGINX
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr error;
+events { worker_connections 64; }
+http {
+    access_log off;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi;
+    scgi_temp_path /tmp/scgi;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    server {
+        listen 127.0.0.1:8080;
+        proxy_connect_timeout 2s;
+        location = /healthz { return 200; }
+        location = /api-production {
+            set \$u https://api:${API_TLS_PORT}/health;
+            include /etc/nginx/api-upstream.conf;
+            proxy_pass \$u;
+        }
+        location = /api-verify-off {
+            set \$u https://api:${API_TLS_PORT}/health;
+            proxy_ssl_verify off;
+            proxy_pass \$u;
+        }
+        location = /oauth2-proxy-production {
+            set \$u https://oauth2-proxy:${OAUTH2_PROXY_TLS_PORT}/ping;
+            include /etc/nginx/oauth2-proxy-upstream.conf;
+            proxy_pass \$u;
+        }
+        location = /oauth2-proxy-verify-off {
+            set \$u https://oauth2-proxy:${OAUTH2_PROXY_TLS_PORT}/ping;
+            proxy_ssl_verify off;
+            proxy_pass \$u;
+        }
+    }
+}
+EOF_NGINX
+  chmod 644 "$conf"
+  docker rm -fv "$APP_CONTROL" >/dev/null 2>&1 || true
+  docker run -d --name "$APP_CONTROL" --network "${PROJECT}_app" \
+    --read-only --tmpfs /tmp --tmpfs /var/cache/nginx --cap-drop ALL \
+    --security-opt no-new-privileges:true --user 101:101 \
+    -v "${conf}:/etc/nginx/nginx.conf:ro" -v "${PKI_DIR}/app-ca.crt:/run/app-ca/ca.crt:ro" \
+    "$INGRESS_IMAGE" >/dev/null
+  for _ in $(seq 1 20); do
+    [[ "$(app_control_status healthz)" == 200 ]] && return 0
+    sleep 0.5
+  done
+  die "the app control nginx did not start: $(docker logs "$APP_CONTROL" 2>&1 | tail -n 3)"
+}
+
+stop_app_control() {
+  docker rm -fv "$APP_CONTROL" >/dev/null 2>&1 || true
+}
+
+app_control_status() {
+  { docker exec "$APP_CONTROL" wget -q -S -O /dev/null "http://127.0.0.1:8080/$1" 2>&1 || true; } \
+    | grep -oE 'HTTP/1\.[01] [0-9]{3}' | tail -n 1 | cut -d' ' -f2
+}
+
+# Listening TCP sockets in the network namespace of the service $1, except
+# Docker's embedded DNS (127.0.0.11), sorted.
+service_listeners() {
+  docker run --rm --network "container:$(compose ps -q "$1")" --cap-drop ALL --read-only --user 999:999 \
+    --entrypoint cat "$RABBITMQ_IMAGE" /proc/net/tcp /proc/net/tcp6 2>/dev/null | python3 -I -c '
+import ipaddress, sys
+out = set()
+for line in sys.stdin:
+    f = line.split()
+    if len(f) < 4 or f[3] != "0A" or ":" not in f[1]:
+        continue
+    addr, port = f[1].split(":")
+    raw = bytes.fromhex(addr)
+    raw = b"".join(raw[i:i + 4][::-1] for i in range(0, len(raw), 4))
+    ip = ipaddress.ip_address(raw)
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if str(ip) == "127.0.0.11":
+        continue
+    out.add(f"{ip}:{int(port, 16)}")
+print(",".join(sorted(out)))
+'
+}
+
+# Saves the TLS session of a new, verified connection to the service $1.
+app_save_session() {
+  docker exec "$APP_PROBE" sh -c '
+    rm -f "/tmp/$1.sess"
+    (sleep 1; printf "GET $3 HTTP/1.0\r\nHost: $1\r\n\r\n"; sleep 1) | /opt/openssl/bin/openssl s_client \
+      -connect "$1:$2" -servername "$1" -verify_hostname "$1" -CAfile /probe-ca/app-ca.crt \
+      -sess_out "/tmp/$1.sess" -ign_eof >/dev/null 2>&1
+    [ -s "/tmp/$1.sess" ] && echo saved || echo none' probe "$1" "$(app_tls_port "$1")" "$(app_probe_path "$1")"
+}
+
+# Offers the saved session on a new connection to the service $1. Prints
+# "<New|Reused> verify=<code>": "Reused" means the server resumed the
+# session, so no certificate was sent and nothing was verified.
+app_resume_session() {
+  docker exec "$APP_PROBE" sh -c '
+    [ -s "/tmp/$1.sess" ] || { echo "no-saved-session"; exit 0; }
+    out="$( (sleep 1; printf "GET $3 HTTP/1.0\r\nHost: $1\r\n\r\n"; sleep 1) | /opt/openssl/bin/openssl s_client \
+      -connect "$1:$2" -servername "$1" -verify_hostname "$1" -CAfile /probe-ca/app-ca.crt \
+      -sess_in "/tmp/$1.sess" -ign_eof 2>&1)"
+    kind="$(printf "%s\n" "$out" | sed -n "s/^\(New\|Reused\), .*/\1/p" | head -n 1)"
+    code="$(printf "%s\n" "$out" | sed -n "s/^ *Verify return code: \([0-9]*\).*/\1/p" | tail -n 1)"
+    echo "${kind:-none} verify=${code:-none}"' probe "$1" "$(app_tls_port "$1")" "$(app_probe_path "$1")"
+}
+
+# Passive capture of both application hops, as a member of the app network
+# with raw sockets could do it (threat T1): one container in the API's and one
+# in oauth2-proxy's network namespace, with CAP_NET_RAW, each keeping the TCP
+# payloads between the ingress and that service for a fixed time. During the
+# capture a sign-in callback (code and state to oauth2-proxy; session cookie
+# back), a session API request (cookie to oauth2-proxy, access token back and
+# on to the API), and a machine request (bearer token to the API) cross the
+# hops. Only segments to or from the service's port (the former plaintext
+# port or the TLS port) are kept, so the API's and oauth2-proxy's own TLS
+# calls to the issuer through the ingress, between the same two containers,
+# are left out. Kept-alive API connections may predate the capture, so the
+# positive control is TLS application-data records on that port, not the
+# server name. The captures stay in temporary files and are deleted; only
+# counts are recorded.
+# $1: observe (record only) or encrypted (expect no plaintext).
+capture_app_hops() {
+  local mode="$1" area="passive capture of the app hops" service
+  local ingress_ip jar="${AUTH_WORK}/app-capture" values="${AUTH_WORK}/app-capture-values"
+  local -A pid=() file=()
+  ingress_ip="$(container_ip ingress app)"
+  : > "$values"
+
+  for service in api oauth2-proxy; do
+    file[$service]="${AUTH_WORK}/${service}.capture"
+    (umask 077; : > "${file[$service]}"; : > "${file[$service]}.err")
+    docker run --rm --network "container:$(compose ps -q "$service")" --cap-drop ALL --cap-add NET_RAW \
+      --security-opt no-new-privileges:true --read-only --user 0:0 --entrypoint perl "$RABBITMQ_IMAGE" \
+      -e "$CAPTURE_SCRIPT" "$ingress_ip" "$(container_ip "$service" app)" 25 \
+      "$(app_plaintext_port "$service"),$(app_tls_port "$service")" \
+      > "${file[$service]}" 2> "${file[$service]}.err" &
+    pid[$service]=$!
+  done
+  local _
+  for _ in $(seq 1 50); do
+    grep -q ready "${file[api]}.err" && grep -q ready "${file[oauth2-proxy]}.err" && break
+    sleep 0.2
+  done
+  record "$area" "captures started (raw sockets in the API's and oauth2-proxy's namespaces)" "observe" \
+    "$(grep -q ready "${file[api]}.err" && grep -q ready "${file[oauth2-proxy]}.err" && echo yes || echo no)" info
+
+  local callback code state result session_status_code machine machine_status cookie
+  callback="$(authorize_until_callback "$jar")"
+  code="$(query_param "$callback" code)"
+  state="$(query_param "$callback" state)"
+  result="$(curl_config url "$callback" | status_and_request_id -K - -c "$jar" -b "$jar")"
+  cookie="$(session_cookie "$jar")"
+  session_status_code="$(session_status "$jar" "${APP_URL}/api/items")"
+  machine="$(client_credentials access_token)"
+  machine_status="$(bearer_status "$machine" "${APP_URL}/api/items")"
+  for service in api oauth2-proxy; do wait "${pid[$service]}" || true; done
+
+  add_value "$values" authorization-code "$code"
+  add_value "$values" state "$state"
+  add_value "$values" session-cookie "$cookie"
+  add_value "$values" machine-access-token "$machine"
+  # Markers of token-carrying headers in clear text: the bearer header the
+  # ingress sends to the API, and oauth2-proxy's access-token response header.
+  printf 'bearer-header\tBearer ey\naccess-token-header\tX-Auth-Request-Access-Token\nhttp-message\tHTTP/1.\n' >> "$values"
+  printf 'tls-application-data\t\x17\x03\x03\n' >> "$values"
+
+  record "$area" "flows during the capture: callback, session GET /api/items, machine GET /api/items" "observe" \
+    "callback=${result%% *} session=${session_status_code} machine=${machine_status} code=$([[ -n "$code" ]] && echo obtained || echo missing)" info
+
+  local counts credentials bytes
+  for service in api oauth2-proxy; do
+    bytes="$(stat -c '%s' "${file[$service]}")"
+    counts="$(count_in_capture "${file[$service]}" "$values")"
+    credentials="$(tr ' ' '\n' <<< "$counts" | grep -vE '^(http-message|tls-application-data|tls-application-data\+encoded)=' \
+      | awk -F= '{n += $2} END {print n + 0}')"
+    rm -f -- "${file[$service]}" "${file[$service]}.err"
+    record "$area" "ingress-${service}: payload bytes captured" "observe" "$bytes" info
+    record "$area" "ingress-${service}: occurrences per kind" "observe" "$counts" info
+    if [[ "$mode" == encrypted ]]; then
+      expect "$area" "ingress-${service}: credential and token-header occurrences" "0" "$credentials"
+      expect "$area" "ingress-${service}: plaintext HTTP messages" "0" \
+        "$(tr ' ' '\n' <<< "$counts" | sed -n 's/^http-message=//p')"
+      expect "$area" "ingress-${service}: positive control: TLS application-data records seen" "yes" \
+        "$([[ "$(tr ' ' '\n' <<< "$counts" | sed -n 's/^tls-application-data=//p')" -gt 0 ]] && echo yes || echo no)"
+    fi
+  done
+}
+
+# Read-only use of the capture on any running lab, including one created
+# before ADR 0008 (it needs no application CA).
+capture_app_hops_command() {
+  local evidence_file="" started service
+  [[ "${1:-}" == "--evidence" ]] && evidence_file="${2:?--evidence requires a file}"
+  require_command python3
+  for service in ingress api oauth2-proxy keycloak; do
+    [[ -n "$(compose ps -q --status running "$service" 2>/dev/null)" ]] || die "${service} is not running; run: $0 start"
+  done
+  RESULTS=(); FAILED=0
+  AUTH_WORK="$(mktemp -d)"
+  trap 'rm -rf -- "$AUTH_WORK"' EXIT
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  wait_for_issuer || die "the issuer is not reachable: ${ISSUER}"
+  for service in api oauth2-proxy; do
+    record "metadata" "${service}: listening sockets (Docker DNS excluded)" "observe" "$(service_listeners "$service")" info
+  done
+  capture_app_hops observe
+  sleep 1
+  record "metadata" "ingress access log: upstream addresses during the run (ports)" "observe" \
+    "$(compose logs --no-log-prefix --since "$started" ingress 2>/dev/null | grep -oE 'uaddr=[^ ]*' \
+       | grep -oE ':[0-9]+' | sort | uniq -c | sed 's/^ *//' | paste -sd ';' -)" info
+  [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
+    "capture-app-hops: passive capture of the ingress-API and ingress-oauth2-proxy hops from each service's network namespace during a sign-in callback, a session request, and a machine request; counts only, no values recorded."
+  finish_checks "Application hop capture"
+}
+
+# Expected client-side verdicts per certificate kind for the service $2.
+expected_app_code() {
+  case "$1" in
+    untrusted | lab-ca) echo 21 ;;  # unable to verify the first certificate
+    mismatch) echo 62 ;;            # hostname mismatch
+    expired) echo 10 ;;             # certificate has expired
+  esac
+}
+
+expected_app_reason() {
+  case "$1" in
+    untrusted | lab-ca) echo "upstream SSL certificate verify error: (21:unable to verify the first certificate)" ;;
+    mismatch) echo "upstream SSL certificate does not match \"$2\"" ;;
+    expired) echo "upstream SSL certificate verify error: (10:certificate has expired)" ;;
+  esac
+}
+
+# Ingress access-log lines since $1 for API routes, as
+# "<count> <status> upstream=<statuses>".
+ingress_api_access_since() {
+  { compose logs --no-log-prefix --since "$1" ingress 2>/dev/null | grep -F '"GET /api/' || true; } \
+    | sed -nE 's/.*" ([0-9]{3}) [0-9]+ host=[^ ]+ upstream=([^ ]+( : [^ ]+)*) uaddr=.*/\1 upstream=\2/p' \
+    | tr -d ' ' | sed -E 's/upstream=/ upstream=/' | sort | uniq -c | sed 's/^ *//' | paste -sd ';' -
+}
+
+# One failure case on the service $1 with the certificate kind $2: install
+# the certificate, make the service serve it, then observe new and
+# established connections, the public routes, the diagnostic reason, the
+# control, and recovery by renewal.
+app_tls_failure_case() {
+  local service="$1" kind="$2" rogue="$3" values="$4" session_jar="$5" area="${1}: ${2}"
+  local bad good since machine_before observed
+  machine_before="$(client_credentials access_token)"
+  add_value "$values" machine-access-token "$machine_before"
+  # A kept-alive API connection from the ingress, opened before the change.
+  session_status "$session_jar" "${APP_URL}/api/items" >/dev/null
+  app_save_session "$service" >/dev/null
+
+  issue_app_certificate "$service" "$kind" "$rogue"
+  bad="$(certificate_serial "${APP_TLS_DIR}/${service}/tls.pem")"
+  apply_app_certificate "$service"
+  expect "$area" "new connection: served serial" "$bad" "$(wait_for_app "$service" "$bad" app_served_serial)"
+  expect "$area" "new connection: openssl verify code (application CA, name ${service})" \
+    "$(expected_app_code "$kind")" "$(app_tls_probe "$service" | cut -d' ' -f1)"
+  record "$area" "TLS session saved before the change, offered on a new connection" "observe" \
+    "$(app_resume_session "$service")" info
+
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$service" == api ]]; then
+    # Kept-alive connections negotiated before the change are not
+    # re-verified; idle ones close after keepalive_timeout (30 s).
+    record "$area" "session GET /api/items at once (kept-alive connection may be reused)" "observe" \
+      "$(call_summary session "$session_jar" GET /items)" info
+    record "$area" "ingress: established connections to api:${API_TLS_PORT} at once" "observe" \
+      "$(established_to_port "$(compose ps -q ingress)" "$API_TLS_PORT" "$(container_ip api app)")" info
+    sleep 35
+    expect "$area" "ingress: established connections to api:${API_TLS_PORT} after the idle timeout" "0" \
+      "$(established_to_port "$(compose ps -q ingress)" "$API_TLS_PORT" "$(container_ip api app)")"
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    expect "$area" "session GET /api/items (new connection)" "502" "$(session_status "$session_jar" "${APP_URL}/api/items")"
+    expect "$area" "machine GET /api/items (new connection)" "502" "$(bearer_status "$machine_before" "${APP_URL}/api/items")"
+    expect "$area" "gateway unaffected: new sign-in starts" "302" "$(http_status "${APP_URL}/oauth2/start?rd=%2F")"
+  else
+    expect "$area" "session GET /api/items (auth_request refused)" "503 authentication_unavailable" \
+      "$(call_summary session "$session_jar" GET /items)"
+    expect "$area" "new sign-in" "503" "$(http_status "${APP_URL}/oauth2/start?rd=%2F")"
+    expect "$area" "machine GET /api/items (no gateway on the bearer path)" "200" \
+      "$(bearer_status "$machine_before" "${APP_URL}/api/items")"
+  fi
+  sleep 1
+  expect "$area" "ingress: public-route upstream TLS reason lines (suppressed below crit)" "" \
+    "$(ingress_tls_reason_since "$since")"
+  record "$area" "ingress access log: API routes (count status upstream statuses)" "observe" \
+    "$(ingress_api_access_since "$since")" info
+
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  expect "$area" "diagnostic route: status" "502" "$(diagnostic_status "${service}-upstream")"
+  sleep 1
+  expect "$area" "diagnostic route: TLS reason in the ingress log" "$(expected_app_reason "$kind" "$service")" \
+    "$(ingress_tls_reason_since "$since")"
+  record "$area" "diagnostic route: logged line (addresses redacted)" "observe" \
+    "$(ingress_tls_lines_since "$since" | head -n 1)" info
+
+  expect "$area" "control nginx: production directives" "502" "$(app_control_status "${service}-production")"
+  expect "$area" "control nginx: verification off (negative control)" "200" "$(app_control_status "${service}-verify-off")"
+  expect "$area" "machine token issued before the change, at the API (local validation)" \
+    "$([[ "$service" == api ]] && echo 502 || echo 200)" "$(bearer_status "$machine_before" "${APP_URL}/api/items")"
+
+  # Recovery.
+  issue_app_certificate "$service" valid
+  good="$(certificate_serial "${APP_TLS_DIR}/${service}/tls.pem")"
+  apply_app_certificate "$service"
+  expect "$area" "renewed: openssl verify code, served serial" "0 ${good}" \
+    "$(wait_for_app "$service" "0 ${good}" app_tls_probe)"
+  expect "$area" "renewed: diagnostic route" "200" "$(diagnostic_status "${service}-upstream")"
+  expect "$area" "renewed: session from before the change, GET /api/items" "200" \
+    "$(session_status "$session_jar" "${APP_URL}/api/items")"
+  expect "$area" "renewed: machine GET /api/items" "200" "$(bearer_status "$(client_credentials access_token)" "${APP_URL}/api/items")"
+  local jar="${AUTH_WORK}/recovered-${service}-${kind}"
+  browser_login "$jar" lab-user >/dev/null
+  add_value "$values" session-cookie "$(session_cookie "$jar")"
+  expect "$area" "renewed: new sign-in, then GET /api/items" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+}
+
+verify_app_tls() {
+  local evidence_file="" started service
+  [[ "${1:-}" == "--evidence" ]] && evidence_file="${2:?--evidence requires a file}"
+  require_command python3
+  require_owned_state
+  for service in keycloak ingress api worker oauth2-proxy; do
+    [[ -n "$(compose ps -q --status running "$service" 2>/dev/null)" ]] || die "${service} is not running; run: $0 start"
+  done
+  openssl x509 -help 2>&1 | grep -q -- '-not_after' ||
+    die "openssl $(openssl version | cut -d' ' -f2) cannot issue the expired test certificate (-not_after needs 3.4 or later)"
+
+  RESULTS=(); FAILED=0
+  AUTH_WORK="$(mktemp -d)"
+  TLS_ROGUE_DIR="$(mktemp -d)"
+  local rogue="$TLS_ROGUE_DIR"
+  # Always leave valid certificates served, the probe and control removed,
+  # and the untrusted CA's key deleted, also after a failure.
+  trap '
+    stop_app_probe
+    stop_app_control
+    for tls_service in "${APP_TLS_SERVICES[@]}"; do
+      if ! app_certificate_ok "$tls_service" 0; then
+        issue_app_certificate "$tls_service" valid
+        apply_app_certificate "$tls_service"
+        echo "A valid ${tls_service} certificate was reissued." >&2
+      fi
+    done
+    rm -rf -- "$AUTH_WORK" "$TLS_ROGUE_DIR"
+  ' EXIT
+  # Without these, bash would skip the EXIT trap when interrupted.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  set_ui_headers
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  wait_for_issuer || die "the issuer is not reachable: ${ISSUER}"
+
+  (
+    umask 077
+    openssl req -x509 -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -noenc \
+      -keyout "${rogue}/ca.key" -out "${rogue}/ca.crt" -days 1 \
+      -subj "/CN=Untrusted test CA (verify-app-tls)" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign" -addext "subjectKeyIdentifier=hash" 2>/dev/null
+  )
+
+  # Values searched in the logs at the end; never printed or recorded.
+  local values="${AUTH_WORK}/log-values" name
+  : > "$values"
+  for name in gateway-client-secret automation-client-secret lab-user-password lab-viewer-password \
+              lab-admin-client-secret oauth2-proxy-cookie-secret valkey-password keycloak-db-password; do
+    add_value "$values" secret "$(secret "$name")"
+  done
+
+  local api_started ingress_started
+  api_started="$(container_started_at api)"
+  ingress_started="$(container_started_at ingress)"
+  start_app_probe
+  start_app_control
+
+  # --- Baseline -------------------------------------------------------------
+  local area="baseline" serial ca observed
+  for service in "${APP_TLS_SERVICES[@]}"; do
+    serial="$(certificate_serial "${APP_TLS_DIR}/${service}/tls.pem")"
+    expect "$area" "${service}: openssl verify code, served serial (application CA)" "0 ${serial}" \
+      "$(wait_for_app "$service" "0 ${serial}" app_tls_probe)"
+    for ca in lab internal idp; do
+      expect "$area" "${service}: verify code with the ${ca} CA instead" "21" "$(app_tls_probe "$service" "$ca" | cut -d' ' -f1)"
+    done
+    expect "$area" "${service}:$(app_plaintext_port "$service") (former plaintext port) from the app network" \
+      "refused connects=0 exit=7" "$(probe_tcp_detail "${PROJECT}_app" "${service}:$(app_plaintext_port "$service")")"
+    observed="$(docker run --rm --network "${PROJECT}_app" --entrypoint curl "$PROBE_IMAGE" -sS --max-time 5 \
+      "http://${service}:$(app_tls_port "$service")$(app_probe_path "$service")" 2>/dev/null | head -c 120 | tr -d '\r\n')"
+    record "$area" "${service}: plaintext HTTP request to the TLS port (response body)" "observe" "${observed:-none}" info
+    expect "$area" "${service}: plaintext HTTP request to the TLS port is refused" "yes" \
+      "$(grep -qiE 'HTTPS server|400 Bad Request' <<< "$observed" && ! grep -qE 'healthy|^OK$' <<< "$observed" && echo yes || echo no)"
+    observed="$(service_listeners "$service")"
+    record "$area" "${service}: listening sockets (Docker DNS excluded)" "observe" "$observed" info
+    expect "$area" "${service}: only the TLS port listens" "yes" \
+      "$([[ -n "$observed" ]] && ! tr ',' '\n' <<< "$observed" | grep -qv ":$(app_tls_port "$service")$" && echo yes || echo no)"
+    expect "$area" "${service}: diagnostic route through the ingress" "200" "$(diagnostic_status "${service}-upstream")"
+    expect "$area" "${service}: control nginx, production directives" "200" "$(app_control_status "${service}-production")"
+  done
+
+  # Public flows over the encrypted hops (scripted clients).
+  local jar="${AUTH_WORK}/baseline" callback code location
+  expect "$area" "unauthenticated GET /api/items" "401 unauthenticated" "$(call_summary session /dev/null GET /items)"
+  location="$(authorization_request "${AUTH_WORK}/redirect")"
+  expect "$area" "gateway redirects to the public authorization endpoint" "yes" \
+    "$([[ "$location" == "${ISSUER}/protocol/openid-connect/auth?"* ]] && echo yes || echo no)"
+  callback="$(authorize_until_callback "$jar")"
+  code="$(query_param "$callback" code)"
+  add_value "$values" code "$code"
+  add_value "$values" state "$(query_param "$callback" state)"
+  expect "$area" "callback (oauth2-proxy redeems the code)" "302" \
+    "$(curl_config url "$callback" | status_and_request_id -K - -c "$jar" -b "$jar" | cut -d' ' -f1)"
+  expect "$area" "session: GET /api/items" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  add_value "$values" session-cookie "$(session_cookie "$jar")"
+  observed="$(session_access_token "$jar")"
+  add_value "$values" session-access-token "$observed"
+  expect "$area" "session access token (read over verified TLS from oauth2-proxy): issuer" "iss=${ISSUER}" \
+    "$(token_claims iss <<< "$observed")"
+  expect "$area" "session: create and process (editor)" "succeeded" "$(tls_flow "$jar" "app tls baseline")"
+  expect "$area" "session: POST /api/items without the UI header (CSRF)" "403 csrf_rejected" \
+    "$(http_status_body -b "$jar" -X POST -H 'Content-Type: application/json' -d '{"title":"x"}' "${APP_URL}/api/items" \
+       | { read -r status body; echo "$status $(json_field error <<< "$body")"; })"
+  local machine
+  machine="$(client_credentials access_token)"
+  add_value "$values" machine-access-token "$machine"
+  expect "$area" "session cookie plus bearer token (ambiguous)" "400 ambiguous_credentials" \
+    "$(bearer_header "$machine" | http_status_body -K - -b "$jar" "${APP_URL}/api/items" \
+       | { read -r status body; echo "$status $(json_field error <<< "$body")"; })"
+  expect "$area" "machine: GET /api/items" "200" "$(bearer_status "$machine" "${APP_URL}/api/items")"
+  expect "$area" "machine: POST /api/items (no items.create)" "403 insufficient_permissions" \
+    "$(call_summary bearer "$machine" POST /items '{"title":"x"}')"
+  local viewer="${AUTH_WORK}/viewer"
+  browser_login "$viewer" lab-viewer >/dev/null
+  add_value "$values" session-cookie "$(session_cookie "$viewer")"
+  expect "$area" "lab-viewer session: GET /api/items" "200" "$(session_status "$viewer" "${APP_URL}/api/items")"
+  expect "$area" "lab-viewer session: POST /api/items" "403 insufficient_permissions" \
+    "$(call_summary session "$viewer" POST /items '{"title":"x"}')"
+
+  # Session refresh through auth_request over TLS: after cookie_refresh
+  # (SESSION_REFRESH) the next request carries a new session cookie.
+  local refresh="${AUTH_WORK}/refresh" before_cookie headers
+  browser_login "$refresh" lab-user >/dev/null
+  before_cookie="$(session_cookie "$refresh")"
+  add_value "$values" session-cookie "$before_cookie"
+  sleep 65
+  headers="$(lab_curl -o /dev/null -D - -b "$refresh" -c "$refresh" "${APP_URL}/api/items" 2>/dev/null | tr -d '\r')"
+  expect "$area" "session refresh: request after the refresh is due" "200" "$(awk 'NR==1{print $2}' <<< "$headers")"
+  expect "$area" "session refresh: new session cookie returned through auth_request" "yes" \
+    "$(grep -qi '^set-cookie: __Host-wi-session=' <<< "$headers" && [[ "$(session_cookie "$refresh")" != "$before_cookie" ]] && echo yes || echo no)"
+  add_value "$values" session-cookie "$(session_cookie "$refresh")"
+
+  # Sign-out through oauth2-proxy over TLS ends the gateway and Keycloak
+  # sessions.
+  local signout="${AUTH_WORK}/signout" status
+  browser_login "$signout" lab-user >/dev/null
+  add_value "$values" session-cookie "$(session_cookie "$signout")"
+  status="$(lab_curl -o /dev/null -D - -b "$signout" -c "$signout" -X POST -H "Origin: ${APP_URL}" \
+    -H "Sec-Fetch-Site: same-origin" -H "Sec-Fetch-Mode: cors" -H "X-Requested-With: work-items-web" \
+    "${APP_URL}/oauth2/sign_out" 2>/dev/null | tr -d '\r' | awk 'NR==1{print $2}')"
+  expect "$area" "sign-out" "302" "$status"
+  expect "$area" "after sign-out: Keycloak session ended (login form)" "login-form" "$(idp_session_state "$signout")"
+
+  sleep 1
+  observed="$(compose logs --no-log-prefix --since "$started" ingress 2>/dev/null | grep -oE 'uaddr=[^ ]*' \
+    | grep -oE ':[0-9]+' | sort | uniq -c | sed 's/^ *//' | paste -sd ';' -)"
+  record "$area" "ingress access log: upstream ports during the run" "observe" "$observed" info
+  expect "$area" "ingress access log: no upstream on a former plaintext port (8080, 4180)" "yes" \
+    "$(grep -qE '(^|;)[0-9]+ :(8080|4180)(;|$)' <<< "$observed" && echo no || echo yes)"
+  record "$area" "ingress: established (kept-alive) connections to api:${API_TLS_PORT}" "observe" \
+    "$(established_to_port "$(compose ps -q ingress)" "$API_TLS_PORT" "$(container_ip api app)")" info
+  expect "$area" "ingress: established connections to oauth2-proxy:${OAUTH2_PROXY_TLS_PORT}" "0" \
+    "$(established_to_port "$(compose ps -q ingress)" "$OAUTH2_PROXY_TLS_PORT" "$(container_ip oauth2-proxy app)")"
+
+  # Session resumption, unchanged certificates. The API issues no session
+  # tickets, so with TLS 1.3 a client has no session to save or resume.
+  # oauth2-proxy keeps Go's defaults and is only observed. The ingress does
+  # not reuse sessions either way.
+  expect "$area" "api: TLS session ticket issued to a new verified connection" "none" "$(app_save_session api)"
+  record "$area" "api: resumption attempt" "observe" "$(app_resume_session api)" info
+  expect "$area" "oauth2-proxy: TLS session saved from a new verified connection" "saved" "$(app_save_session oauth2-proxy)"
+  record "$area" "oauth2-proxy: saved session offered on a new connection (no change)" "observe" \
+    "$(app_resume_session oauth2-proxy)" info
+
+  capture_app_hops encrypted
+
+  # --- Failure cases and recovery ------------------------------------------
+  local kind
+  for service in "${APP_TLS_SERVICES[@]}"; do
+    for kind in untrusted lab-ca mismatch expired; do
+      app_tls_failure_case "$service" "$kind" "$rogue" "$values" "$jar"
+    done
+  done
+
+  # --- Last good certificate ------------------------------------------------
+  # A replacement that is not a valid key pair (for example a partial write)
+  # is ignored: the API keeps the pair it has, reports the file once, and
+  # check-secrets refuses the file. Restoring a valid file recovers.
+  area="api: invalid replacement (last good certificate)"
+  local kept api_file="${APP_TLS_DIR}/api/tls.pem" since_invalid
+  kept="$(app_served_serial api)"
+  cp -p "$api_file" "${AUTH_WORK}/api-tls.pem"
+  since_invalid="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'not a key pair\n' > "${APP_TLS_DIR}/api/.tls.pem.tmp"
+  chmod 644 "${APP_TLS_DIR}/api/.tls.pem.tmp"
+  mv -f "${APP_TLS_DIR}/api/.tls.pem.tmp" "$api_file"
+  sleep 3
+  expect "$area" "new connections: verify code and serial (unchanged)" "0 ${kept}" "$(app_tls_probe api)"
+  expect "$area" "session GET /api/items" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  expect "$area" "check-secrets refuses the file" "fail" "$(check_secrets >/dev/null 2>&1 && echo pass || echo fail)"
+  sleep 2
+  expect "$area" "API log: rejected file reported once" "1" \
+    "$(compose logs --no-log-prefix --since "$since_invalid" api 2>/dev/null | grep -c 'holds no valid key pair' || true)"
+  record "$area" "API log: report (addresses and paths as logged)" "observe" \
+    "$(compose logs --no-log-prefix --since "$since_invalid" api 2>/dev/null | grep -m1 'holds no valid key pair' | sed -E 's/^[0-9/]+ [0-9:]+ //')" info
+  cp -p "${AUTH_WORK}/api-tls.pem" "${APP_TLS_DIR}/api/.tls.pem.tmp"
+  mv -f "${APP_TLS_DIR}/api/.tls.pem.tmp" "$api_file"
+  expect "$area" "restored file: check-secrets" "pass" "$(check_secrets >/dev/null 2>&1 && echo pass || echo fail)"
+  expect "$area" "restored file: verify code and serial" "0 ${kept}" "$(app_tls_probe api)"
+
+  # --- Renewal --------------------------------------------------------------
+  area="api: renewal"
+  local before new_serial
+  session_status "$jar" "${APP_URL}/api/items" >/dev/null
+  before="$(app_tls_probe api)"
+  issue_app_certificate api valid
+  new_serial="$(certificate_serial "${APP_TLS_DIR}/api/tls.pem")"
+  record "$area" "before: openssl verify code, served serial" "observe" "$before" info
+  record "$area" "ingress: established connections to api at renewal" "observe" \
+    "$(established_to_port "$(compose ps -q ingress)" "$API_TLS_PORT" "$(container_ip api app)")" info
+  expect "$area" "after: openssl verify code, served serial (no restart)" "0 ${new_serial}" \
+    "$(wait_for_app api "0 ${new_serial}" app_tls_probe)"
+  expect "$area" "session GET /api/items" "200" "$(session_status "$jar" "${APP_URL}/api/items")"
+  expect "$area" "machine GET /api/items" "200" "$(bearer_status "$(client_credentials access_token)" "${APP_URL}/api/items")"
+  expect "$area" "API container not restarted" "$api_started" "$(container_started_at api)"
+
+  area="oauth2-proxy: renewal"
+  before="$(app_tls_probe oauth2-proxy)"
+  issue_app_certificate oauth2-proxy valid
+  new_serial="$(certificate_serial "${APP_TLS_DIR}/oauth2-proxy/tls.pem")"
+  record "$area" "before: openssl verify code, served serial" "observe" "$before" info
+  expect "$area" "without a restart: served serial after 5 s (unchanged; read at start only)" "${before#* }" \
+    "$(sleep 5; app_served_serial oauth2-proxy)"
+  apply_app_certificate oauth2-proxy
+  expect "$area" "after restart: openssl verify code, served serial" "0 ${new_serial}" \
+    "$(wait_for_app oauth2-proxy "0 ${new_serial}" app_tls_probe)"
+  expect "$area" "session from before the restart (kept in Valkey), GET /api/items" "200" \
+    "$(session_status "$jar" "${APP_URL}/api/items")"
+  expect "$area" "session from before the restart: create and process" "succeeded" "$(tls_flow "$jar" "app tls renewal")"
+
+  # --- Final state ------------------------------------------------------------
+  area="final state"
+  expect "$area" "API container not restarted" "$api_started" "$(container_started_at api)"
+  expect "$area" "ingress container not restarted" "$ingress_started" "$(container_started_at ingress)"
+  expect "$area" "check-secrets" "pass" "$(check_secrets >/dev/null 2>&1 && echo pass || echo fail)"
+
+  local log counts value_count
+  stop_app_probe
+  docker logs "$APP_CONTROL" > "${AUTH_WORK}/app-control.log" 2>&1 || true
+  stop_app_control
+  sleep 1
+  value_count="$(awk -F'\t' '$2 != ""' "$values" | wc -l)"
+  for service in ingress oauth2-proxy api keycloak; do
+    compose logs --no-color --since "$started" "$service" > "${AUTH_WORK}/${service}.log" 2>&1 || true
+  done
+  for log in ingress oauth2-proxy api app-control keycloak; do
+    counts="$(count_values "${AUTH_WORK}/${log}.log" "$values")"
+    case "$log" in
+      ingress | oauth2-proxy | api | app-control)
+        expect "logs" "${log}: occurrences of the ${value_count} searched strings" "0" "${counts%% *}" ;;
+      *)
+        record "logs" "${log}: occurrences of the ${value_count} searched strings" "observe" "${counts%% *}" info ;;
+    esac
+    record "logs" "${log}: kinds found" "observe" "$(kinds_found "${AUTH_WORK}/${log}.log" "$values")" info
+  done
+  awk -F'\t' '$2 != "" {print "request: \"POST /token?client_secret=" $2 " HTTP/1.1\""}' "$values" > "${AUTH_WORK}/synthetic.log"
+  counts="$(count_values "${AUTH_WORK}/synthetic.log" "$values")"
+  expect "positive control" "scanner finds each searched string in a synthetic log" "$value_count" "${counts#* }"
+  expect "positive control" "ingress log holds this run's diagnostic TLS reasons" "yes" \
+    "$(grep -qE 'upstream SSL certificate (verify error|does not match)' "${AUTH_WORK}/ingress.log" && echo yes || echo no)"
+  expect "positive control" "API log holds this run's certificate reloads" "yes" \
+    "$(grep -q 'TLS certificate reloaded' "${AUTH_WORK}/api.log" && echo yes || echo no)"
+
+  local joined
+  joined="$(printf '%s\n' "${RESULTS[@]}")"
+  for name in "${SOURCE_SECRETS[@]}"; do
+    if grep -qFf <(secret "$name") <<< "$joined"; then
+      die "a recorded result contains the value of ${name}; no evidence written"
+    fi
+  done
+  record "$area" "secret values in recorded results" "observe" "none (${#SOURCE_SECRETS[@]} secrets searched)" info
+
+  [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
+    "verify-app-tls: ingress to the API and to oauth2-proxy over TLS with the application CA. Baseline (CA separation, closed plaintext ports, plaintext HTTP to the TLS ports, listeners, diagnostic routes), scripted flows over the encrypted hops (sign-in callback, session and machine requests, authorization 403s, CSRF and ambiguous-credential refusals, session refresh through auth_request, sign-out), passive capture of both hops, session resumption, failure cases (untrusted CA, lab CA, other name, expired) per service with new versus kept-alive connections, the control nginx with verification off, and recovery by renewal; API renewal without restart and oauth2-proxy renewal by restart with sessions kept; log search. Scripted clients only; no browser."
+  finish_checks "Application TLS verification"
 }
 
 destroy_lab() {
@@ -3356,7 +4330,7 @@ verify_lab() {
   valkey_ip="$(container_ip valkey session)"
   oauth2_proxy_ip="$(container_ip oauth2-proxy app)"
 
-  expect_unreachable "wsl" "api container IP :8080" "$(probe_tcp_host_detail "${api_ip}:8080")"
+  expect_unreachable "wsl" "api container IP :${API_TLS_PORT}" "$(probe_tcp_host_detail "${api_ip}:${API_TLS_PORT}")"
   expect_unreachable "wsl" "postgres container IP :5432" "$(probe_tcp_host_detail "${postgres_ip}:5432")"
   expect_unreachable "wsl" "rabbitmq container IP :5671" "$(probe_tcp_host_detail "${rabbitmq_ip}:5671")"
 
@@ -3454,7 +4428,7 @@ verify_lab() {
 
   # --- Containers -------------------------------------------------------------
   docker network inspect "$PROBE_NETWORK" >/dev/null 2>&1 ||
-    docker network create "$PROBE_NETWORK" >/dev/null
+    tool_network_create unrelated-probe "$PROBE_NETWORK" >/dev/null
 
   verify_probe_controls
 
@@ -3486,18 +4460,18 @@ verify_lab() {
   expect_unreachable "app-network client" "keycloak container IP :8443" "$(probe_tcp_detail "${PROJECT}_app" "${keycloak_ip}:8443")"
   expect_unreachable "app-network client" "keycloak-postgres container IP :5432" \
     "$(probe_tcp_detail "${PROJECT}_app" "${keycloak_postgres_ip}:5432")"
-  expect_unreachable "edge-network client" "api container IP :8080" "$(probe_tcp_detail "$edge" "${api_ip}:8080")"
+  expect_unreachable "edge-network client" "api container IP :${API_TLS_PORT}" "$(probe_tcp_detail "$edge" "${api_ip}:${API_TLS_PORT}")"
   expect_unreachable "edge-network client" "postgres container IP :5432" "$(probe_tcp_detail "$edge" "${postgres_ip}:5432")"
   expect_unreachable "edge-network client" "rabbitmq container IP :5671" "$(probe_tcp_detail "$edge" "${rabbitmq_ip}:5671")"
 
   expect "unrelated container" "resolve api" "unresolved" "$(probe_dns "$PROBE_NETWORK" api)"
-  expect_unreachable "unrelated container" "api container IP :8080" "$(probe_tcp_detail "$PROBE_NETWORK" "${api_ip}:8080")"
+  expect_unreachable "unrelated container" "api container IP :${API_TLS_PORT}" "$(probe_tcp_detail "$PROBE_NETWORK" "${api_ip}:${API_TLS_PORT}")"
   expect_unreachable "unrelated container" "postgres container IP :5432" "$(probe_tcp_detail "$PROBE_NETWORK" "${postgres_ip}:5432")"
   expect_unreachable "unrelated container" "rabbitmq container IP :5671" "$(probe_tcp_detail "$PROBE_NETWORK" "${rabbitmq_ip}:5671")"
   expect_unreachable "unrelated container" "keycloak container IP :8443" "$(probe_tcp_detail "$PROBE_NETWORK" "${keycloak_ip}:8443")"
   expect_unreachable "unrelated container" "valkey container IP :6379" "$(probe_tcp_detail "$PROBE_NETWORK" "${valkey_ip}:6379")"
-  expect_unreachable "unrelated container" "oauth2-proxy container IP :4180" "$(probe_tcp_detail "$PROBE_NETWORK" "${oauth2_proxy_ip}:4180")"
-  expect_unreachable "default-bridge container" "api container IP :8080" "$(probe_tcp_detail bridge "${api_ip}:8080")"
+  expect_unreachable "unrelated container" "oauth2-proxy container IP :${OAUTH2_PROXY_TLS_PORT}" "$(probe_tcp_detail "$PROBE_NETWORK" "${oauth2_proxy_ip}:${OAUTH2_PROXY_TLS_PORT}")"
+  expect_unreachable "default-bridge container" "api container IP :${API_TLS_PORT}" "$(probe_tcp_detail bridge "${api_ip}:${API_TLS_PORT}")"
   expect_unreachable "default-bridge container" "postgres container IP :5432" "$(probe_tcp_detail bridge "${postgres_ip}:5432")"
 
   # Observed, not asserted: Docker forwards a published port to the
@@ -3515,13 +4489,19 @@ verify_lab() {
   # Positive controls: the same probe reaches each backend from its own
   # network, so the refusals above are not caused by stopped services.
   expect "app-network control" "resolve api" "resolved" "$(probe_dns "${PROJECT}_app" api)"
-  expect "app-network control" "api:8080" "connected" "$(probe_tcp "${PROJECT}_app" "api:8080")"
+  expect "app-network control" "api:${API_TLS_PORT}" "connected" "$(probe_tcp "${PROJECT}_app" "api:${API_TLS_PORT}")"
+  # ADR 0008: the API and oauth2-proxy have no plaintext listener, even on
+  # their own network.
+  expect "app-network client" "api:8080 (former plaintext port)" "refused connects=0 exit=7" \
+    "$(probe_tcp_detail "${PROJECT}_app" "api:8080")"
+  expect "app-network client" "oauth2-proxy:4180 (former plaintext port)" "refused connects=0 exit=7" \
+    "$(probe_tcp_detail "${PROJECT}_app" "oauth2-proxy:4180")"
   expect "data-network control" "postgres:5432" "connected" "$(probe_tcp "${PROJECT}_data" "postgres:5432")"
   expect "data-network control" "rabbitmq:5671" "connected" "$(probe_tcp "${PROJECT}_data" "rabbitmq:5671")"
   # ADR 0006: RabbitMQ has no plaintext listener, even on its own network.
   expect "data-network client" "rabbitmq:5672 (plaintext AMQP)" "refused connects=0 exit=7" \
     "$(probe_tcp_detail "${PROJECT}_data" "rabbitmq:5672")"
-  expect "app-network control" "oauth2-proxy:4180" "connected" "$(probe_tcp "${PROJECT}_app" "oauth2-proxy:4180")"
+  expect "app-network control" "oauth2-proxy:${OAUTH2_PROXY_TLS_PORT}" "connected" "$(probe_tcp "${PROJECT}_app" "oauth2-proxy:${OAUTH2_PROXY_TLS_PORT}")"
   expect "idp-network control" "keycloak:8443" "connected" "$(probe_tcp "${PROJECT}_idp" "keycloak:8443")"
   # ADR 0007: Keycloak has no plaintext listener, even on its own network,
   # and its management interface is bound to its loopback.
@@ -3533,9 +4513,14 @@ verify_lab() {
   expect "idp-data-network control" "keycloak-postgres:5432" "connected" \
     "$(probe_tcp "${PROJECT}_idp-data" "keycloak-postgres:5432")"
 
+  # The ingress reaches the API and oauth2-proxy over verified TLS (ADR 0008),
+  # through its loopback diagnostic routes, which use the production
+  # directives and carry no credentials.
   local ingress_to_api
-  ingress_to_api="$(compose exec -T ingress wget -q -O - http://api:8080/health 2>/dev/null | tr -d '\n' || true)"
-  expect "ingress container" "http://api:8080/health" '{"status":"healthy"}' "$ingress_to_api"
+  ingress_to_api="$(compose exec -T ingress wget -q -O - http://127.0.0.1:8082/api-upstream 2>/dev/null | tr -d '\n' || true)"
+  expect "ingress container" "https://api:${API_TLS_PORT}/health (verified)" '{"status":"healthy"}' "$ingress_to_api"
+  expect "ingress container" "https://oauth2-proxy:${OAUTH2_PROXY_TLS_PORT}/ping (verified)" "200" \
+    "$(diagnostic_status oauth2-proxy-upstream)"
 
   docker network rm "$PROBE_NETWORK" >/dev/null 2>&1 || true
 
@@ -3610,8 +4595,8 @@ verify_failures() {
   partial="$(mktemp -d)"
   mkdir -m 700 "${partial}/secrets" "${partial}/pki"
   cp -p "${SECRETS_DIR}"/* "${partial}/secrets/"
-  cp -p "${PKI_DIR}/ca.crt" "${PKI_DIR}/internal-ca.crt" "${PKI_DIR}/idp-ca.crt" "${partial}/pki/"
-  cp -a "$INGRESS_TLS_DIR" "$INTERNAL_TLS_DIR" "$IDP_TLS_DIR" "${partial}/"
+  cp -p "${PKI_DIR}/ca.crt" "${PKI_DIR}/internal-ca.crt" "${PKI_DIR}/idp-ca.crt" "${PKI_DIR}/app-ca.crt" "${partial}/pki/"
+  cp -a "$INGRESS_TLS_DIR" "$INTERNAL_TLS_DIR" "$IDP_TLS_DIR" "$APP_TLS_DIR" "${partial}/"
   rm -f "${partial}/secrets/api-database-url"
 
   check_failure "preflight: missing api-database-url" \
@@ -3647,6 +4632,21 @@ verify_failures() {
     "keycloak.conf does not restrict Keycloak to HTTPS" \
     env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
 
+  # ADR 0008: missing API or oauth2-proxy certificates, and an oauth2-proxy
+  # configuration with a plaintext listener, stop the lab before it starts.
+  rm -f "${partial}/app-tls/api/tls.pem"
+  check_failure "preflight: missing API TLS file" \
+    "required application TLS file missing or empty: ${partial}/app-tls/api/tls.pem" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+  rm -f "${partial}/app-tls/oauth2-proxy/tls.pem"
+  check_failure "preflight: missing oauth2-proxy TLS file" \
+    "required application TLS file missing or empty: ${partial}/app-tls/oauth2-proxy/tls.pem" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+  sed -i 's/^http_address = "-"$/http_address = "0.0.0.0:4180"/' "${partial}/secrets/oauth2-proxy.cfg"
+  check_failure "preflight: plaintext oauth2-proxy configuration" \
+    "oauth2-proxy.cfg does not restrict oauth2-proxy to HTTPS" \
+    env ZTP_SECURITY_LAB_STATE_DIR="$partial" "${BASH_SOURCE[0]}" check-secrets
+
   # The containers themselves refuse to start without their TLS inputs. The
   # Keycloak case mounts the lab's configuration (with its database
   # password) and an empty TLS directory, without a network.
@@ -3663,6 +4663,13 @@ verify_failures() {
     docker run --rm --network none --add-host api:127.0.0.1 \
       --read-only --tmpfs /tmp --tmpfs /var/cache/nginx \
       -v "${INGRESS_TLS_DIR}:/run/ingress-tls:ro" \
+      -v "${PKI_DIR}/app-ca.crt:/run/app-ca/ca.crt:ro" \
+      --user 101:101 zero-to-prod-security-lab-ingress:local
+  check_failure "ingress: application CA missing" 'cannot load certificate "/run/app-ca/ca.crt"' \
+    docker run --rm --network none --add-host api:127.0.0.1 \
+      --read-only --tmpfs /tmp --tmpfs /var/cache/nginx \
+      -v "${INGRESS_TLS_DIR}:/run/ingress-tls:ro" \
+      -v "${PKI_DIR}/idp-ca.crt:/run/idp-ca/ca.crt:ro" \
       --user 101:101 zero-to-prod-security-lab-ingress:local
 
   rm -rf "$partial"
@@ -3682,6 +4689,14 @@ verify_failures() {
     compose run --rm --no-deps -e AUTHENTICATION= api
   check_failure "api: OIDC_CA_FILE missing" "read OIDC_CA_FILE" \
     compose run --rm --no-deps -e OIDC_CA_FILE=/run/secrets/absent api
+  # ADR 0008: the API refuses to start without its key and certificate
+  # rather than falling back to plain HTTP; so does oauth2-proxy (which needs
+  # the running lab for its startup discovery, so it runs on its networks).
+  check_failure "api: TLS_CERT_FILE missing" "read TLS_CERT_FILE" \
+    compose run --rm --no-deps -e TLS_CERT_FILE=/run/api-tls/absent.pem api
+  check_failure "oauth2-proxy: TLS key and certificate missing" "/run/oauth2-proxy-tls/absent.pem" \
+    compose run --rm --no-deps oauth2-proxy --config=/run/secrets/oauth2-proxy.cfg \
+      --tls-cert-file=/run/oauth2-proxy-tls/absent.pem --tls-key-file=/run/oauth2-proxy-tls/absent.pem
   check_failure "worker: DATABASE_URL_FILE missing" "read DATABASE_URL_FILE" \
     compose run --rm --no-deps -e DATABASE_URL_FILE=/run/secrets/absent worker
   check_failure "worker: RABBITMQ_WORKER_URL_FILE missing" "read RABBITMQ_WORKER_URL_FILE" \
@@ -3960,11 +4975,14 @@ session_access_token() {
   [[ -n "$cookie" ]] || { echo ""; return 0; }
   # The cookie reaches the probe's curl on standard input, not as an argument
   # of docker or curl.
+  # oauth2-proxy serves only HTTPS (ADR 0008); the probe verifies it like the
+  # ingress does, with the application CA.
   curl_config header "Cookie: __Host-wi-session=${cookie}" \
-    | docker run --rm -i --network "${PROJECT}_app" --entrypoint curl "$PROBE_IMAGE" \
-        -sS -o /dev/null -D - --max-time 10 -K - -H "X-Forwarded-Proto: https" \
+    | docker run --rm -i --network "${PROJECT}_app" -v "${PKI_DIR}/app-ca.crt:/app-ca.crt:ro" \
+        --entrypoint curl "$PROBE_IMAGE" \
+        -sS -o /dev/null -D - --max-time 10 -K - --cacert /app-ca.crt -H "X-Forwarded-Proto: https" \
         -H "X-Forwarded-Host: ${LAB_HOSTNAME}:${HTTPS_PORT}" \
-        http://oauth2-proxy:4180/oauth2/auth 2>/dev/null \
+        "https://oauth2-proxy:${OAUTH2_PROXY_TLS_PORT}/oauth2/auth" 2>/dev/null \
     | tr -d '\r' | awk 'tolower($1) == "x-auth-request-access-token:" {print $2}' || true
 }
 
@@ -5055,13 +6073,20 @@ authorization_rows() {
   local mode="$1" area="authorization matrix (${1} API)"
   local editor="$2" viewer="$3" outsider="$4" machine="$5"
   local p1 p2 p3 p4 q job before after
+  # Final state of a job the API accepted. The pinned baseline predates the
+  # version-2 messages with delivery identity (ADR 0009); the current worker
+  # rejects its version-1 deliveries by design, so baseline jobs stay
+  # accepted. The control tests authorization (the call is accepted), not
+  # processing, so that is its expected outcome.
+  local processed=succeeded
+  [[ "$mode" == baseline ]] && processed=accepted
   p1="$(editor_create "$editor" "${mode} P1")"
   p2="$(editor_create "$editor" "${mode} P2")"
   p3="$(editor_create "$editor" "${mode} P3")"
   p4="$(editor_create "$editor" "${mode} P4")"
   q="$(editor_create "$editor" "${mode} Q")"
   job="$(start_processing session "$editor" POST "/items/${q}/process")"
-  [[ "$(wait_job_state session "$editor" "$job")" == succeeded ]] || die "fixture job did not succeed"
+  [[ "$(wait_job_state session "$editor" "$job")" == "$processed" ]] || die "fixture job did not reach ${processed}"
 
   deny() {
     # $1 label, $2 baseline status, rest: api_call arguments
@@ -5098,12 +6123,102 @@ authorization_rows() {
   expect "$area" "allowed: lab-user POST /items" "201" "$(call_summary session "$editor" POST /items '{"title":"editor create"}')"
   local editor_job machine_job
   editor_job="$(start_processing session "$editor" POST "/items/${p3}/process")"
-  expect "$area" "allowed: lab-user processes and polls" "succeeded" "$(wait_job_state session "$editor" "$editor_job")"
+  expect "$area" "allowed: lab-user processes and polls" "$processed" "$(wait_job_state session "$editor" "$editor_job")"
   expect "$area" "allowed: lab-viewer GET /items" "200" "$(call_summary session "$viewer" GET /items)"
   expect "$area" "allowed: lab-viewer GET /processing-jobs/{existing}" "200" "$(call_summary session "$viewer" GET "/processing-jobs/${job}")"
   machine_job="$(start_processing bearer "$machine" POST "/items/${p4}/process")"
-  expect "$area" "allowed: work-items-automation processes and polls" "succeeded" "$(wait_job_state bearer "$machine" "$machine_job")"
+  expect "$area" "allowed: work-items-automation processes and polls" "$processed" "$(wait_job_state bearer "$machine" "$machine_job")"
   expect "$area" "allowed: work-items-automation GET /processing-jobs/{existing}" "200" "$(call_summary bearer "$machine" GET "/processing-jobs/${job}")"
+}
+
+# The pinned pre-authorization API predates ADR 0008 and serves plain HTTP
+# only. For verify-authorization's control it runs as a separate container
+# (network alias api-baseline, plain HTTP on 8080, the API's environment and
+# files), and a TLS front built from the ingress image takes the name api:
+# it presents the API's certificate from app-tls/api and forwards to the
+# baseline. The ingress verifies the front exactly as it verifies the API.
+# The compose API is stopped meanwhile. The front-to-baseline hop is plaintext
+# on the app network, during this control only.
+BASELINE_API="${PROJECT}-baseline-api"
+BASELINE_SHIM="${PROJECT}-baseline-tls"
+BASELINE_API_SWAPPED=false
+
+start_baseline_api() {
+  local image="$1" conf="${AUTH_WORK}/baseline-tls.conf" _
+  stop_baseline_api
+  # Set before stopping: any failure from this point needs recovery, even
+  # when neither baseline container could be created.
+  BASELINE_API_SWAPPED=true
+  compose stop api >/dev/null 2>&1 || die "cannot stop the API for the baseline control"
+
+  docker create --name "$BASELINE_API" --network "${PROJECT}_data" \
+    --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+    -e AUTHENTICATION=oidc -e OIDC_ISSUER_URL="$ISSUER" -e OIDC_AUDIENCE="$API_AUDIENCE" \
+    -e OIDC_JWKS_URL="${ISSUER}/protocol/openid-connect/certs" -e OIDC_CA_FILE=/lab-ca/ca.crt \
+    -e DATABASE_URL_FILE=/run/secrets/api-database-url \
+    -e RABBITMQ_PUBLISHER_URL_FILE=/run/secrets/api-rabbitmq-url -e PORT=8080 \
+    -v "${SECRETS_DIR}/api-database-url:/run/secrets/api-database-url:ro" \
+    -v "${SECRETS_DIR}/api-rabbitmq-url:/run/secrets/api-rabbitmq-url:ro" \
+    -v "${PKI_DIR}/ca.crt:/lab-ca/ca.crt:ro" \
+    -v "${PKI_DIR}/internal-ca.crt:${INTERNAL_CA_MOUNT}:ro" \
+    "$image" >/dev/null || die "cannot create the baseline API container"
+  docker network connect --alias api-baseline "${PROJECT}_app" "$BASELINE_API"
+  docker start "$BASELINE_API" >/dev/null
+
+  cat > "$conf" <<EOF_NGINX
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr error;
+events { worker_connections 64; }
+http {
+    access_log off;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi;
+    scgi_temp_path /tmp/scgi;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    server {
+        listen ${API_TLS_PORT} ssl;
+        ssl_certificate /run/api-tls/tls.pem;
+        ssl_certificate_key /run/api-tls/tls.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        location / {
+            set \$baseline http://api-baseline:8080;
+            proxy_pass \$baseline;
+            proxy_set_header Host \$host;
+        }
+    }
+}
+EOF_NGINX
+  chmod 644 "$conf"
+  docker run -d --name "$BASELINE_SHIM" --network "${PROJECT}_app" --network-alias api \
+    --read-only --tmpfs /tmp --tmpfs /var/cache/nginx --cap-drop ALL \
+    --security-opt no-new-privileges:true --user 101:101 \
+    -v "${conf}:/etc/nginx/nginx.conf:ro" -v "${APP_TLS_DIR}/api:/run/api-tls:ro" \
+    "$INGRESS_IMAGE" >/dev/null || die "cannot start the baseline TLS front"
+
+  for _ in $(seq 1 60); do
+    if [[ "$(api_version)" == baseline-* ]]; then
+      # The diagnostic route resolves per request; the upstream pool
+      # re-resolves api when its resolver entry expires (valid=10s).
+      sleep 11
+      return 0
+    fi
+    sleep 1
+  done
+  die "the baseline API did not answer through the ingress: $(docker logs "$BASELINE_API" 2>&1 | tail -n 3)"
+}
+
+stop_baseline_api() {
+  docker rm -fv "$BASELINE_SHIM" "$BASELINE_API" >/dev/null 2>&1 || true
+}
+
+restore_baseline_api() {
+  [[ "$BASELINE_API_SWAPPED" == true ]] || return 0
+  stop_baseline_api
+  compose up -d --wait --force-recreate --no-deps api || return 1
+  BASELINE_API_SWAPPED=false
 }
 
 # The API image built from the pinned pre-authorization commit.
@@ -5118,8 +6233,9 @@ build_baseline_api_image() {
   echo "$image"
 }
 
+# The API's version, read by the ingress over verified TLS (ADR 0008).
 api_version() {
-  compose exec -T ingress wget -q -O - http://api:8080/version 2>/dev/null | json_field version
+  compose exec -T ingress wget -q -O - http://127.0.0.1:8082/api-version 2>/dev/null | json_field version
 }
 
 verify_authorization() {
@@ -5136,7 +6252,14 @@ verify_authorization() {
 
   RESULTS=(); FAILED=0
   AUTH_WORK="$(mktemp -d)"
-  trap 'rm -rf -- "$AUTH_WORK"' EXIT
+  # A failure during the baseline control must not leave its containers in
+  # place of the API.
+  trap '
+    restore_baseline_api >/dev/null 2>&1 || echo "Warning: could not restore the API after the baseline control; run start before using the lab." >&2
+    rm -rf -- "$AUTH_WORK"
+  ' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   set_ui_headers
   local started area
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -5377,31 +6500,46 @@ verify_authorization() {
   wait_for_issuer || die "Keycloak did not return"
 
   # --- Old-baseline control (pinned pre-authorization API) --------------------
-  area="baseline control"
+  # The pinned API serves plain HTTP; since ADR 0008 it runs behind a
+  # test-only TLS front (start_baseline_api). This control tests that old
+  # API's authorization behavior, reached through the same verified TLS hop;
+  # it does not test, or claim, TLS support in the old API itself.
+  area="baseline control (pre-authorization API behind a test-only TLS front)"
   local baseline_image
   baseline_image="$(build_baseline_api_image)"
-  ZTP_SECURITY_LAB_API_IMAGE="$baseline_image" compose up -d --wait --force-recreate --no-deps api >/dev/null 2>&1 \
-    || die "the baseline API did not start"
+  start_baseline_api "$baseline_image"
+  record "$area" "what this control tests" "observe" \
+    "authorization behavior of the API built from ${AUTHORIZATION_BASELINE_COMMIT:0:7} (plain HTTP) behind a test-only TLS front presenting the API's certificate; not native TLS in that API" info
   expect "$area" "API version is the pinned baseline" "baseline-${AUTHORIZATION_BASELINE_COMMIT:0:7}" "$(api_version)"
   local base_editor="${AUTH_WORK}/base-editor" base_viewer="${AUTH_WORK}/base-viewer" base_outsider="${AUTH_WORK}/base-outsider"
   browser_login "$base_editor" lab-user >/dev/null
   browser_login "$base_viewer" lab-viewer >/dev/null
   browser_login "$base_outsider" lab-outsider >/dev/null
   authorization_rows baseline "$base_editor" "$base_viewer" "$base_outsider" "$(client_credentials access_token)"
-  compose up -d --wait --force-recreate --no-deps api >/dev/null 2>&1 || die "the current API did not start"
-  area="baseline control"
+  restore_baseline_api >/dev/null 2>&1 || die "the current API did not start"
+  local _
+  for _ in $(seq 1 30); do
+    [[ "$(api_version)" != baseline-* && -n "$(api_version)" ]] && break
+    sleep 1
+  done
+  sleep 11  # the upstream pool's resolver entry for api (valid=10s)
+  area="baseline control (pre-authorization API behind a test-only TLS front)"
   expect "$area" "current API restored" "no" "$([[ "$(api_version)" == baseline-* ]] && echo yes || echo no)"
   expect "$area" "after restore: lab-viewer POST /items" "403 insufficient_permissions" \
     "$(call_summary session "$base_viewer" POST /items '{"title":"x"}')"
 
   [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
-    "Authorization: realm readiness, the principal x action matrix on the browser and machine paths with side-effect checks, claims and 401/403 ordering, logs, role removal (existing versus newly issued tokens), identity-provider outage, and a control against the API built from ${AUTHORIZATION_BASELINE_COMMIT}. Scripted clients (curl with cookie jars); no browser."
+    "Authorization: realm readiness, the principal x action matrix on the browser and machine paths with side-effect checks, claims and 401/403 ordering, logs, role removal (existing versus newly issued tokens), identity-provider outage, and a control against the API built from ${AUTHORIZATION_BASELINE_COMMIT} (which serves plain HTTP; since ADR 0008 it runs behind a test-only TLS front, so the control tests its authorization behavior, not TLS in that API). Scripted clients (curl with cookie jars); no browser."
   finish_checks "Authorization verification"
 }
 
 check_configuration
 
 case "${1:-}" in
+  rotate-app-db-password)
+    shift
+    exec "${SCRIPT_DIR}/security-lab-rotate-app-db" "$@"
+    ;;
   init)
     init_state
     ;;
@@ -5504,6 +6642,24 @@ case "${1:-}" in
     require_command docker
     shift
     verify_keycloak_tls "$@"
+    ;;
+  issue-app-certificate)
+    require_command docker
+    issue_app_certificate_command "${2:-}"
+    ;;
+  check-app-upstream)
+    require_command docker
+    check_app_upstream
+    ;;
+  capture-app-hops)
+    require_command docker
+    shift
+    capture_app_hops_command "$@"
+    ;;
+  verify-app-tls)
+    require_command docker
+    shift
+    verify_app_tls "$@"
     ;;
   ca-certificate)
     show_ca_certificate

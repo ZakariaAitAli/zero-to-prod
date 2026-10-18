@@ -1,0 +1,31 @@
+PASS docker                 postgres state                                   expected=running/healthy observed=running/healthy
+PASS docker                 rabbitmq state                                   expected=running/healthy observed=running/healthy
+PASS docker                 api state                                        expected=running/healthy observed=running/healthy
+PASS docker                 worker state                                     expected=running observed=running
+PASS docker                 ingress state                                    expected=running/healthy observed=running/healthy
+PASS docker                 keycloak-postgres state                          expected=running/healthy observed=running/healthy
+PASS docker                 keycloak state                                   expected=running/healthy observed=running/healthy
+PASS docker                 valkey state                                     expected=running/healthy observed=running/healthy
+PASS docker                 oauth2-proxy state                               expected=running observed=running
+PASS docker                 published ports                                  expected=ingress=8443/tcp->127.0.0.1:9443; observed=ingress=8443/tcp->127.0.0.1:9443;
+PASS wsl                    HTTPS UI with lab CA                             expected=200 0 observed=200 0
+PASS wsl                    HTTPS API without credentials                    expected=401 0 observed=401 0
+PASS wsl                    HTTPS issuer discovery with lab CA               expected=200 0 observed=200 0
+PASS wsl                    Keycloak admin console not routed                expected=404 0 observed=404 0
+PASS wsl                    Keycloak master realm not routed                 expected=404 0 observed=404 0
+PASS wsl                    gateway auth endpoint not routed                 expected=404 0 observed=404 0
+PASS wsl                    HTTPS without lab CA (control)                   expected=error:60 observed=error:60
+PASS wsl                    TLS for unconfigured name                        expected=error:35 observed=error:35
+PASS wsl                    API health not routed                            expected=404 0 observed=404 0
+PASS wsl                    API version not routed                           expected=404 0 observed=404 0
+PASS wsl                    127.0.0.1:8080                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:5432                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:55432                                  expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:5671                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:5672                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:15672                                  expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    WSL eth0 172.27.247.28:9443                      expected=no-connection observed=refused connects=0 exit=7
+PASS wsl                    api container IP :8443                           expected=no-connection observed=timeout connects=0 exit=28
+PASS wsl                    postgres container IP :5432                      expected=no-connection observed=timeout connects=0 exit=28
+PASS wsl                    rabbitmq container IP :5671                      expected=no-connection observed=timeout connects=0 exit=28
+wslpath: /home/zakaria_ait_ali/.local/state/zero-to-prod/zero-to-prod-security-lab-integ/pki/ca.crt: No such file or directory

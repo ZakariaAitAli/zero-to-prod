@@ -1,0 +1,94 @@
+PASS docker                 postgres state                                   expected=running/healthy observed=running/healthy
+PASS docker                 rabbitmq state                                   expected=running/healthy observed=running/healthy
+PASS docker                 api state                                        expected=running/healthy observed=running/healthy
+PASS docker                 worker state                                     expected=running observed=running
+PASS docker                 ingress state                                    expected=running/healthy observed=running/healthy
+PASS docker                 keycloak-postgres state                          expected=running/healthy observed=running/healthy
+PASS docker                 keycloak state                                   expected=running/healthy observed=running/healthy
+PASS docker                 valkey state                                     expected=running/healthy observed=running/healthy
+PASS docker                 oauth2-proxy state                               expected=running observed=running
+PASS docker                 published ports                                  expected=ingress=8443/tcp->127.0.0.1:9443; observed=ingress=8443/tcp->127.0.0.1:9443;
+PASS wsl                    HTTPS UI with lab CA                             expected=200 0 observed=200 0
+PASS wsl                    HTTPS API without credentials                    expected=401 0 observed=401 0
+PASS wsl                    HTTPS issuer discovery with lab CA               expected=200 0 observed=200 0
+PASS wsl                    Keycloak admin console not routed                expected=404 0 observed=404 0
+PASS wsl                    Keycloak master realm not routed                 expected=404 0 observed=404 0
+PASS wsl                    gateway auth endpoint not routed                 expected=404 0 observed=404 0
+PASS wsl                    HTTPS without lab CA (control)                   expected=error:60 observed=error:60
+PASS wsl                    TLS for unconfigured name                        expected=error:35 observed=error:35
+PASS wsl                    API health not routed                            expected=404 0 observed=404 0
+PASS wsl                    API version not routed                           expected=404 0 observed=404 0
+PASS wsl                    127.0.0.1:8080                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:5432                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:55432                                  expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:5671                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:5672                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    127.0.0.1:15672                                  expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS wsl                    WSL eth0 172.27.247.28:9443                      expected=no-connection observed=refused connects=0 exit=7
+PASS wsl                    api container IP :8443                           expected=no-connection observed=timeout connects=0 exit=28
+PASS wsl                    postgres container IP :5432                      expected=no-connection observed=timeout connects=0 exit=28
+PASS wsl                    rabbitmq container IP :5671                      expected=no-connection observed=timeout connects=0 exit=28
+PASS probe control          windows: listener that never responds            expected=connected connects=1 exit=28 observed=connected connects=1 exit=28
+PASS windows-curl           HTTPS UI with lab CA                             expected=200 observed=200
+PASS windows-curl           HTTPS API without credentials                    expected=401 observed=401
+INFO windows                lab CA in Windows trust stores                   expected=observe observed=not trusted
+PASS windows-curl           HTTPS without lab CA (control)                   expected=error:60 observed=error:60
+PASS windows-curl           127.0.0.1:8080                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS windows-curl           127.0.0.1:5432                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS windows-curl           127.0.0.1:55432                                  expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS windows-curl           127.0.0.1:5671                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS windows-curl           127.0.0.1:5672                                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS windows-curl           127.0.0.1:15672                                  expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS windows-curl           Windows 172.27.240.1:9443                        expected=no-connection observed=refused connects=0 exit=7
+PASS windows-curl           Windows 172.27.0.1:9443                          expected=no-connection observed=refused connects=0 exit=7
+PASS windows-curl           Windows 10.1.1.221:9443                          expected=no-connection observed=refused connects=0 exit=7
+PASS windows                listening sockets on lab ports                   expected=127.0.0.1:9443; observed=127.0.0.1:9443;
+PASS probe control          container: listener that never responds          expected=connected connects=1 exit=28 observed=connected connects=1 exit=28
+PASS probe control          container: closed port                           expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS probe control          wsl: listener that never responds                expected=connected connects=1 exit=28 observed=connected connects=1 exit=28
+PASS edge-network client    HTTPS API via ingress without credentials        expected=401 0 observed=401 0
+PASS edge-network client    resolve api                                      expected=unresolved observed=unresolved
+PASS edge-network client    resolve postgres                                 expected=unresolved observed=unresolved
+PASS edge-network client    resolve keycloak                                 expected=unresolved observed=unresolved
+PASS edge-network client    resolve oauth2-proxy                             expected=unresolved observed=unresolved
+PASS edge-network client    resolve valkey                                   expected=unresolved observed=unresolved
+PASS edge-network client    keycloak container IP :8443                      expected=no-connection observed=timeout connects=0 exit=28
+PASS edge-network client    valkey container IP :6379                        expected=no-connection observed=timeout connects=0 exit=28
+PASS app-network client     resolve valkey                                   expected=unresolved observed=unresolved
+PASS app-network client     resolve keycloak                                 expected=unresolved observed=unresolved
+PASS app-network client     valkey container IP :6379                        expected=no-connection observed=refused connects=0 exit=7
+PASS app-network client     keycloak container IP :8443                      expected=no-connection observed=refused connects=0 exit=7
+PASS app-network client     keycloak-postgres container IP :5432             expected=no-connection observed=refused connects=0 exit=7
+PASS edge-network client    api container IP :8443                           expected=no-connection observed=timeout connects=0 exit=28
+PASS edge-network client    postgres container IP :5432                      expected=no-connection observed=timeout connects=0 exit=28
+PASS edge-network client    rabbitmq container IP :5671                      expected=no-connection observed=timeout connects=0 exit=28
+PASS unrelated container    resolve api                                      expected=unresolved observed=unresolved
+PASS unrelated container    api container IP :8443                           expected=no-connection observed=timeout connects=0 exit=28
+PASS unrelated container    postgres container IP :5432                      expected=no-connection observed=timeout connects=0 exit=28
+PASS unrelated container    rabbitmq container IP :5671                      expected=no-connection observed=timeout connects=0 exit=28
+PASS unrelated container    keycloak container IP :8443                      expected=no-connection observed=timeout connects=0 exit=28
+PASS unrelated container    valkey container IP :6379                        expected=no-connection observed=timeout connects=0 exit=28
+PASS unrelated container    oauth2-proxy container IP :4443                  expected=no-connection observed=timeout connects=0 exit=28
+PASS default-bridge container api container IP :8443                           expected=no-connection observed=timeout connects=0 exit=28
+PASS default-bridge container postgres container IP :5432                      expected=no-connection observed=timeout connects=0 exit=28
+INFO unrelated container    ingress edge IP :8443                            expected=observe observed=connected connects=1 exit=0
+INFO unrelated container    ingress edge IP :8081 (health)                   expected=observe observed=timeout connects=0 exit=28
+INFO unrelated container    host.docker.internal:9443                        expected=observe observed=connected connects=1 exit=0
+PASS app-network control    resolve api                                      expected=resolved observed=resolved
+PASS app-network control    api:8443                                         expected=connected observed=connected
+PASS app-network client     api:8080 (former plaintext port)                 expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS app-network client     oauth2-proxy:4180 (former plaintext port)        expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS data-network control   postgres:5432                                    expected=connected observed=connected
+PASS data-network control   rabbitmq:5671                                    expected=connected observed=connected
+PASS data-network client    rabbitmq:5672 (plaintext AMQP)                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS app-network control    oauth2-proxy:4443                                expected=connected observed=connected
+PASS idp-network control    keycloak:8443                                    expected=connected observed=connected
+PASS idp-network client     keycloak:8080 (plaintext HTTP)                   expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS idp-network client     keycloak:9000 (management)                       expected=refused connects=0 exit=7 observed=refused connects=0 exit=7
+PASS session-network control valkey:6379                                      expected=connected observed=connected
+PASS idp-data-network control keycloak-postgres:5432                           expected=connected observed=connected
+PASS ingress container      https://api:8443/health (verified)               expected={"status":"healthy"} observed={"status":"healthy"}
+PASS ingress container      https://oauth2-proxy:4443/ping (verified)        expected=200 observed=200
+Evidence written: evidence/integration-121-126/run1/verify-rerun.json
+
+Security lab verification passed (91 checks).

@@ -1,0 +1,8 @@
+2026-10-18T19:08:32Z	INFO	"--format cyclonedx" disables security scanning. Specify "--scanners vuln" explicitly if you want to include vulnerabilities in the "cyclonedx" report.
+2026-10-18T19:08:33Z	INFO	Detected OS	family="alpine" version="3.24.2"
+2026-10-18T19:08:33Z	INFO	Number of language-specific files	num=0
+2026-10-18T19:08:33Z	INFO	[vuln] Vulnerability scanning is enabled
+2026-10-18T19:08:33Z	INFO	Detected OS	family="alpine" version="3.24.2"
+2026-10-18T19:08:33Z	INFO	[alpine] Detecting vulnerabilities...	os_version="3.24" repository="3.24" pkg_num=71
+2026-10-18T19:08:33Z	INFO	Number of language-specific files	num=0
+2026-10-18T19:08:33Z	WARN	Using severities from other vendors for some vulnerabilities. Read https://trivy.dev/docs/v0.76/guide/scanner/vulnerability#severity-selection for details.

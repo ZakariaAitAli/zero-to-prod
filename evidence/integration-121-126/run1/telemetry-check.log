@@ -1,0 +1,23 @@
+ Container zero-to-prod-security-lab-integ-api-1 Recreate 
+ Container zero-to-prod-security-lab-integ-worker-1 Recreate 
+ Container zero-to-prod-security-lab-integ-worker-1 Recreated 
+ Container zero-to-prod-security-lab-integ-api-1 Recreated 
+ Container zero-to-prod-security-lab-integ-worker-1 Starting 
+ Container zero-to-prod-security-lab-integ-api-1 Starting 
+ Container zero-to-prod-security-lab-integ-worker-1 Started 
+ Container zero-to-prod-security-lab-integ-api-1 Started 
+ Container zero-to-prod-security-lab-integ-worker-1 Waiting 
+ Container zero-to-prod-security-lab-integ-api-1 Waiting 
+ Container zero-to-prod-security-lab-integ-worker-1 Healthy 
+ Container zero-to-prod-security-lab-integ-api-1 Healthy 
+{
+ "unauthenticated_rejected": true,
+ "missing_permission_rejected": true,
+ "authenticated_flow_succeeded": true,
+ "trace_context_persisted": true,
+ "api_log_carries_stored_trace": true,
+ "worker_continues_trace_over_amqps": true,
+ "authorization_denial_counted_by_route": true,
+ "business_requests_counted": true,
+ "no_secret_or_token_in_logs_or_metrics": true
+}

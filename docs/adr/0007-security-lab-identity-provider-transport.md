@@ -189,7 +189,9 @@ identity-provider CA; the ingress verifies it.
   internal ACME service): replace the tool's issuance and wait steps and add
   expiry monitoring.
 - A fourth private CA appears: consolidate into one root with constrained
-  intermediates rather than parallel roots.
+  intermediates rather than parallel roots. (Met by
+  [ADR 0008](0008-security-lab-application-transport.md), which records the
+  trigger and defers consolidation with its reasons and a deadline.)
 
 ## Capability levels
 
@@ -225,6 +227,9 @@ clients only; per-run file hashes in each directory's `provenance.json`):
 
 A browser sign-in was attempted and blocked: Windows does not trust the
 separate lab's CA. Browser sign-in is unverified for this decision.
+(Later, on 2026-10-18, headless Chromium trusting only the lab CA signed in
+through this hop in the `-apptls` lab; see the
+[application TLS experiment](../experiments/issue-121-app-tls.md#browser-check-2026-10-18).)
 
 Open: TLS client-certificate (mTLS) authentication to Keycloak (absent;
 OAuth clients authenticate with client credentials inside TLS), Keycloak's cluster listeners,

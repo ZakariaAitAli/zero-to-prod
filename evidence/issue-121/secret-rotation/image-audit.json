@@ -1,0 +1,57 @@
+{
+  "git_objects_audited": true,
+  "project": "zero-to-prod-security-lab-limit",
+  "scope": "known configured source values and private-key PEM blocks, raw and base64; tracked and nonignored new files, Git objects, complete saved image layers, metadata and history",
+  "source_secret_count": 15,
+  "private_key_blocks_read": 10,
+  "distinct_patterns": 50,
+  "scanner_positive_control": true,
+  "images": [
+    {
+      "image": "sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741",
+      "archive_files_scanned": 13,
+      "known_value_matches": 0
+    },
+    {
+      "image": "sha256:31576fc9c6244388904afe4b609dda76be87ef73b986a5bb03050495b0ba159e",
+      "archive_files_scanned": 11,
+      "known_value_matches": 0
+    },
+    {
+      "image": "sha256:323a794837dd57d718f62963ce920746e03804b391cb8ba041926834b41d38a9",
+      "archive_files_scanned": 13,
+      "known_value_matches": 0
+    },
+    {
+      "image": "sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11",
+      "archive_files_scanned": 13,
+      "known_value_matches": 0
+    },
+    {
+      "image": "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+      "archive_files_scanned": 19,
+      "known_value_matches": 0
+    },
+    {
+      "image": "sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916",
+      "archive_files_scanned": 24,
+      "known_value_matches": 0
+    },
+    {
+      "image": "sha256:a41feccf0e58548fda8d9b161923c296bc76d7fa286a86c8afaa8444dd582ff7",
+      "archive_files_scanned": 23,
+      "known_value_matches": 0
+    },
+    {
+      "image": "sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95",
+      "archive_files_scanned": 21,
+      "known_value_matches": 0
+    },
+    {
+      "image": "sha256:dc640ef9942ea41d00742bfa9d061dcee56f79956dfa9bb723554cca0ba5d89c",
+      "archive_files_scanned": 13,
+      "known_value_matches": 0
+    }
+  ],
+  "passed": true
+}

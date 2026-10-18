@@ -1,0 +1,8 @@
+{
+  "run": "verify rerun 2026-10-17T16:43:53Z UTC",
+  "tool_subnets": "unrelated-probe=10.213.250.0/24 ipcontrol=10.213.251.0/24",
+  "tested_files_git_blob": {
+    "tools/security-lab-local": "18c212ee42ce7e5e297640bfbe8f8192719f63d5"
+  },
+  "note": "Other tested files as in provenance.json of this directory. The tool differs from that run (d013f82) only in verify's WSL-side API probe port (8080 -> 8443)."
+}

@@ -3,12 +3,16 @@
 Scope: the connections inside the local security lab of Issue #121, as built
 after the authorization slice (#135), and what changes when the transport
 decisions of [ADR 0006](../adr/0006-security-lab-internal-transport.md)
-(data network) and [ADR 0007](../adr/0007-security-lab-identity-provider-transport.md)
-(ingress → Keycloak) are applied. It is bounded to transport: who can observe
+(data network), [ADR 0007](../adr/0007-security-lab-identity-provider-transport.md)
+(ingress → Keycloak), and [ADR 0008](../adr/0008-security-lab-application-transport.md)
+(ingress → API and oauth2-proxy) are applied. It is bounded to transport: who can observe
 or alter traffic between the lab's components, and what a certificate failure
 does. Authentication and authorization threats are in [ADR 0004](../adr/0004-security-lab-authentication.md)
-and [ADR 0005](../adr/0005-security-lab-authorization.md); rate limiting,
-secret rotation, and availability are later work.
+and [ADR 0005](../adr/0005-security-lab-authorization.md). Ingress admission
+is addressed by [ADR 0010](../adr/0010-security-lab-rate-limiting.md); secret
+rotation is addressed for the API database password by ADR 0011. The
+[broader security model](security-lab-security-model.md) covers identity,
+credentials, artifacts, abuse and residual operational risks.
 
 The lab runs on one Docker engine (Docker Desktop, WSL 2). Statements about
 network membership and capabilities below were measured by
@@ -16,7 +20,9 @@ network membership and capabilities below were measured by
 [`verify-internal-tls.json`](../../evidence/issue-121/internal-tls/verify-internal-tls.json));
 Keycloak's listeners and the content of the ingress → Keycloak hop were
 measured by `capture-idp-hop` and `verify-keycloak-tls`
-([evidence](../../evidence/issue-121/keycloak-tls/)).
+([evidence](../../evidence/issue-121/keycloak-tls/)); the API's and
+oauth2-proxy's listeners and the content of their hops by `capture-app-hops`
+and `verify-app-tls` ([evidence](../../evidence/issue-121/app-tls/)).
 
 ## Assets
 
@@ -32,8 +38,8 @@ measured by `capture-idp-hop` and `verify-keycloak-tls`
 | Access tokens, ID tokens, authorization codes | Ingress ↔ API, ingress ↔ oauth2-proxy, ingress ↔ Keycloak |
 | Session tickets (`__Host-wi-session`) and sessions | Ingress → oauth2-proxy; oauth2-proxy ↔ Valkey (stored encrypted with the ticket) |
 | Keycloak realm data (client secrets, password hashes, signing keys) | Keycloak ↔ its PostgreSQL |
-| CA keys (lab CA, internal CA, identity-provider CA) | Host state directory, mode 600; never mounted |
-| Server private keys (ingress, PostgreSQL, RabbitMQ, Keycloak) | Host state directory; mounted read-only into their own service |
+| CA keys (lab CA, internal CA, identity-provider CA, application CA) | Host state directory, mode 600; never mounted |
+| Server private keys (ingress, PostgreSQL, RabbitMQ, Keycloak, API, oauth2-proxy) | Host state directory; mounted read-only into their own service |
 
 ## Principals
 
@@ -42,7 +48,7 @@ measured by `capture-idp-hop` and `verify-keycloak-tls`
 - **Workloads**: ingress, API, worker, migrator, oauth2-proxy, Keycloak, and
   the datastores. Each holds only its own secret files.
 - **Lab operator**: runs `tools/security-lab-local`, owns the state directory
-  and the three CAs. Docker access is root-equivalent and outside the model:
+  and the four CAs. Docker access is root-equivalent and outside the model:
   such a principal can read every key and secret regardless of transport.
 - **Lab tool probes**: short-lived containers the tool attaches to internal
   networks while a check runs (reachability, TLS probes, and the admin-API
@@ -55,12 +61,14 @@ Members are the containers attached to the network the connection uses.
 capture or forge traffic, for example by ARP spoofing on the bridge); a
 process gains it by running as root in that container.
 
-| Connection | Network and members | What crosses | Before ADR 0006 | Now (ADR 0006, ADR 0007) |
+| Connection | Network and members | What crosses | Before ADR 0006 | Now (ADR 0006–0008) |
 | --- | --- | --- | --- | --- |
 | Client → ingress | host loopback → `edge` | Everything a client sends | TLS (lab CA) | Unchanged |
 | API, oauth2-proxy → issuer | `app`, through the ingress | Discovery, keys, token requests with client secrets | TLS (lab CA) | Unchanged |
-| Ingress → API | `app`: ingress, API, oauth2-proxy; all `cap_drop: ALL`, `no-new-privileges`, read-only | Access tokens, Work Items data | Plaintext | Plaintext (ADR 0006) |
-| Ingress → oauth2-proxy | `app` (as above) | Session tickets, authorization codes, returned access tokens | Plaintext | Plaintext |
+| Ingress → API | `app`: ingress, API, oauth2-proxy, all `cap_drop: ALL`, `no-new-privileges`, read-only; **and the lab tool's probes while they run** | Access tokens (session and machine), Work Items data (bearer header and machine token measured in plaintext before ADR 0008) | Plaintext | **TLS (ADR 0008): chain and name `api` verified by the ingress against the application CA; no plaintext listener, no session tickets; kept-alive connections bounded (30 s idle, 5 min total)** |
+| Ingress → oauth2-proxy | `app` (as above) | Session cookies, authorization codes and state, returned access tokens (code, cookie, and access-token header measured in plaintext before ADR 0008) | Plaintext | **TLS (ADR 0008): chain and name `oauth2-proxy` verified against the application CA; no plaintext listener; new connection per request** |
+| Lab tool session-token probe → oauth2-proxy | `app` (while authentication checks run) | A session cookie, the session's access token | Plaintext | **TLS, verified like the ingress (ADR 0008)** |
+| Authorization baseline control: test-only TLS front → pre-authorization API | `app` (while `verify-authorization`'s control runs) | Access tokens, Work Items data | — | **Plaintext, test-only**: the old API serves only HTTP; the ingress → front hop is verified TLS |
 | Ingress → Keycloak | `idp`: ingress, Keycloak; **and the lab tool's probes while they run** (ADR 0006 assumed two members) | Person passwords, client secrets, codes, tokens (measured in plaintext before ADR 0007) | Plaintext | **TLS (ADR 0007): chain and name `keycloak` verified by the ingress against the identity-provider CA; Keycloak has no plaintext listener** |
 | Lab tool admin probe → Keycloak admin API | `idp` (while `verify-realm` or `verify-authorization` runs) | Role-management client secret, admin tokens, role mappings | Plaintext | **TLS, verified like the ingress (ADR 0007)** |
 | Keycloak management (health) | Keycloak's own loopback since ADR 0007; before, reachable on `idp` | Health status only | Plain HTTP on `idp` | Plain HTTP, `127.0.0.1` only |
@@ -81,23 +89,23 @@ process gains it by running as root in that container.
 | T4 | Traffic crossing hosts (multi-host networking, managed datastores) | All hops if the lab moves off one engine | Not the case today; datastores are the most likely to move first |
 | T5 | Certificate failure: expiry, wrong name, untrusted issuer | Every verified TLS hop | Certificates last 14 days; renewal is manual |
 | T6 | Downgrade: a client accepting plaintext or an unverified server | Every TLS hop | `sslmode=prefer` or `require` would encrypt without verifying, or fall back |
-| T7 | Theft of the internal CA key or the identity-provider CA key | Internal TLS | Keys are files in the operator's state directory |
+| T7 | Theft of the internal, identity-provider, or application CA key | Internal TLS | Keys are files in the operator's state directory |
 | T8 | Host or Docker-engine compromise | Everything | Out of model: such an attacker reads keys and secrets directly |
 
 ## Mitigations and what remains
 
-| Threat | Now (ADR 0006, ADR 0007) | Remaining |
+| Threat | Now (ADR 0006–0008) | Remaining |
 | --- | --- | --- |
 | T1, T2 on `data` | TLS. Each client verifies the server's certificate against the internal CA and checks the one name it dialed (`postgres` or `rabbitmq`). The CA's constraints allow exactly those two names (subdomains excluded). A spoofing member has no certificate for the name dialed | Client identity is still a password, readable by any process in the client's container |
 | T1, T2 on `idp` (ingress → Keycloak, admin probe → Keycloak) | TLS (ADR 0007). The ingress and the admin probe verify Keycloak's certificate against the identity-provider CA and check the name `keycloak`; the CA may issue for exactly that name. Keycloak has no plaintext listener; its health interface is bound to its loopback. A passive capture during a sign-in and token request found no credential and no plaintext HTTP (it found the password, code, client secrets, and a token before) | No TLS client-certificate (mTLS) authentication (OAuth clients authenticate with client credentials inside TLS): any member of `idp` can open a TLS connection to Keycloak and reach every path, including the admin API (as the tool's probe does). Keycloak's cluster listeners (`:7800` mTLS, `:57800`) remain on `idp` |
-| T1, T2 on `app` | Not encrypted. Every member is `cap_drop: ALL`, `no-new-privileges`, read-only, so raw sockets require a kernel escape | Tokens and session tickets in plaintext on the bridge |
+| T1, T2 on `app` (ingress → API, ingress → oauth2-proxy) | TLS (ADR 0008). The ingress verifies each certificate against the application CA and checks the name it dialed (`api`, `oauth2-proxy`); the CA may issue for exactly those names. Neither server keeps a plaintext listener. A passive capture during a callback, a session request, and a machine request found no code, cookie, token, token header, or plaintext HTTP on either hop (see the experiment for the before and after counts) | No mTLS: any member of `app` can open a TLS connection to the API (which still requires a token) or oauth2-proxy. Kept-alive API connections are not re-verified until they close (≤ 30 s idle, ≤ 5 min total). The authorization baseline control runs a plaintext hop on `app` while it runs |
 | T1, T2 on two-member networks (`idp-data`, `session`) | Not encrypted. The only other party on each network is the peer itself | Realm data (Keycloak → PostgreSQL) and the Valkey password and encrypted sessions in plaintext |
-| T3 | `data` and `idp` are protected by TLS; other networks are not | No policy check of network membership |
-| T4 | `data` and ingress → Keycloak already verified | Ingress → API and oauth2-proxy, oauth2-proxy → Valkey, and Keycloak → its database must be encrypted before any move |
-| T5 | Failure is closed and observable (measured on both decisions); renewal restores new connections without restarting clients, Keycloak, or the ingress. At the ingress, the reason is logged only by a loopback diagnostic route, because public request errors are suppressed below `crit` | No automated renewal, alerting, or revocation. An established connection is not re-verified (measured with a kept-alive control); the production ingress keeps none to Keycloak |
-| T6 | `verify-full` and `amqps` in the generated URLs; `check-secrets` refuses any other form; PostgreSQL rejects non-TLS clients and RabbitMQ has no plaintext listener. Keycloak: `http-enabled=false`, `check-secrets` refuses a configuration that enables HTTP, and the ingress verifies with `proxy_ssl_verify on` and no session reuse | — |
-| T7 | Name constraints limit certificates from a stolen internal CA key to exactly `postgres` and `rabbitmq`, and from a stolen identity-provider CA key to exactly `keycloak`: permitted names, with their subdomains and all IP addresses excluded. Enforced as intended by OpenSSL (including nginx) and Go's `crypto/x509`, the verifiers used here; for the identity-provider CA, a `keycloak` certificate that also names a subdomain or an IP address was refused by nginx, while an unconstrained CA's equivalent was accepted (control). Each CA is trusted only by the clients of its hop and is separate from the browser-trusted lab CA | Each key can still impersonate its own services. No HSM, no revocation, single tier. Another verifier may read the leading-dot exclusion differently (RFC 5280 leaves it undefined) |
+| T3 | `data`, `idp`, and `app` are protected by TLS; `idp-data` and `session` are not | No policy check of network membership |
+| T4 | Every ingress upstream and the datastore hops are verified | oauth2-proxy → Valkey and Keycloak → its database must be encrypted before any move |
+| T5 | Failure is closed and observable (measured on each decision); renewal restores new connections without restarting clients, Keycloak, the API, or the ingress (oauth2-proxy restarts to load a certificate; its sessions survive). The API keeps its last valid key pair when its file becomes invalid and reports it once. At the ingress, the reason is logged only by a loopback diagnostic route, because public request errors are suppressed below `crit` | No automated renewal, alerting, or revocation. An established connection is not re-verified: the production ingress keeps none to Keycloak or oauth2-proxy, and bounds its kept-alive API connections |
+| T6 | `verify-full` and `amqps` in the generated URLs; `check-secrets` refuses any other form; PostgreSQL rejects non-TLS clients and RabbitMQ has no plaintext listener. Keycloak: `http-enabled=false`, `check-secrets` refuses a configuration that enables HTTP. API and oauth2-proxy: TLS-only listeners; `check-secrets` refuses an oauth2-proxy configuration with a plaintext listener. The ingress verifies every upstream with `proxy_ssl_verify on` and no session reuse | — |
+| T7 | Name constraints limit certificates from a stolen internal CA key to exactly `postgres` and `rabbitmq`, from a stolen identity-provider CA key to exactly `keycloak`, and from a stolen application CA key to exactly `api` and `oauth2-proxy`: permitted names, with their subdomains and all IP addresses excluded. Enforced as intended by OpenSSL (including nginx) and Go's `crypto/x509`, the verifiers used here; for the identity-provider CA, a `keycloak` certificate that also names a subdomain or an IP address was refused by nginx, while an unconstrained CA's equivalent was accepted (control). Each CA is trusted only by the clients of its hop and is separate from the browser-trusted lab CA | Each key can still impersonate its own services. No HSM, no revocation, single tier; four parallel roots whose keys share one directory, so the separation limits misissuance, not theft from the host. Another verifier may read the leading-dot exclusion differently (RFC 5280 leaves it undefined) |
 | T8 | Out of scope | — |
 
 The plaintext hops are a provisional, measured decision, not an oversight;
-the reconsideration conditions are in ADR 0006 and ADR 0007.
+the reconsideration conditions are in ADR 0006, ADR 0007, and ADR 0008.
