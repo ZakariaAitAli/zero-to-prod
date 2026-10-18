@@ -150,3 +150,6 @@ Sprint experiment for the full implementation and failure details
 ```
 
 The goal is not to hide the detailed experiments. It is to make them optional when all you need is to understand or recall the engineering idea.
+
+- [Local capacity lab](guides/local-capacity-lab.md) and [capacity experiment](experiments/issue-123-capacity.md).
+- [ADR 0013: local capacity measurement](adr/0013-local-capacity-measurement.md).

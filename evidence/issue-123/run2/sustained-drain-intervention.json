@@ -1,0 +1,47 @@
+{
+  "time_utc": "2026-10-18T15:56:25.940447+00:00",
+  "phase": "after 600-second load stopped; during drain",
+  "action": "increase only owned RabbitMQ container CPU cap from 0.5 to 2.0 for diagnosis/recovery",
+  "reason": "0.5-core broker saturated; serial confirms about 169ms; original sustained freshness failed",
+  "before": {
+    "rate(work_items_outbox_publish_duration_seconds_sum[1m])/rate(work_items_outbox_publish_duration_seconds_count[1m])": [
+      {
+        "metric": {
+          "instance": "10.213.21.10:9464",
+          "job": "work-items-api"
+        },
+        "value": [
+          1792338985.957,
+          "0.18173079053472224"
+        ]
+      }
+    ],
+    "sum(rate(work_items_outbox_publish_total{result=\"published\"}[1m]))": [
+      {
+        "metric": {},
+        "value": [
+          1792338985.959,
+          "5.236839712701156"
+        ]
+      }
+    ],
+    "max(work_items_outbox_unpublished_messages)": [
+      {
+        "metric": {},
+        "value": [
+          1792338985.96,
+          "1690"
+        ]
+      }
+    ]
+  },
+  "after_time_utc": "2026-10-18T15:57:28.499966+00:00",
+  "after": {
+    "sum(rate(work_items_outbox_publish_total{result=\"published\"}[30s]))": {
+      "status": "telemetry stopped by completed harness; see final result"
+    },
+    "max(work_items_outbox_unpublished_messages)": {
+      "status": "telemetry stopped by completed harness; see final result"
+    }
+  }
+}

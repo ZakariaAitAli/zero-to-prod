@@ -18,7 +18,9 @@ python3 tools/capacity-lab-experiments evidence/issue-123/new-run
 bash tools/capacity-lab-local stop
 ```
 
-The output directory must not exist. Optional stage names after the output
+The output directory must not exist. The default broker cap is 0.5 CPU.
+Set `CAPACITY_BROKER_CPUS=2` for **both** the `up` and experiment commands
+to reproduce the separate sustained confirmation profile. Optional stage names after the output
 path run a subset; see `STAGES` in the harness. The harness stops only its own
 project in a `finally` block. No volume, image, network or state is deleted.
 The driver keeps secrets outside Git in
@@ -28,7 +30,7 @@ this project: pool settings and replica counts are deliberately changed.
 
 The project `zero-to-prod-capacity-lab` has its own PostgreSQL, RabbitMQ,
 telemetry volumes, network and images. Previously retained labs are not used.
-The database accumulates test rows across stages; every stage records its own
+The database accumulates test rows across stages; every stage uses its own
 unique title prefix and checks global business invariants. This avoids
 resetting storage, but means later stages run on a larger database and warmer
 caches. Results are one ordered run, not randomized independent trials.
