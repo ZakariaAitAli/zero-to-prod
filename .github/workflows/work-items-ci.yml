@@ -507,6 +507,10 @@ jobs:
           bash -n tools/security-lab-local
           bash -n tools/observability-lab-local
           bash -n tools/capacity-lab-local
+          bash -n tools/operations-lab-local
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/operations-lab-experiments", "tools/operations-lab-report", "infra/operations-lab/receiver.py")]'
+          OPERATIONS_ROOT="$PWD" OPERATIONS_STATE=/nonexistent OPERATIONS_API_IMAGE=sha256:unavailable OPERATIONS_WORKER_IMAGE=sha256:unavailable ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml -f infra/operations-lab/compose.yaml --profile tools config --quiet
           bash -n tools/delivery-lab-local
           python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/delivery-lab-experiments", "tools/delivery-image-gate")]'
           DELIVERY_STATE=/nonexistent DELIVERY_BLUE_IMAGE=sha256:unavailable DELIVERY_GREEN_IMAGE=sha256:unavailable ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \

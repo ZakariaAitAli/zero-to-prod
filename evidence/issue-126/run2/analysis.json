@@ -1,0 +1,85 @@
+{
+  "request_count": 12439,
+  "transport_or_5xx_count": 1348,
+  "observed_request_availability": 0.8916311600610982,
+  "under_250ms_ratio": 0.9990352922260632,
+  "job_counts": {
+    "jobs": 3695,
+    "succeeded": 3695,
+    "accepted": 0,
+    "fresh": 3594
+  },
+  "observed_completed_within_30s_ratio": 0.9726657645466847,
+  "incidents": [
+    {
+      "service": "api",
+      "alert": "LocalDrillAPIUnavailable",
+      "fault_unix": 1792345176.4854307,
+      "operator": "script; fault known",
+      "notification_unix": 1792345207.7771664,
+      "script_ack_unix": 1792345208.3628666,
+      "business_recovered_unix": 1792345215.211656,
+      "resolved_notification_unix": 1792345227.788996,
+      "notification_delay_s": 31.291735649108887,
+      "business_recovery_s": 38.72622537612915,
+      "resolution_notification_s": 51.30356526374817
+    },
+    {
+      "service": "postgres",
+      "alert": "LocalDrillDatabaseUnavailable",
+      "fault_unix": 1792345248.2345715,
+      "operator": "script; fault known",
+      "notification_unix": 1792345277.7704263,
+      "script_ack_unix": 1792345277.9398022,
+      "business_recovered_unix": 1792345284.7535741,
+      "resolved_notification_unix": 1792345297.7833843,
+      "notification_delay_s": 29.535854816436768,
+      "business_recovery_s": 36.51900267601013,
+      "resolution_notification_s": 49.54881286621094
+    },
+    {
+      "service": "rabbitmq",
+      "alert": "LocalDrillBrokerUnavailable",
+      "fault_unix": 1792345318.7809258,
+      "operator": "script; fault known",
+      "notification_unix": 1792345347.7699795,
+      "script_ack_unix": 1792345348.5367825,
+      "business_recovered_unix": 1792345355.7152178,
+      "resolved_notification_unix": 1792345377.776778,
+      "notification_delay_s": 28.98905372619629,
+      "business_recovery_s": 36.93429207801819,
+      "resolution_notification_s": 58.99585223197937
+    },
+    {
+      "service": "worker",
+      "alert": "LocalDrillBacklog",
+      "fault_unix": 1792345398.756071,
+      "operator": "script; fault known",
+      "notification_unix": 1792345447.7621026,
+      "script_ack_unix": 1792345448.6096916,
+      "business_recovered_unix": 1792345450.9193804,
+      "resolved_notification_unix": 1792345477.776827,
+      "notification_delay_s": 49.00603151321411,
+      "business_recovery_s": 52.16330933570862,
+      "resolution_notification_s": 79.02075600624084
+    }
+  ],
+  "resource_estimates": {
+    "sample_span_s": 1201.002846479416,
+    "cpu_core_seconds": 554.277538547778,
+    "gib_hours": 0.2531159537605516,
+    "mean_cpu_cores": 0.46151226050177213,
+    "mean_memory_gib": 0.7587138000622576,
+    "cpu_seconds_per_1000_succeeded": 150.0074529222674,
+    "gib_hours_per_1000_succeeded": 0.0685022878918949
+  },
+  "limits": "Left-sample resource estimate for own containers, not reserved capacity or cloud bill; excludes host/client/build/energy/storage/network/operator. Includes injected failures; request client and scrape have blind spots. Script acknowledgment is not human MTTA. Short run cannot establish a 28-day SLO.",
+  "post_recovery_steady_requests": {
+    "cutoff_unix": 1792345706.8224707,
+    "settle_seconds": 60,
+    "requests": 7060,
+    "transport_or_5xx": 0,
+    "under_250ms_ratio": 1.0,
+    "note": "Separately labeled subset; does not replace full incident-window results."
+  }
+}

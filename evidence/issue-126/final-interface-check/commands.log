@@ -1,0 +1,53 @@
+compose stop api
+ Container zero-to-prod-operations-lab-api-1 Stopping 
+ Container zero-to-prod-operations-lab-api-1 Stopped 
+
+compose up -d --wait api
+ Container zero-to-prod-operations-lab-rabbitmq-1 Running 
+ Container zero-to-prod-operations-lab-postgres-1 Running 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-api-1 Starting 
+ Container zero-to-prod-operations-lab-api-1 Started 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-api-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-api-1 Healthy 
+
+compose exec -T postgres psql -U zero_to_prod_admin -d zero_to_prod -Atc SELECT json_build_object(
+ 'done_without_result',(SELECT count(*) FROM work_items i WHERE i.status='done' AND NOT EXISTS(SELECT 1 FROM work_item_results r WHERE r.work_item_id=i.id)),
+ 'results_without_success',(SELECT count(*) FROM work_item_results r JOIN processing_jobs j ON j.id=r.processing_job_id WHERE j.state<>'succeeded'),
+ 'multiple_active_jobs',(SELECT count(*) FROM (SELECT work_item_id FROM processing_jobs WHERE state='accepted' GROUP BY 1 HAVING count(*)>1) s),
+ 'missing_outbox',(SELECT count(*) FROM processing_jobs j WHERE NOT EXISTS(SELECT 1 FROM outbox_messages o WHERE o.processing_job_id=j.id)))
+{"done_without_result" : 0, "results_without_success" : 0, "multiple_active_jobs" : 0, "missing_outbox" : 0}
+
+stop
+ Container zero-to-prod-operations-lab-worker-1 Stopping 
+ Container zero-to-prod-operations-lab-otel-collector-1 Stopping 
+ Container zero-to-prod-operations-lab-receiver-1 Stopping 
+ Container zero-to-prod-operations-lab-prometheus-1 Stopping 
+ Container zero-to-prod-operations-lab-grafana-1 Stopping 
+ Container zero-to-prod-operations-lab-postgres-exporter-1 Stopping 
+ Container zero-to-prod-operations-lab-api-1 Stopping 
+ Container zero-to-prod-operations-lab-alertmanager-1 Stopping 
+ Container zero-to-prod-operations-lab-worker-1 Stopped 
+ Container zero-to-prod-operations-lab-alertmanager-1 Stopped 
+ Container zero-to-prod-operations-lab-prometheus-1 Stopped 
+ Container zero-to-prod-operations-lab-postgres-exporter-1 Stopped 
+ Container zero-to-prod-operations-lab-api-1 Stopped 
+ Container zero-to-prod-operations-lab-postgres-1 Stopping 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Stopping 
+ Container zero-to-prod-operations-lab-otel-collector-1 Stopped 
+ Container zero-to-prod-operations-lab-loki-1 Stopping 
+ Container zero-to-prod-operations-lab-jaeger-1 Stopping 
+ Container zero-to-prod-operations-lab-grafana-1 Stopped 
+ Container zero-to-prod-operations-lab-postgres-1 Stopped 
+ Container zero-to-prod-operations-lab-jaeger-1 Stopped 
+ Container zero-to-prod-operations-lab-loki-1 Stopped 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Stopped 
+ Container zero-to-prod-operations-lab-receiver-1 Stopped 
+

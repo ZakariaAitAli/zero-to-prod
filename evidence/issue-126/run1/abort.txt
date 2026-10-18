@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/operations/tools/operations-lab-experiments", line 80, in <module>
+    wait_for(business);epoch=time.time();t.start();s.start();time.sleep(30)
+                                                             ~~~~~~~~~~^^^^
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/operations/tools/operations-lab-experiments", line 96, in <module>
+    (out/'database.json').write_text(command('compose','exec','-T','postgres','psql','-U','zero_to_prod_admin','-d','zero_to_prod','-Atc',sql)+'\n')
+                                     ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/c/Users/Zakaria Ait Ali/.codex/.chatgpt-projects/g-p-6a7e165fd48c81918817ea26b28b7435/work/operations/tools/operations-lab-experiments", line 12, in command
+    if p.returncode:raise RuntimeError('command failed: '+' '.join(args))
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: command failed: compose exec -T postgres psql -U zero_to_prod_admin -d zero_to_prod -Atc SELECT json_build_object('jobs',count(*),'succeeded',count(*) FILTER(WHERE state='succeeded'),'accepted',count(*) FILTER(WHERE state='accepted'),'fresh',count(*) FILTER(WHERE state='succeeded' AND completed_at-accepted_at<=interval '30 seconds')) FROM processing_jobs

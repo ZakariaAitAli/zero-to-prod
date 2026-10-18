@@ -1,0 +1,8 @@
+{
+  "response_observed_unix": 1792345631.228141,
+  "response": "User pasted local notification history including the current LocalDrillAPIUnavailable and WorkItemsAPIUnavailable firing notifications. Earlier database/broker/backlog incidents were resolved.",
+  "notification_visibility_confirmed": true,
+  "independent_diagnosis_provided": false,
+  "recovery_action_chosen_by_user": false,
+  "interpretation": "Confirms local notification visibility and response in supervised chat; does not establish independent human diagnosis or production MTTA."
+}

@@ -157,3 +157,5 @@ The goal is not to hide the detailed experiments. It is to make them optional wh
 - [Local availability lab](guides/local-availability-lab.md), [recovery runbook](runbooks/local-availability-recovery.md), [experiment](experiments/issue-124-availability-recovery.md), and [ADR 0014](adr/0014-local-availability-recovery.md).
 
 - [Local delivery lab](guides/local-delivery-lab.md), [delivery experiment](experiments/issue-125-safe-delivery.md), and [ADR 0015](adr/0015-safe-local-delivery.md).
+
+- [Local operations lab](guides/local-operations-lab.md), [local operations runbook](runbooks/local-operations.md), [readiness review](experiments/issue-126-readiness-review.md), and [capacity incident postmortem](experiments/issue-126-postmortem.md).
