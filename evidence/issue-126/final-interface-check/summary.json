@@ -1,0 +1,12 @@
+{
+  "active_and_resolved_view": true,
+  "runbook_anchor": true,
+  "local_generator_and_alertmanager_links": true,
+  "invariants": {
+    "done_without_result": 0,
+    "results_without_success": 0,
+    "multiple_active_jobs": 0,
+    "missing_outbox": 0
+  },
+  "note": "Separate post-run interface/pinning check, not the UI used during the owner response or the timed run."
+}

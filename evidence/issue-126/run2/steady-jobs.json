@@ -1,0 +1,9 @@
+{
+  "cutoff_unix": 1792345706.8224707,
+  "sql": "SELECT json_build_object('jobs',count(*),'succeeded',count(*) FILTER(WHERE state='succeeded'),'within_30s',count(*) FILTER(WHERE state='succeeded' AND finished_at-created_at<=interval '30 seconds')) FROM processing_jobs WHERE created_at>=to_timestamp(1792345706.8224707)",
+  "counts": {
+    "jobs": 2353,
+    "succeeded": 2353,
+    "within_30s": 2353
+  }
+}

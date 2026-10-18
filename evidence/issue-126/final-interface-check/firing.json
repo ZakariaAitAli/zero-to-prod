@@ -1,0 +1,45 @@
+{
+  "received_unix": 1792346477.7804163,
+  "payload": {
+    "receiver": "local-evidence",
+    "status": "firing",
+    "alerts": [
+      {
+        "status": "firing",
+        "labels": {
+          "alertname": "LocalDrillAPIUnavailable",
+          "environment": "operations-lab",
+          "instance": "api:9464",
+          "job": "work-items-api",
+          "severity": "drill"
+        },
+        "annotations": {
+          "runbook": "docs/runbooks/local-operations.md#api"
+        },
+        "startsAt": "2026-10-18T18:01:07.777Z",
+        "endsAt": "0001-01-01T00:00:00Z",
+        "generatorURL": "http://localhost:19094/graph?g0.expr=up%7Bjob%3D%22work-items-api%22%7D+%3D%3D+0&g0.tab=1",
+        "fingerprint": "373609fd1c5b64af"
+      }
+    ],
+    "notification_reason": "first notification",
+    "groupLabels": {
+      "alertname": "LocalDrillAPIUnavailable"
+    },
+    "commonLabels": {
+      "alertname": "LocalDrillAPIUnavailable",
+      "environment": "operations-lab",
+      "instance": "api:9464",
+      "job": "work-items-api",
+      "severity": "drill"
+    },
+    "commonAnnotations": {
+      "runbook": "docs/runbooks/local-operations.md#api"
+    },
+    "routeLabels": {},
+    "externalURL": "http://localhost:19095",
+    "version": "4",
+    "groupKey": "{}:{alertname=\"LocalDrillAPIUnavailable\"}",
+    "truncatedAlerts": 0
+  }
+}

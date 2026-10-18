@@ -1,0 +1,43 @@
+# Overlay on observability lab; dedicated issue-126 project.
+services:
+  postgres:
+    cpus: 1.0
+  rabbitmq:
+    cpus: 2.0
+  api:
+    image: ${OPERATIONS_API_IMAGE:?exact patched API image ID required}
+    cpus: 0.5
+  worker:
+    image: ${OPERATIONS_WORKER_IMAGE:?exact patched worker image ID required}
+    cpus: 0.5
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+      - --web.enable-lifecycle
+      - --web.external-url=http://localhost:19094
+    volumes:
+      - ${OPERATIONS_ROOT}/infra/operations-lab/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${OPERATIONS_ROOT}/infra/operations-lab/drills.yml:/etc/prometheus/drills.yml:ro
+  alertmanager:
+    image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    command: ['--config.file=/etc/alertmanager/config.yml','--cluster.listen-address=','--web.external-url=http://localhost:19095']
+    ports: ['127.0.0.1:19095:9093']
+    volumes:
+      - ${OPERATIONS_ROOT}/infra/operations-lab/alertmanager.yml:/etc/alertmanager/config.yml:ro
+    networks: [lab]
+  receiver:
+    image: python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
+    user: '1000:1000'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    command: ['python','-B','/app/receiver.py']
+    volumes:
+      - ${OPERATIONS_ROOT}/infra/operations-lab/receiver.py:/app/receiver.py:ro
+      - ${OPERATIONS_ROOT}/docs/runbooks/local-operations.md:/app/runbook.md:ro
+      - ${OPERATIONS_STATE}/notifications:/data
+    ports: ['127.0.0.1:18086:8080']
+    networks: [lab]
