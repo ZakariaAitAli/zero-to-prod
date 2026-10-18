@@ -1,0 +1,27 @@
+{
+  "run": "browser check 2026-10-18T12:07:07Z UTC",
+  "exit_code": 0,
+  "runner": "evidence/issue-121/app-tls/browser/run-browser-check.sh (blob aa0f04d23d036d50c914d6bf8b36dac52ae878d3)",
+  "script": "browser-check.js (blob 286fc292e3cb93dcd8786560924dac2e80877af7)",
+  "image": "mcr.microsoft.com/playwright:v1.49.1-noble@sha256:70e367e0cbf60340a5b5fd562f6247a34eb3196efab9f88a3dd56482d9fe09d2",
+  "browser": "Chromium 131.0.6778.33",
+  "trust": "NSS database with exactly one certificate, the lab CA of zero-to-prod-security-lab-apptls (SHA-256 51:F1:4E:90:31:EC:65:01:94:C4:E1:89:0C:1A:82:8D:1B:57:10:AF:4C:DA:2B:84:1E:7F:4A:74:EE:7F:E9:E1); no certificate error ignored",
+  "network": "the ingress container's network namespace (Chromium resolves *.localhost to loopback); the lab ran on its explicit-subnet networks (../environment.json)",
+  "oauth2_proxy_requests_from_headless_chrome": 23,
+  "lab_started_from_tool_blob": "18c212ee42ce7e5e297640bfbe8f8192719f63d5",
+  "tested_files_git_blob": {
+    "tools/security-lab-local": "18c212ee42ce7e5e297640bfbe8f8192719f63d5",
+    "infra/security-lab/compose.yaml": "f52fd8223d8401259befb08169976b85280a8be6",
+    "infra/security-lab/ingress/nginx.conf": "e28f011eb162d9d2bf4c7f2639a38bd12f3b8f9a",
+    "infra/security-lab/ingress/api-upstream.conf": "fcc3002f102f1e9ee99adbb9f0f33dcda7f068e5",
+    "infra/security-lab/ingress/oauth2-proxy-upstream.conf": "0be5ded93810a12fe054811cae50302c3eedcdf1",
+    "apps/work-items/api/main.go": "bd5128b24c3a56172bd3eb6d007f3502dc0213ff",
+    "apps/work-items/api/tls.go": "f598ecfb386a610c6b90505031c40f3db03680e8"
+  },
+  "aborted_attempts_before_this_run": [
+    "12:04:30 EACCES: the hardened container (root without CAP_DAC_OVERRIDE) could not read the mode-600 password files; now runs as the host user",
+    "12:04:49 net::ERR_CONNECTION_REFUSED: on the edge network with --add-host, Chromium still resolved *.localhost to its own loopback; now shares the ingress network namespace",
+    "12:05:27 script error after the first check (Playwright securityDetails() returns fields, not methods); fixed",
+    "12:05:44 passed (17 passed, 0 failed, 7 observations) with a scratch copy of the runner; this run repeats it with the committed runner"
+  ]
+}

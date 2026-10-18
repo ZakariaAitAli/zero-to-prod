@@ -1,0 +1,18 @@
+{
+  "run": "full run 2026-10-17T15:39:51Z UTC",
+  "base_commit": "3c1104c693dc4676974bd0547d1fe3211358d87f",
+  "tool_subnets": "unrelated-probe=10.213.250.0/24 ipcontrol=10.213.251.0/24",
+  "tested_files_git_blob": {
+    "tools/security-lab-local": "6d42379a2fa38bb3b582c0fa002ec5c3068bc638",
+    "infra/security-lab/compose.yaml": "f52fd8223d8401259befb08169976b85280a8be6",
+    "infra/security-lab/ingress/nginx.conf": "e28f011eb162d9d2bf4c7f2639a38bd12f3b8f9a",
+    "infra/security-lab/ingress/api-upstream.conf": "fcc3002f102f1e9ee99adbb9f0f33dcda7f068e5",
+    "infra/security-lab/ingress/oauth2-proxy-upstream.conf": "0be5ded93810a12fe054811cae50302c3eedcdf1",
+    "infra/security-lab/ingress/keycloak-upstream.conf": "b3db07565d2a2ba3a89f11ca95de8f06a496a8f9",
+    "infra/security-lab/ingress/Dockerfile": "92e5dda0dc587dce68680f551d569812a9ec0574",
+    "infra/security-lab/ingress/Dockerfile.dockerignore": "d5505dfbafe02f740633290e31b75faae80f99f9",
+    "apps/work-items/api/main.go": "bd5128b24c3a56172bd3eb6d007f3502dc0213ff",
+    "apps/work-items/api/tls.go": "f598ecfb386a610c6b90505031c40f3db03680e8",
+    "apps/work-items/api/Dockerfile": "7a26ec32604c0ac9dc319cf704898d7a45d3f573"
+  }
+}
