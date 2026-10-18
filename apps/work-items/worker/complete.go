@@ -55,7 +55,7 @@ func (store *workerStore) CompleteProcessingJob(ctx context.Context, jobID, work
 	// timestamps come from the database clock.
 	var acceptedAt time.Time
 	err = tx.QueryRow(ctx, `UPDATE public.processing_jobs
- SET state='succeeded', attempt_count=attempt_count+1, last_error_code=NULL, finished_at=CURRENT_TIMESTAMP
+ SET state='succeeded', attempt_count=attempt_count+1, last_error_code=NULL, finished_at=clock_timestamp()
  WHERE id=$1 AND work_item_id=$2 AND state='accepted'
  RETURNING id, work_item_id, state, attempt_count, last_error_code, finished_at, created_at`, jobID, workItemID).Scan(
 		&job.ID, &job.WorkItemID, &job.State, &job.AttemptCount, &job.LastError, &job.FinishedAt, &acceptedAt)

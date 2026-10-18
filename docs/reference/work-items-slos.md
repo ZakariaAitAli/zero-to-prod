@@ -45,6 +45,13 @@ Choices and their reasons:
   not enter it. It cannot see jobs that never finish; the symptom alert on the
   oldest accepted job's age covers that gap (see below).
 
+The worker now records `finished_at` with `clock_timestamp()` at the final
+state update, so waits inside the completion transaction count toward latency.
+A PostgreSQL lock-wait regression fails with the earlier transaction-start
+`CURRENT_TIMESTAMP` and passes with the final-update clock. This still excludes
+the small interval between that update and commit acknowledgement; it is a
+near-completion database timestamp, not a separately observed commit clock.
+
 Known measurement gaps:
 
 - Server-side metrics cannot see requests that never reach the API (API down,
