@@ -1,0 +1,8 @@
+{
+  "time_utc": "2026-10-18T17:14:49.984277+00:00",
+  "finding": "default compose stop excluded the recovery profile, leaving pg-recover running after assertions",
+  "fix": "public stop and harness finally now explicitly enable tools and recovery profiles",
+  "verification": "ran corrected public stop against retained recovery container; no project containers remain running",
+  "source_provenance": "experiment runtime hashes retained; these two cleanup dispatch changes followed the recorded run",
+  "volumes": "all retained except ownership-verified primary volume intentionally deleted by experiment"
+}

@@ -484,6 +484,11 @@ jobs:
           bash -n tools/security-lab-local
           bash -n tools/observability-lab-local
           bash -n tools/capacity-lab-local
+          bash -n tools/availability-lab-local
+          for script in infra/availability-lab/postgres/*.sh infra/availability-lab/rabbitmq/*.sh; do sh -n "$script"; done
+          python3 -c 'import ast, pathlib; ast.parse(pathlib.Path("tools/availability-lab-experiments").read_text())'
+          HA_ROOT="$PWD" HA_STATE=/nonexistent ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml -f infra/availability-lab/compose.yaml --profile tools --profile recovery config --quiet
           python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/capacity-lab-experiments", "tools/capacity-lab-report")]'
           CAPACITY_ROOT="$PWD" ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
             docker compose -f infra/observability-lab/compose.yaml -f infra/capacity-lab/compose.yaml --profile tools config --quiet

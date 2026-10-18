@@ -153,3 +153,5 @@ The goal is not to hide the detailed experiments. It is to make them optional wh
 
 - [Local capacity lab](guides/local-capacity-lab.md) and [capacity experiment](experiments/issue-123-capacity.md).
 - [ADR 0013: local capacity measurement](adr/0013-local-capacity-measurement.md).
+
+- [Local availability lab](guides/local-availability-lab.md), [recovery runbook](runbooks/local-availability-recovery.md), [experiment](experiments/issue-124-availability-recovery.md), and [ADR 0014](adr/0014-local-availability-recovery.md).
