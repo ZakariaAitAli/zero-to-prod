@@ -29,7 +29,7 @@ for the ten-minute sustained stage, load phases last 30 or 60 seconds, plus
 startup, outstanding requests and backlog drain. These are ordered single
 runs on an accumulating database, not randomized/repeated benchmarks.
 
-## Results
+## Results (run 2)
 
 | Stage | HTTP req/s | Request p99 ms | No 5xx/transport error | Within 250 ms | Jobs accepted | Within 30 s | Client drops |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -162,10 +162,31 @@ with about 51.1 sampled CPU-seconds and 0.0271 GiB-hours per thousand completed
 jobs including load and recovery. These mixed-budget recovery units describe
 this actual failed run; they are not a steady-state deployment cost.
 
-A clean ten-minute confirmation with a 2-CPU broker is recorded separately
-as run 3. It also includes the independently tested final-update completion
+The clean ten-minute confirmation with a 2-CPU broker is recorded separately
+as [run 3](../../evidence/issue-123/run3/sustained.json). All 36,000 requests
+succeeded, all were within 250 ms, request p99 was 35.6 ms, and all 12,000 jobs
+completed within 30 seconds (completion p99 0.521 s). There were no client
+drops or invariant violations; the final drain took 0.68 s. This establishes
+this **20 jobs/s, ten-minute local profile** as an observed success, not a
+longer-term or production capacity guarantee. No post-load CPU intervention
+was made in run 3.
+
+Run 3 also includes the independently tested final-update completion
 timestamp correction from PR #142; run-2 source/images remain pinned and
-unchanged. Run-3 results will be added after completion.
+unchanged. Configuration/harness hashes match their recorded sources. The
+processes restarted between runs, caches/database size changed, and these
+are single runs: do not attribute every resource difference solely to CPU.
+
+Run-3 whole-stack sample means were 1.265 CPU cores and 0.925 GiB. The
+[regenerable report](../../evidence/issue-123/run3/analysis.json) estimates
+63.3 CPU-seconds (0.0176 vCPU-hours) and 0.0129 GiB-hours per thousand successful
+jobs, including the tiny final drain. These are measured resource units for
+this finite synthetic workload. A larger CPU allowance made reliable
+completion possible but did not make resource consumption zero or prove
+optimal cost. Telemetry and broker housekeeping are included in the stack;
+client/host/build/operations overhead is not. The sampled application API
+and worker CPU means were about 0.146 and 0.084 cores, respectively, and
+PostgreSQL about 0.221 cores; the rest includes broker and telemetry work.
 
 The cost calculation uses Docker CPU/memory snapshots for the **whole
 isolated stack**, including telemetry. CPU-seconds and GiB-hours per thousand
