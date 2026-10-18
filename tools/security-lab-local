@@ -6129,10 +6129,14 @@ authorization_rows() {
 # on the app network, during this control only.
 BASELINE_API="${PROJECT}-baseline-api"
 BASELINE_SHIM="${PROJECT}-baseline-tls"
+BASELINE_API_SWAPPED=false
 
 start_baseline_api() {
   local image="$1" conf="${AUTH_WORK}/baseline-tls.conf" _
   stop_baseline_api
+  # Set before stopping: any failure from this point needs recovery, even
+  # when neither baseline container could be created.
+  BASELINE_API_SWAPPED=true
   compose stop api >/dev/null 2>&1 || die "cannot stop the API for the baseline control"
 
   docker create --name "$BASELINE_API" --network "${PROJECT}_data" \
@@ -6198,6 +6202,13 @@ stop_baseline_api() {
   docker rm -fv "$BASELINE_SHIM" "$BASELINE_API" >/dev/null 2>&1 || true
 }
 
+restore_baseline_api() {
+  [[ "$BASELINE_API_SWAPPED" == true ]] || return 0
+  stop_baseline_api
+  compose up -d --wait --force-recreate --no-deps api || return 1
+  BASELINE_API_SWAPPED=false
+}
+
 # The API image built from the pinned pre-authorization commit.
 build_baseline_api_image() {
   local short="${AUTHORIZATION_BASELINE_COMMIT:0:7}" source image="zero-to-prod-security-lab-api:authz-baseline-${AUTHORIZATION_BASELINE_COMMIT:0:7}"
@@ -6232,12 +6243,11 @@ verify_authorization() {
   # A failure during the baseline control must not leave its containers in
   # place of the API.
   trap '
-    if docker inspect "$BASELINE_SHIM" >/dev/null 2>&1; then
-      stop_baseline_api
-      compose up -d --wait --no-deps api >/dev/null 2>&1 || true
-    fi
+    restore_baseline_api >/dev/null 2>&1 || echo "Warning: could not restore the API after the baseline control; run start before using the lab." >&2
     rm -rf -- "$AUTH_WORK"
   ' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   set_ui_headers
   local started area
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -6494,8 +6504,7 @@ verify_authorization() {
   browser_login "$base_viewer" lab-viewer >/dev/null
   browser_login "$base_outsider" lab-outsider >/dev/null
   authorization_rows baseline "$base_editor" "$base_viewer" "$base_outsider" "$(client_credentials access_token)"
-  stop_baseline_api
-  compose up -d --wait --force-recreate --no-deps api >/dev/null 2>&1 || die "the current API did not start"
+  restore_baseline_api >/dev/null 2>&1 || die "the current API did not start"
   local _
   for _ in $(seq 1 30); do
     [[ "$(api_version)" != baseline-* && -n "$(api_version)" ]] && break

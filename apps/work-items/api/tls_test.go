@@ -268,6 +268,42 @@ func TestCertificateFileReportsAPersistentProblemOnceAndLogsServedSerials(t *tes
 	}
 }
 
+func TestCertificateFileReportsEmptyReplacementAndRepeatedFailureAfterRecovery(t *testing.T) {
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	ca := newTestCA(t)
+	path := filepath.Join(t.TempDir(), "tls.pem")
+	valid := ca.pemPair(t, "api", 2)
+	replaceFile(t, path, valid)
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	source, err := newCertificateFile(path, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := &tls.Config{GetCertificate: source.certificate}
+	logs.Reset()
+
+	for episode := 1; episode <= 2; episode++ {
+		replaceFile(t, path, []byte{})
+		for check := 0; check < 3; check++ {
+			clock.advance(certificateCheckInterval)
+			if got := servedSerial(t, config); got != 2 {
+				t.Fatalf("empty replacement changed the served serial to %d", got)
+			}
+		}
+		if got := strings.Count(logs.String(), "holds no valid key pair"); got != episode {
+			t.Fatalf("expected one warning per failure episode (%d), got %d: %s", episode, got, logs.String())
+		}
+		// Recovery to the same certificate must clear the rejected cache.
+		replaceFile(t, path, valid)
+		clock.advance(certificateCheckInterval)
+		servedSerial(t, config)
+	}
+}
+
 // startTLSServer runs the application server with TLS on a loopback port and
 // returns its address.
 func startTLSServer(t *testing.T, path string) string {

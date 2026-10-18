@@ -255,6 +255,69 @@ check "check-secrets refuses a missing oauth2-proxy TLS file" "$(
 lab init >/dev/null
 check_cmd "init reissues both and check-secrets passes" lab check-secrets
 
+
+# Exercise the real baseline setup and EXIT/signal traps without Docker.
+# Every path and cleanup target belongs to this test's private fixture.
+python3 - "$tool" "${work}/baseline-functions" <<'PY_FUNCTIONS'
+import pathlib, re, sys
+source = pathlib.Path(sys.argv[1]).read_text()
+functions = []
+for name in ('start_baseline_api', 'stop_baseline_api', 'restore_baseline_api'):
+    functions.append(re.search(r'^' + name + r'\(\) \{\n.*?^\}\n(?=\n)', source, re.M | re.S).group())
+verification = source[source.index('verify_authorization() {'):]
+traps = re.search(r"  trap '\n.*?' EXIT\n  trap 'exit 130' INT\n  trap 'exit 143' TERM", verification, re.S).group()
+pathlib.Path(sys.argv[2]).write_text('\n'.join(functions) + '\n' + traps + '\n')
+PY_FUNCTIONS
+cat > "${work}/baseline-harness" <<'BASELINE_HARNESS'
+#!/usr/bin/env bash
+set -euo pipefail
+AUTH_WORK="${CASE_DIR}/auth"
+mkdir "$AUTH_WORK"
+BASELINE_API=fixture-api; BASELINE_SHIM=fixture-shim; BASELINE_API_SWAPPED=false
+PROJECT=fixture; ISSUER=https://issuer; API_AUDIENCE=fixture
+SECRETS_DIR="$CASE_DIR"; PKI_DIR="$CASE_DIR"; APP_TLS_DIR="$CASE_DIR"
+INTERNAL_CA_MOUNT=/fixture-ca; API_TLS_PORT=8443; INGRESS_IMAGE=fixture-image
+compose() {
+  echo "compose $*" >> "${CASE_DIR}/actions"
+  [[ "$*" != stop* || "$FAIL_AT" != stop ]]
+}
+docker() {
+  echo "docker $*" >> "${CASE_DIR}/actions"
+  if [[ "$1" == create && "$FAIL_AT" == TERM ]]; then kill -TERM "$$"; fi
+  if [[ "$1" == create && "$FAIL_AT" == INT ]]; then kill -INT "$$"; fi
+  [[ "$1" != "$FAIL_AT" ]]
+}
+die() { echo "$*" >&2; exit 1; }
+sleep() { :; }
+api_version() { [[ "$FAIL_AT" != timeout ]] && echo baseline-fixture; }
+source "$FUNCTIONS_FILE"
+if [[ "$FAIL_AT" == before ]]; then exit 1; fi
+start_baseline_api fixture-image
+restore_baseline_api
+BASELINE_HARNESS
+for failure in before stop create network start run timeout TERM INT success; do
+  case_dir="${work}/baseline-${failure}"
+  mkdir "$case_dir"
+  rc=0
+  CASE_DIR="$case_dir" FAIL_AT="$failure" FUNCTIONS_FILE="${work}/baseline-functions" \
+    bash "${work}/baseline-harness" > "${case_dir}/output" 2>&1 || rc=$?
+  actions="$(cat "${case_dir}/actions" 2>/dev/null || true)"
+  restores="$(grep -c '^compose up -d --wait --force-recreate --no-deps api$' <<< "$actions" || true)"
+  expected_rc=1
+  [[ "$failure" == TERM ]] && expected_rc=143
+  [[ "$failure" == INT ]] && expected_rc=130
+  [[ "$failure" == success ]] && expected_rc=0
+  if [[ "$failure" == before ]]; then
+    check "baseline: failure before the swap leaves the API alone" "$(
+      [[ "$rc" == "$expected_rc" && "$restores" == 0 ]] && echo pass || echo fail)"
+  else
+    check "baseline: ${failure} restores the API exactly once and preserves exit status" "$(
+      [[ "$rc" == "$expected_rc" && "$restores" == 1 ]] && echo pass || echo fail)"
+  fi
+  check "baseline: ${failure} cleans its temporary directory" "$(
+    [[ ! -e "${case_dir}/auth" ]] && echo pass || echo fail)"
+done
+
 if [[ "$failures" -ne 0 ]]; then
   echo "Application TLS tests failed: ${failures}." >&2
   exit 1

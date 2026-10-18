@@ -111,10 +111,11 @@ func (file *certificateFile) reload() {
 	}
 
 	if bytes.Equal(content, file.content) {
+		file.rejected = nil
 		file.lastError = ""
 		return
 	}
-	if bytes.Equal(content, file.rejected) {
+	if file.rejected != nil && bytes.Equal(content, file.rejected) {
 		return
 	}
 

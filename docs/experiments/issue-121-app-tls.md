@@ -456,3 +456,29 @@ ran with `--rm`; the temporary directory with the npm package and the NSS
 database was deleted. The pulled image
 `mcr.microsoft.com/playwright:v1.49.1-noble` remains in the local image
 store.
+
+## Review follow-up (2026-10-18)
+
+Independent review found two failure-path defects after the recorded runtime
+runs. An empty replacement PEM compared equal to the API's initially unset
+rejected-content cache, suppressing its warning. The cache now distinguishes
+no rejection from an empty rejected file, and restoring the current valid
+file clears it so a later failure is reported again. A focused Go regression
+checks two empty-file failure episodes, one warning per episode, and the
+unchanged served serial.
+
+The authorization baseline cleanup previously required the TLS front to
+exist before restoring the API. Setup can fail after stopping the API but
+before that container exists. Cleanup now tracks entry into the swap, removes
+both baseline containers, and attempts API restoration on failure or INT/TERM.
+It warns if restoration itself fails. The same recovery function handles
+normal completion. Docker-free tests exercise failures at stop, create,
+network attachment, start, front creation, readiness timeout, INT, TERM,
+success, and failure before the swap; they check restoration, exit status,
+and fixture cleanup.
+
+Validation: all default Go package tests passed; the application TLS script
+passed 77 checks (57 existing and 20 recovery checks). These are local unit
+and simulated cleanup results, not a repeat of the Docker runtime suite or
+the Chromium run. The earlier provenance files remain historical and are
+not rewritten to describe these later changes.
