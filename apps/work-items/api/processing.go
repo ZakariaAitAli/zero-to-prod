@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -45,10 +45,8 @@ func registerProcessingHandlers(
 			}
 
 			if err != nil {
-				log.Printf(
-					"get processing job failed: %v",
-					err,
-				)
+				slog.ErrorContext(r.Context(), "get processing job failed",
+					"job_id", jobID, "error", err)
 
 				writeJSON(
 					w,
@@ -106,10 +104,8 @@ func registerProcessingHandlers(
 			}
 
 			if err != nil {
-				log.Printf(
-					"accept processing job failed: %v",
-					err,
-				)
+				slog.ErrorContext(r.Context(), "accept processing job failed",
+					"work_item_id", workItemID, "error", err)
 
 				writeJSON(
 					w,
@@ -121,6 +117,8 @@ func registerProcessingHandlers(
 				return
 			}
 
+			slog.InfoContext(r.Context(), "processing accepted",
+				"job_id", job.ID, "work_item_id", job.WorkItemID)
 			writeJSON(w, http.StatusAccepted, job)
 		},
 	)
