@@ -202,7 +202,7 @@ def run(stage,output):
    time.sleep(1)
   duplicate_probe=json.loads(sql(f"SELECT json_build_object('jobs',(SELECT count(*) FROM processing_jobs WHERE work_item_id={item['id']}),'results',(SELECT count(*) FROM work_item_results WHERE work_item_id={item['id']}),'outbox',(SELECT count(*) FROM outbox_messages o JOIN processing_jobs j ON j.id=o.processing_job_id WHERE j.work_item_id={item['id']}))"))
   assert duplicate_probe=={'jobs':1,'results':1,'outbox':1},duplicate_probe
- result={'duplicate_probe':duplicate_probe,'stage':name,'started_utc':datetime.datetime.fromtimestamp(wall_start,datetime.timezone.utc).isoformat(),
+ result={'broker_cpu_limit':float(os.environ.get('CAPACITY_BROKER_CPUS','0.5')),'item_prefix':prefix,'duplicate_probe':duplicate_probe,'stage':name,'started_utc':datetime.datetime.fromtimestamp(wall_start,datetime.timezone.utc).isoformat(),
  'config':dict(zip(('rate_jobs_s','duration_s','api_replicas','worker_replicas','api_cpu_each','worker_cpu_each','pool_max_each','limited','worker_stopped_during_load'),stage[1:])),
  'load_elapsed_s':load_stopped-started,'including_tail_s':elapsed,'scheduled_iterations':submitted,'client_dropped_iterations':skipped,
  'requests':len(records),'requests_per_second_including_tail':len(records)/elapsed,'status_counts':dict(counts),
