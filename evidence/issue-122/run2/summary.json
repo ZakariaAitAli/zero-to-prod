@@ -1,0 +1,96 @@
+{
+  "started": "2026-10-18T14:28:15Z",
+  "load_rate_iterations_per_s": 4.0,
+  "experiments": {
+    "e1-baseline-trace": {
+      "passed": true,
+      "checks": {
+        "no_client_errors": true,
+        "trace_has_api_and_worker": true,
+        "publish_span_child_of_request": true,
+        "process_span_child_of_publish": true,
+        "db_spans_under_both_services": true,
+        "logs_from_both_services_share_trace": true,
+        "no_pages_firing": true
+      },
+      "exception": null
+    },
+    "e2-cpu-pressure": {
+      "passed": true,
+      "checks": {
+        "latency_alert_fired": true,
+        "cpu_saturation_visible": true,
+        "limit_removed": true
+      },
+      "exception": null
+    },
+    "e3-slow-lock": {
+      "passed": true,
+      "checks": {
+        "request_failed_with_503_after_timeout": true,
+        "error_log_carries_trace_id": true,
+        "trace_shows_lock_wait_span": true,
+        "lock_span_marked_error": true,
+        "retry_after_lock_release_accepted": true
+      },
+      "exception": null
+    },
+    "e4-postgres-outage": {
+      "passed": true,
+      "checks": {
+        "availability_alert_fired": true,
+        "backlog_unobservable_fired": true,
+        "client_saw_503": true,
+        "error_logs_in_loki_with_trace": true,
+        "pg_up_zero_during_outage": true,
+        "recovered_without_errors": true
+      },
+      "exception": null
+    },
+    "e5-api-failure": {
+      "passed": true,
+      "checks": {
+        "api_unavailable_alert_fired": true,
+        "client_saw_connection_failures": true,
+        "server_side_sli_did_not_see_failures": true,
+        "recovered": true
+      },
+      "exception": null
+    },
+    "e6-rabbitmq-outage": {
+      "passed": true,
+      "checks": {
+        "stalled_alert_fired": true,
+        "api_stayed_available": true,
+        "outbox_backlog_visible": true,
+        "publisher_degraded_logged": true,
+        "backlog_drained": true,
+        "delayed_job_trace_spans_outage": true
+      },
+      "exception": null
+    },
+    "e7-worker-stopped": {
+      "passed": true,
+      "checks": {
+        "stalled_alert_fired": true,
+        "queue_depth_visible": true,
+        "no_consumers_visible": true,
+        "backlog_drained": true
+      },
+      "exception": null
+    },
+    "e8-worker-cannot-complete": {
+      "passed": true,
+      "checks": {
+        "stalled_alert_fired": true,
+        "requeue_loop_visible": true,
+        "session_restarts_visible": true,
+        "error_logs_name_permission_sqlstate": true,
+        "infrastructure_failures_do_not_consume_attempts": true,
+        "backlog_drained": true
+      },
+      "exception": null
+    }
+  },
+  "finished": "2026-10-18T15:07:15Z"
+}
