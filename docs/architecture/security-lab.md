@@ -17,8 +17,8 @@ identity-provider CA ([ADR 0007](../adr/0007-security-lab-identity-provider-tran
 Proposed), and verified TLS from the ingress to the API and oauth2-proxy from
 a fourth, application CA ([ADR 0008](../adr/0008-security-lab-application-transport.md),
 Proposed) exist. Every ingress upstream is now verified TLS; oauth2-proxy →
-Valkey and Keycloak → its database stay plaintext by decision. Rate limiting
-and secret rotation do not exist. The lab must stay on host loopback.
+Valkey and Keycloak → its database stay plaintext by decision. Ingress admission control (ADR 0010) and API database password rotation
+(ADR 0011) exist; other secret rotation remains unfinished. The lab must stay on host loopback.
 
 Operating procedures are in the [security lab guide](../guides/local-security-lab.md);
 the transport threats are in the [threat model](security-lab-threat-model.md);
@@ -195,7 +195,7 @@ in the development lab. See the [Work Items architecture](work-items.md).
 
 ## Not covered
 
-- Per-item or ownership authorization, and rate limiting.
+- Per-item or ownership authorization and distributed/principal quotas.
 - Revocation of access tokens before expiry (validation is local).
 - Encryption of oauth2-proxy → Valkey and Keycloak → its database
   (ADR 0006).

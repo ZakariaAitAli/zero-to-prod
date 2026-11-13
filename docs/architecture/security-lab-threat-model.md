@@ -8,8 +8,11 @@ decisions of [ADR 0006](../adr/0006-security-lab-internal-transport.md)
 (ingress → API and oauth2-proxy) are applied. It is bounded to transport: who can observe
 or alter traffic between the lab's components, and what a certificate failure
 does. Authentication and authorization threats are in [ADR 0004](../adr/0004-security-lab-authentication.md)
-and [ADR 0005](../adr/0005-security-lab-authorization.md); rate limiting,
-secret rotation, and availability are later work.
+and [ADR 0005](../adr/0005-security-lab-authorization.md). Ingress admission
+is addressed by [ADR 0010](../adr/0010-security-lab-rate-limiting.md); secret
+rotation is addressed for the API database password by ADR 0011. The
+[broader security model](security-lab-security-model.md) covers identity,
+credentials, artifacts, abuse and residual operational risks.
 
 The lab runs on one Docker engine (Docker Desktop, WSL 2). Statements about
 network membership and capabilities below were measured by

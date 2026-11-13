@@ -129,6 +129,7 @@ usage() {
 Usage:
   ./tools/security-lab-local init
   ./tools/security-lab-local check-secrets
+  ./tools/security-lab-local rotate-app-db-password
   ./tools/security-lab-local start
   ./tools/security-lab-local verify [--evidence <file>]
   ./tools/security-lab-local verify-failures [--evidence <file>]
@@ -2284,7 +2285,7 @@ verify_internal_tls() {
 IDP_PROBE="${PROJECT}-idp-probe"
 NGINX_CONTROL="${PROJECT}-nginx-control"
 DISCOVERY_PATH=/realms/work-items/.well-known/openid-configuration
-INGRESS_IMAGE=zero-to-prod-security-lab-ingress:local
+INGRESS_IMAGE="${ZTP_SECURITY_LAB_INGRESS_IMAGE:-zero-to-prod-security-lab-ingress:local}"
 
 # A TLS client on the idp network. It holds no secret: only the three CA
 # certificates (public) are mounted, to show which of them verifies Keycloak.
@@ -6535,6 +6536,10 @@ verify_authorization() {
 check_configuration
 
 case "${1:-}" in
+  rotate-app-db-password)
+    shift
+    exec "${SCRIPT_DIR}/security-lab-rotate-app-db" "$@"
+    ;;
   init)
     init_state
     ;;

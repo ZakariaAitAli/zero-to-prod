@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Rotate the API's database password without putting values in arguments.
+# The private pending journal makes an interrupted rotation resumable.
+set -euo pipefail
+[[ "$#" == 0 ]] || { echo 'Usage: tools/security-lab-rotate-app-db' >&2; exit 2; }
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+tool="${root}/tools/security-lab-local"
+project="${ZTP_SECURITY_LAB_PROJECT:-zero-to-prod-security-lab}"
+state="$("$tool" state-dir)"
+[[ -f "${state}/.zero-to-prod-security-lab" && "$(cat "${state}/.zero-to-prod-security-lab")" == "project=${project}" && -O "$state" ]] || { echo 'error: refusing unowned or unmarked security lab state' >&2; exit 1; }
+"$tool" check-secrets >/dev/null
+secrets="${state}/secrets"
+pending="${secrets}/.app-db-rotation"
+export ZTP_SECURITY_LAB_SECRETS_DIR="$secrets"
+export ZTP_SECURITY_LAB_INGRESS_TLS_DIR="${state}/ingress-tls"
+export ZTP_SECURITY_LAB_CA_FILE="${state}/pki/ca.crt"
+export ZTP_SECURITY_LAB_INTERNAL_CA_FILE="${state}/pki/internal-ca.crt"
+export ZTP_SECURITY_LAB_INTERNAL_TLS_DIR="${state}/internal-tls"
+export ZTP_SECURITY_LAB_IDP_CA_FILE="${state}/pki/idp-ca.crt"
+export ZTP_SECURITY_LAB_IDP_TLS_DIR="${state}/idp-tls"
+export ZTP_SECURITY_LAB_APP_CA_FILE="${state}/pki/app-ca.crt"
+export ZTP_SECURITY_LAB_APP_TLS_DIR="${state}/app-tls"
+compose() { docker compose --project-name "$project" -f "$root/infra/security-lab/compose.yaml" "$@"; }
+[[ -n "$(compose ps -q --status running postgres)" ]] || { echo 'error: the target lab PostgreSQL must be running' >&2; exit 1; }
+# Serialize this command. Do not run start/init/other operator changes at the
+# same time: this is local operator coordination, not distributed fencing.
+exec 9> "${secrets}/.app-db-rotation.lock"
+flock -n 9 || { echo 'error: another API database password rotation is running' >&2; exit 1; }
+[[ ! -L "$pending" ]] || { echo 'error: refusing a symlink rotation journal' >&2; exit 1; }
+if [[ ! -d "$pending" ]]; then mkdir -m 700 "$pending"; fi
+[[ -O "$pending" && "$(stat -c '%a' "$pending")" == 700 ]] || { echo 'error: rotation journal ownership or permissions are invalid' >&2; exit 1; }
+# Persist and fsync the planned value before changing the server. Resume uses
+# exactly this value; it does not generate a third password or re-enable old
+# credentials. No credential-bearing value goes through a process argument.
+python3 - "$pending" <<'PY'
+import os,pathlib,secrets,sys
+p=pathlib.Path(sys.argv[1])/'new-password'
+if not p.exists():
+ fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+ with os.fdopen(fd,'w') as f:f.write(secrets.token_hex(24)+'\n');f.flush();os.fsync(f.fileno())
+ for parent in (p.parent,p.parent.parent):
+  directory=os.open(parent,os.O_RDONLY|os.O_DIRECTORY);os.fsync(directory);os.close(directory)
+if p.is_symlink() or p.stat().st_uid!=os.getuid() or p.stat().st_mode & 0o077:raise SystemExit('error: unsafe pending password file')
+PY
+new="$(cat "${pending}/new-password")"
+[[ "$new" =~ ^[0-9a-f]{48}$ ]] || { echo 'error: pending password is invalid; journal preserved for inspection' >&2; exit 1; }
+# A trusted local administrator updates only this role. Disable statement
+# text logging for this session so a failed ALTER cannot log its password.
+{
+ printf "SET log_statement='none'; SET log_min_error_statement='panic';\n"
+ printf "ALTER ROLE zero_to_prod_app PASSWORD '%s';\n" "$new"
+} | compose exec -T postgres psql -U zero_to_prod_admin -d zero_to_prod -v ON_ERROR_STOP=1 >/dev/null
+printf 'role-updated\n' > "${pending}/phase"
+python3 - "$secrets" "$pending" <<'PY'
+import os,pathlib,sys,urllib.parse
+s,j=map(pathlib.Path,sys.argv[1:]);new=(j/'new-password').read_text().strip()
+password=s/'postgres-app-password';urlfile=s/'api-database-url'
+if password.is_symlink() or urlfile.is_symlink():raise SystemExit('error: refusing symlink secret files')
+u=urllib.parse.urlsplit(urlfile.read_text().strip())
+if u.username!='zero_to_prod_app' or u.hostname!='postgres' or u.port!=5432:
+ raise SystemExit('error: API database URL has an unexpected identity; journal preserved')
+# Keep the source inode: PostgreSQL's bootstrap script has this file mounted.
+# Only the API URL needs a new inode and consumer recreation.
+with password.open('w') as f:f.write(new+'\n');f.flush();os.fsync(f.fileno())
+os.chmod(password,0o644)
+updated=urllib.parse.urlunsplit((u.scheme,f'{u.username}:{new}@postgres:5432',u.path,u.query,u.fragment))
+temporary=s/f'.api-db-rotation-{os.getpid()}.tmp'
+try:
+ with temporary.open('x') as f:f.write(updated+'\n');f.flush();os.fsync(f.fileno())
+ os.chmod(temporary,0o644);os.replace(temporary,urlfile)
+ directory=os.open(s,os.O_RDONLY|os.O_DIRECTORY);os.fsync(directory);os.close(directory)
+finally:
+ if temporary.exists():temporary.unlink()
+PY
+printf 'files-updated\n' > "${pending}/phase"
+# Password changes alone do not revoke established sessions. Retire the
+# lab API role's connections as well; in-flight transactions roll back and
+# the API is recreated with its new credential immediately afterwards.
+compose exec -T postgres psql -U zero_to_prod_admin -d zero_to_prod -v ON_ERROR_STOP=1 \
+ -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename='zero_to_prod_app' AND datname='zero_to_prod' AND pid<>pg_backend_pid()" >/dev/null
+printf 'sessions-terminated\n' > "${pending}/phase"
+compose up -d --wait --force-recreate --no-deps api >/dev/null
+"$tool" check-secrets >/dev/null
+ready=false
+for _ in $(seq 1 20); do
+ if compose exec -T api wget --no-check-certificate -q -O /dev/null https://127.0.0.1:8443/ready; then ready=true; break; fi
+ sleep 1
+done
+[[ "$ready" == true ]] || { echo 'error: API readiness did not recover; rotation journal kept; rerun this command' >&2; exit 1; }
+# Only files this command creates can be removed here. Unknown journal data
+# stops cleanup rather than broadening a destructive deletion.
+rm -f -- "${pending}/new-password" "${pending}/phase"
+rmdir -- "$pending"
+echo 'API database password rotated; API recreated. Values were not printed.'

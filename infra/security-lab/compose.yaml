@@ -187,7 +187,7 @@ services:
     build:
       context: ../../apps/work-items
       dockerfile: worker/Dockerfile
-    image: zero-to-prod-security-lab-worker:local
+    image: ${ZTP_SECURITY_LAB_WORKER_IMAGE:-zero-to-prod-security-lab-worker:local}
     environment:
       DATABASE_URL_FILE: /run/secrets/worker-database-url
       RABBITMQ_WORKER_URL_FILE: /run/secrets/worker-rabbitmq-url
@@ -209,7 +209,7 @@ services:
     build:
       context: ../..
       dockerfile: infra/security-lab/ingress/Dockerfile
-    image: zero-to-prod-security-lab-ingress:local
+    image: ${ZTP_SECURITY_LAB_INGRESS_IMAGE:-zero-to-prod-security-lab-ingress:local}
     user: "101:101"
     ports:
       # The issuer URL carries this port, so it is fixed (see the guide).

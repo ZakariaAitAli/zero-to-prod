@@ -39,6 +39,7 @@ Architecture documents describe the current or retained Zero-to-Prod system boun
 - [Delivery architecture](architecture/delivery.md) — the delivery and recovery model established by Sprint 01 and Sprint 02.
 - [Work Items architecture](architecture/work-items.md) — the current local-first Work Items system using PostgreSQL and RabbitMQ.
 - [Security lab architecture](architecture/security-lab.md) — the opt-in Issue #121 environment: HTTPS ingress, private networks, lab CA, runtime secrets, authentication, authorization, and verified TLS to the datastores, Keycloak, the API, and oauth2-proxy.
+- [Security lab security model](architecture/security-lab-security-model.md) — trust boundaries, identity/credential/artifact/abuse threats, and explicit residual gaps.
 - [Security lab threat model: internal transport](architecture/security-lab-threat-model.md) — assets, principals, every internal connection with its network members, transport threats, and what each mitigation leaves open.
 
 ## Guides
@@ -77,6 +78,9 @@ ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
 - [ADR 0007 — Security lab identity-provider hop](adr/0007-security-lab-identity-provider-transport.md) — **Proposed:** Keycloak serves only HTTPS with a certificate from a third CA, limited to exactly `keycloak` and trusted only by the ingress, which verifies chain and name without session reuse; lab CA, extended internal CA, pinning, mTLS, and passthrough compared.
 - [ADR 0008 — Security lab application hops](adr/0008-security-lab-application-transport.md) — **Proposed:** the API (native TLS, reloads its certificate, keeps its last valid pair) and oauth2-proxy serve only HTTPS with certificates from a fourth CA, limited to exactly `api` and `oauth2-proxy` and trusted only by the ingress; ADR 0007's consolidation trigger recorded as met and deferred; mTLS and sidecars compared.
 
+- [ADR 0010 — ingress admission control](adr/0010-security-lab-rate-limiting.md) — **Proposed:** per-peer and aggregate budgets with 429 shedding.
+
+- [ADR 0011 — secret distribution and rotation](adr/0011-security-lab-secret-distribution-rotation.md) — **Proposed:** local protected-file boundary and resumable API database password rotation.
 - [ADR 0009 — restore delivery recovery](adr/0009-restore-delivery-recovery.md) — **Proposed:** durable random delivery identity and explicit offline redrive.
 - [ADR 0012 — Work Items observability](adr/0012-work-items-observability.md) — **Proposed:** Prometheus metrics, OpenTelemetry traces and logs, trace context persisted in the outbox and carried in AMQP headers, bounded labels, and the SLOs.
 
@@ -90,6 +94,8 @@ Experiment records answer **what did we test and what happened?** Focused experi
 - [Issue #122 — observability](experiments/issue-122-observability.md) — one trace across the asynchronous boundary, and lock contention, CPU pressure, PostgreSQL, API, RabbitMQ, and worker failures each detected by its alert and investigated through metrics, logs, and traces.
 - [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
 - [Issue #121 — TLS to the API and oauth2-proxy](experiments/issue-121-app-tls.md) — both `app` hops in a separate lab: passive captures before and after, scripted flows over the encrypted hops, untrusted, lab-CA, wrong-name, and expired certificates per service with new versus kept-alive connections, the API's last-good-certificate behavior, renewal (API without restart, oauth2-proxy by restart), regression runs, and a browser check in headless Chromium trusting only the lab CA (no desktop browser).
+- [Issue #121 — secret rotation](experiments/issue-121-secret-rotation.md) — real role/session revocation, failed consumer recreation, recovery, browser flow and image/source audit.
+- [Issue #121 — rate limiting](experiments/issue-121-rate-limits.md) — both API paths, forwarding-header spoofing, authentication isolation, and controlled-upstream admission evidence.
 - [Issue #121 — TLS to Keycloak](experiments/issue-121-keycloak-tls.md) — the ingress → Keycloak hop in a separate lab: a passive capture before and after, unchanged public metadata and redirects, untrusted, lab-CA, wrong-name, expired, excluded-subdomain, and excluded-IP certificates (with an isolated unconstrained-CA control) with new versus established connections and TLS session resumption, recovery and renewal without restarts, and regression runs, rerun with the final files; browser sign-in blocked by the untrusted lab CA.
 - [Issue #121 — internal TLS](experiments/issue-121-internal-tls.md) — verified TLS to PostgreSQL and RabbitMQ in a separate lab: plaintext refusal, untrusted issuer, hostname mismatch, and expiry with new versus established connections, recovery by renewal without client restarts, and regression runs of the earlier checks.
 - [Issue #121 — authorization](experiments/issue-121-authorization.md) — role-based authorization in a separate lab: the principal × action matrix on both paths with a pinned pre-authorization control, strict claims, measured role-removal delays, an identity-provider outage, and the role-management client's minimum permissions.
