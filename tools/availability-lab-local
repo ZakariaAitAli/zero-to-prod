@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Local HA/PITR experiment only. Never prunes or deletes retained projects.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export HA_ROOT="$ROOT"
+export HA_STATE="${HOME}/.local/state/zero-to-prod/availability-lab"
+export ZTP_OBSERVABILITY_LAB_STATE="$HA_STATE"
+export ZTP_OBSERVABILITY_LAB_SECRETS_DIR="$HA_STATE/secrets"
+export ZTP_OBSERVABILITY_LAB_SUBNET=10.213.22.0/24
+export ZTP_OBSERVABILITY_LAB_PROMETHEUS_PORT=19092
+export ZTP_OBSERVABILITY_LAB_GRAFANA_PORT=13002
+export ZTP_OBSERVABILITY_LAB_JAEGER_PORT=16688
+export ZTP_OBSERVABILITY_LAB_VERSION="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
+PROJECT=zero-to-prod-availability-lab
+compose() { docker compose -p "$PROJECT" -f "$ROOT/infra/observability-lab/compose.yaml" -f "$ROOT/infra/availability-lab/compose.yaml" "$@"; }
+owned() { [[ -f "$HA_STATE/.ha-lab-owned" ]] && [[ "$(cat "$HA_STATE/.ha-lab-owned")" == "$PROJECT" ]] || { echo 'missing HA state ownership marker' >&2; exit 1; }; }
+init() {
+ umask 077
+ if [[ -d "$HA_STATE" && ! -f "$HA_STATE/.ha-lab-owned" ]]; then echo 'refusing unmarked existing HA state' >&2; exit 1; fi
+ mkdir -p "$HA_STATE"
+ chmod 700 "$HA_STATE"
+ printf '%s\n' "$PROJECT" > "$HA_STATE/.ha-lab-owned"
+ bash "$ROOT/tools/observability-lab-local" init
+ for name in replication-password erlang-cookie rabbitmq-admin-password; do
+  if [[ ! -s "$HA_STATE/secrets/$name" ]]; then openssl rand -hex 24 > "$HA_STATE/secrets/$name"; chmod 644 "$HA_STATE/secrets/$name"; fi
+ done
+ [[ -f "$HA_STATE/proxies.conf" ]] || cp "$ROOT/infra/availability-lab/proxies.conf" "$HA_STATE/proxies.conf"
+ python3 - <<'PY'
+import base64,hashlib,json,os
+from pathlib import Path
+state=Path(os.environ['HA_STATE']);secrets=state/'secrets'
+for name in ['api-database-url','worker-database-url']:
+ p=secrets/name;p.write_text(p.read_text().replace('@postgres:','@proxies:'))
+for name in ['api-rabbitmq-url','worker-rabbitmq-url']:
+ p=secrets/name;p.write_text(p.read_text().replace('@rabbitmq:','@proxies:'))
+p=secrets/'rabbitmq-definitions';r=json.loads(p.read_text());r['queues']=[]
+password=(secrets/'rabbitmq-admin-password').read_bytes().strip();salt=os.urandom(4)
+r['users']=[u for u in r['users'] if u['name']!='ha_admin']
+r['users'].append({'name':'ha_admin','password_hash':base64.b64encode(salt+hashlib.sha256(salt+password).digest()).decode(),'hashing_algorithm':'rabbit_password_hashing_sha256','tags':['administrator']})
+r['permissions']=[v for v in r['permissions'] if v['user']!='ha_admin']
+r['permissions'].append({'user':'ha_admin','vhost':'zero_to_prod','configure':'.*','write':'.*','read':'.*'})
+p.write_text(json.dumps(r)+'\n')
+PY
+}
+check_subnet() {
+ python3 - <<'PY'
+import ipaddress,json,subprocess
+ids=subprocess.check_output(['docker','network','ls','-q'],text=True).split()
+for n in json.loads(subprocess.check_output(['docker','network','inspect',*ids])):
+ if n['Name']=='zero-to-prod-availability-lab_lab':continue
+ for c in n['IPAM']['Config'] or []:
+  if c.get('Subnet') and ipaddress.ip_network(c['Subnet']).overlaps(ipaddress.ip_network('10.213.22.0/24')):raise SystemExit('HA subnet overlaps '+n['Name'])
+PY
+}
+queue() {
+ python3 - <<'PY'
+import base64,json,os,time,urllib.request
+from pathlib import Path
+password=(Path(os.environ['HA_STATE'])/'secrets/rabbitmq-admin-password').read_text().strip()
+auth='Basic '+base64.b64encode(('ha_admin:'+password).encode()).decode()
+def call(path,method='GET',body=None):
+ req=urllib.request.Request('http://127.0.0.1:15675/api/'+path,data=None if body is None else json.dumps(body).encode(),method=method,headers={'Authorization':auth,'Content-Type':'application/json'})
+ with urllib.request.urlopen(req,timeout=5) as r:return json.loads(r.read() or b'null')
+for _ in range(90):
+ try:
+  nodes=call('nodes')
+  if len([n for n in nodes if n['running']])==3:break
+ except Exception:pass
+ time.sleep(2)
+else:raise SystemExit('three broker nodes did not form a live cluster')
+call('queues/zero_to_prod/work_item_processing','PUT',{'durable':True,'auto_delete':False,'arguments':{'x-queue-type':'quorum','x-quorum-initial-group-size':3}})
+for _ in range(30):
+ q=call('queues/zero_to_prod/work_item_processing')
+ if len(q.get('members',[]))==3:print('Three-member quorum queue ready');break
+ time.sleep(2)
+else:raise SystemExit('queue membership is not three')
+PY
+}
+case "${1:-}" in
+ init) init ;;
+ up)
+  if [[ -f "$HA_STATE/.ha-failover-active" ]]; then echo 'HA lab was promoted; follow failback/recovery runbook instead of starting an old primary' >&2; exit 1; fi
+  check_subnet
+  init
+  compose build api
+  compose build worker
+  compose --profile tools build migrate
+  compose up -d --wait postgres
+  compose --profile tools run --rm migrate up
+  compose up -d --wait pg-standby
+  compose up -d backup
+  compose up -d --wait rabbitmq rabbit2 rabbit3
+  queue
+  compose up -d --wait --scale api=2
+  ;;
+ stop) owned; compose --profile recovery --profile tools stop ;;
+ compose) owned; shift; compose "$@" ;;
+ *) echo 'Usage: tools/availability-lab-local init|up|stop|compose ARGS' >&2; exit 2 ;;
+esac
