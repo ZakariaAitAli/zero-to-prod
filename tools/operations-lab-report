@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Summarize recorded local incident timings, request SLIs and sampled costs."""
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1]);rows=json.loads((p/'requests.json').read_text());incidents=json.loads((p/'incidents.json').read_text());samples=json.loads((p/'resources.json').read_text());db=json.loads((p/'database.json').read_text())
+def mem(value):
+ value=value.split('/')[0].strip()
+ for suffix,factor in [('GiB',1),('MiB',1/1024),('KiB',1/1024**2),('GB',10**9/1024**3),('MB',10**6/1024**3),('kB',1000/1024**3),('B',1/1024**3)]:
+  if value.endswith(suffix):return float(value[:-len(suffix)])*factor
+ raise ValueError(value)
+cpu_s=0;gib_s=0
+for a,b in zip(samples,samples[1:]):
+ dt=b['unix']-a['unix']
+ cpu_s+=dt*sum(float(c['CPUPerc'].rstrip('%'))/100 for c in a['containers'])
+ gib_s+=dt*sum(mem(c['MemUsage']) for c in a['containers'])
+measured=sum(b['unix']-a['unix'] for a,b in zip(samples,samples[1:]))
+errors=sum(r['status']==0 or r['status']>=500 for r in rows)
+report={'request_count':len(rows),'transport_or_5xx_count':errors,'observed_request_availability':1-errors/len(rows),'under_250ms_ratio':sum(r['seconds']<=.25 for r in rows)/len(rows),'job_counts':db,'observed_completed_within_30s_ratio':db['fresh']/db['jobs'] if db['jobs'] else None,'incidents':[{**i,'notification_delay_s':i['notification_unix']-i['fault_unix'],'business_recovery_s':i['business_recovered_unix']-i['fault_unix'],'resolution_notification_s':i['resolved_notification_unix']-i['fault_unix']} for i in incidents], 'resource_estimates':{'sample_span_s':measured,'cpu_core_seconds':cpu_s,'gib_hours':gib_s/3600,'mean_cpu_cores':cpu_s/measured,'mean_memory_gib':gib_s/measured,'cpu_seconds_per_1000_succeeded':cpu_s/db['succeeded']*1000,'gib_hours_per_1000_succeeded':gib_s/3600/db['succeeded']*1000},'limits':'Left-sample resource estimate for own containers, not reserved capacity or cloud bill; excludes host/client/build/energy/storage/network/operator. Includes injected failures; request client and scrape have blind spots. Script acknowledgment is not human MTTA. Short run cannot establish a 28-day SLO.'}
+cutoff=max(i['resolved_notification_unix'] for i in incidents)+60
+human=p.parent/'human-drill/business-proof.json'
+if human.exists():cutoff=max(cutoff,json.loads(human.read_text())['verified_unix']+60)
+steady=[r for r in rows if r['start']>=cutoff]
+report['post_recovery_steady_requests']={'cutoff_unix':cutoff,'settle_seconds':60,'requests':len(steady),'transport_or_5xx':sum(r['status']==0 or r['status']>=500 for r in steady),'under_250ms_ratio':sum(r['seconds']<=.25 for r in steady)/len(steady) if steady else None,'note':'Separately labeled subset; does not replace full incident-window results.'}
+(p/'analysis.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))

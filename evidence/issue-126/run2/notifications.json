@@ -1,0 +1,628 @@
+[
+  {
+    "received_unix": 1792345207.7771664,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "LocalDrillAPIUnavailable",
+            "environment": "operations-lab",
+            "instance": "api:9464",
+            "job": "work-items-api",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#api"
+          },
+          "startsAt": "2026-10-18T17:39:57.777Z",
+          "endsAt": "0001-01-01T00:00:00Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22work-items-api%22%7D+%3D%3D+0&g0.tab=1",
+          "fingerprint": "373609fd1c5b64af"
+        }
+      ],
+      "notification_reason": "first notification",
+      "groupLabels": {
+        "alertname": "LocalDrillAPIUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillAPIUnavailable",
+        "environment": "operations-lab",
+        "instance": "api:9464",
+        "job": "work-items-api",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#api"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillAPIUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345227.788996,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "resolved",
+      "alerts": [
+        {
+          "status": "resolved",
+          "labels": {
+            "alertname": "LocalDrillAPIUnavailable",
+            "environment": "operations-lab",
+            "instance": "api:9464",
+            "job": "work-items-api",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#api"
+          },
+          "startsAt": "2026-10-18T17:39:57.777Z",
+          "endsAt": "2026-10-18T17:40:17.777Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22work-items-api%22%7D+%3D%3D+0&g0.tab=1",
+          "fingerprint": "373609fd1c5b64af"
+        }
+      ],
+      "notification_reason": "all alerts resolved",
+      "groupLabels": {
+        "alertname": "LocalDrillAPIUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillAPIUnavailable",
+        "environment": "operations-lab",
+        "instance": "api:9464",
+        "job": "work-items-api",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#api"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillAPIUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345277.7704263,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "LocalDrillDatabaseUnavailable",
+            "environment": "operations-lab",
+            "instance": "postgres-exporter:9187",
+            "job": "postgres",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#database"
+          },
+          "startsAt": "2026-10-18T17:41:07.777Z",
+          "endsAt": "0001-01-01T00:00:00Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=pg_up+%3D%3D+0&g0.tab=1",
+          "fingerprint": "6a1bb92594b335a3"
+        }
+      ],
+      "notification_reason": "first notification",
+      "groupLabels": {
+        "alertname": "LocalDrillDatabaseUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillDatabaseUnavailable",
+        "environment": "operations-lab",
+        "instance": "postgres-exporter:9187",
+        "job": "postgres",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#database"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillDatabaseUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345297.7833843,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "resolved",
+      "alerts": [
+        {
+          "status": "resolved",
+          "labels": {
+            "alertname": "LocalDrillDatabaseUnavailable",
+            "environment": "operations-lab",
+            "instance": "postgres-exporter:9187",
+            "job": "postgres",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#database"
+          },
+          "startsAt": "2026-10-18T17:41:07.777Z",
+          "endsAt": "2026-10-18T17:41:27.777Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=pg_up+%3D%3D+0&g0.tab=1",
+          "fingerprint": "6a1bb92594b335a3"
+        }
+      ],
+      "notification_reason": "all alerts resolved",
+      "groupLabels": {
+        "alertname": "LocalDrillDatabaseUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillDatabaseUnavailable",
+        "environment": "operations-lab",
+        "instance": "postgres-exporter:9187",
+        "job": "postgres",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#database"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillDatabaseUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345347.7699795,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "LocalDrillBrokerUnavailable",
+            "environment": "operations-lab",
+            "instance": "rabbitmq:15692",
+            "job": "rabbitmq",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#broker"
+          },
+          "startsAt": "2026-10-18T17:42:17.777Z",
+          "endsAt": "0001-01-01T00:00:00Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22rabbitmq%22%7D+%3D%3D+0&g0.tab=1",
+          "fingerprint": "cc3c7d61a69b1adf"
+        }
+      ],
+      "notification_reason": "first notification",
+      "groupLabels": {
+        "alertname": "LocalDrillBrokerUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillBrokerUnavailable",
+        "environment": "operations-lab",
+        "instance": "rabbitmq:15692",
+        "job": "rabbitmq",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#broker"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillBrokerUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345367.7676811,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "LocalDrillBacklog",
+            "environment": "operations-lab",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#backlog"
+          },
+          "startsAt": "2026-10-18T17:42:37.777Z",
+          "endsAt": "0001-01-01T00:00:00Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=max%28work_items_processing_job_oldest_accepted_age_seconds%29+%3E+20&g0.tab=1",
+          "fingerprint": "122f681e97d5cfa4"
+        }
+      ],
+      "notification_reason": "first notification",
+      "groupLabels": {
+        "alertname": "LocalDrillBacklog"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillBacklog",
+        "environment": "operations-lab",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#backlog"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillBacklog\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345377.771204,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "resolved",
+      "alerts": [
+        {
+          "status": "resolved",
+          "labels": {
+            "alertname": "LocalDrillBacklog",
+            "environment": "operations-lab",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#backlog"
+          },
+          "startsAt": "2026-10-18T17:42:37.777Z",
+          "endsAt": "2026-10-18T17:42:47.777Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=max%28work_items_processing_job_oldest_accepted_age_seconds%29+%3E+20&g0.tab=1",
+          "fingerprint": "122f681e97d5cfa4"
+        }
+      ],
+      "notification_reason": "all alerts resolved",
+      "groupLabels": {
+        "alertname": "LocalDrillBacklog"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillBacklog",
+        "environment": "operations-lab",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#backlog"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillBacklog\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345377.776778,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "resolved",
+      "alerts": [
+        {
+          "status": "resolved",
+          "labels": {
+            "alertname": "LocalDrillBrokerUnavailable",
+            "environment": "operations-lab",
+            "instance": "rabbitmq:15692",
+            "job": "rabbitmq",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#broker"
+          },
+          "startsAt": "2026-10-18T17:42:17.777Z",
+          "endsAt": "2026-10-18T17:42:47.777Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22rabbitmq%22%7D+%3D%3D+0&g0.tab=1",
+          "fingerprint": "cc3c7d61a69b1adf"
+        }
+      ],
+      "notification_reason": "all alerts resolved",
+      "groupLabels": {
+        "alertname": "LocalDrillBrokerUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillBrokerUnavailable",
+        "environment": "operations-lab",
+        "instance": "rabbitmq:15692",
+        "job": "rabbitmq",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#broker"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillBrokerUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345447.7621026,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "LocalDrillBacklog",
+            "environment": "operations-lab",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#backlog"
+          },
+          "startsAt": "2026-10-18T17:43:57.777Z",
+          "endsAt": "0001-01-01T00:00:00Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=max%28work_items_processing_job_oldest_accepted_age_seconds%29+%3E+20&g0.tab=1",
+          "fingerprint": "122f681e97d5cfa4"
+        }
+      ],
+      "notification_reason": "first notification",
+      "groupLabels": {
+        "alertname": "LocalDrillBacklog"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillBacklog",
+        "environment": "operations-lab",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#backlog"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillBacklog\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345477.776827,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "resolved",
+      "alerts": [
+        {
+          "status": "resolved",
+          "labels": {
+            "alertname": "LocalDrillBacklog",
+            "environment": "operations-lab",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#backlog"
+          },
+          "startsAt": "2026-10-18T17:43:57.777Z",
+          "endsAt": "2026-10-18T17:44:27.777Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=max%28work_items_processing_job_oldest_accepted_age_seconds%29+%3E+20&g0.tab=1",
+          "fingerprint": "122f681e97d5cfa4"
+        }
+      ],
+      "notification_reason": "all alerts resolved",
+      "groupLabels": {
+        "alertname": "LocalDrillBacklog"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillBacklog",
+        "environment": "operations-lab",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#backlog"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillBacklog\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345527.757624,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "LocalDrillAPIUnavailable",
+            "environment": "operations-lab",
+            "instance": "api:9464",
+            "job": "work-items-api",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#api"
+          },
+          "startsAt": "2026-10-18T17:45:17.777Z",
+          "endsAt": "0001-01-01T00:00:00Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22work-items-api%22%7D+%3D%3D+0&g0.tab=1",
+          "fingerprint": "373609fd1c5b64af"
+        }
+      ],
+      "notification_reason": "first notification",
+      "groupLabels": {
+        "alertname": "LocalDrillAPIUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillAPIUnavailable",
+        "environment": "operations-lab",
+        "instance": "api:9464",
+        "job": "work-items-api",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#api"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillAPIUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345574.3406062,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "firing",
+      "alerts": [
+        {
+          "status": "firing",
+          "labels": {
+            "alertname": "WorkItemsAPIUnavailable",
+            "environment": "operations-lab",
+            "instance": "api:9464",
+            "job": "work-items-api",
+            "severity": "page",
+            "slo": "availability"
+          },
+          "annotations": {
+            "description": "The API metrics endpoint has not answered for more than a minute.",
+            "runbook": "docs/runbooks/work-items-observability.md#api-unavailable",
+            "summary": "Prometheus cannot reach the Work Items API; its SLIs are blind and users are likely failing."
+          },
+          "startsAt": "2026-10-18T17:46:04.363Z",
+          "endsAt": "0001-01-01T00:00:00Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22work-items-api%22%7D+%3D%3D+0+or+absent%28up%7Bjob%3D%22work-items-api%22%7D%29&g0.tab=1",
+          "fingerprint": "17a1e6e06da9e163"
+        }
+      ],
+      "notification_reason": "first notification",
+      "groupLabels": {
+        "alertname": "WorkItemsAPIUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "WorkItemsAPIUnavailable",
+        "environment": "operations-lab",
+        "instance": "api:9464",
+        "job": "work-items-api",
+        "severity": "page",
+        "slo": "availability"
+      },
+      "commonAnnotations": {
+        "description": "The API metrics endpoint has not answered for more than a minute.",
+        "runbook": "docs/runbooks/work-items-observability.md#api-unavailable",
+        "summary": "Prometheus cannot reach the Work Items API; its SLIs are blind and users are likely failing."
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"WorkItemsAPIUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345654.3517318,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "resolved",
+      "alerts": [
+        {
+          "status": "resolved",
+          "labels": {
+            "alertname": "WorkItemsAPIUnavailable",
+            "environment": "operations-lab",
+            "instance": "api:9464",
+            "job": "work-items-api",
+            "severity": "page",
+            "slo": "availability"
+          },
+          "annotations": {
+            "description": "The API metrics endpoint has not answered for more than a minute.",
+            "runbook": "docs/runbooks/work-items-observability.md#api-unavailable",
+            "summary": "Prometheus cannot reach the Work Items API; its SLIs are blind and users are likely failing."
+          },
+          "startsAt": "2026-10-18T17:46:04.363Z",
+          "endsAt": "2026-10-18T17:47:24.363Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22work-items-api%22%7D+%3D%3D+0+or+absent%28up%7Bjob%3D%22work-items-api%22%7D%29&g0.tab=1",
+          "fingerprint": "17a1e6e06da9e163"
+        }
+      ],
+      "notification_reason": "all alerts resolved",
+      "groupLabels": {
+        "alertname": "WorkItemsAPIUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "WorkItemsAPIUnavailable",
+        "environment": "operations-lab",
+        "instance": "api:9464",
+        "job": "work-items-api",
+        "severity": "page",
+        "slo": "availability"
+      },
+      "commonAnnotations": {
+        "description": "The API metrics endpoint has not answered for more than a minute.",
+        "runbook": "docs/runbooks/work-items-observability.md#api-unavailable",
+        "summary": "Prometheus cannot reach the Work Items API; its SLIs are blind and users are likely failing."
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"WorkItemsAPIUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  },
+  {
+    "received_unix": 1792345657.7952237,
+    "payload": {
+      "receiver": "local-evidence",
+      "status": "resolved",
+      "alerts": [
+        {
+          "status": "resolved",
+          "labels": {
+            "alertname": "LocalDrillAPIUnavailable",
+            "environment": "operations-lab",
+            "instance": "api:9464",
+            "job": "work-items-api",
+            "severity": "drill"
+          },
+          "annotations": {
+            "runbook": "docs/runbooks/local-operations.md#api"
+          },
+          "startsAt": "2026-10-18T17:45:17.777Z",
+          "endsAt": "2026-10-18T17:47:27.777Z",
+          "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22work-items-api%22%7D+%3D%3D+0&g0.tab=1",
+          "fingerprint": "373609fd1c5b64af"
+        }
+      ],
+      "notification_reason": "all alerts resolved",
+      "groupLabels": {
+        "alertname": "LocalDrillAPIUnavailable"
+      },
+      "commonLabels": {
+        "alertname": "LocalDrillAPIUnavailable",
+        "environment": "operations-lab",
+        "instance": "api:9464",
+        "job": "work-items-api",
+        "severity": "drill"
+      },
+      "commonAnnotations": {
+        "runbook": "docs/runbooks/local-operations.md#api"
+      },
+      "routeLabels": {},
+      "externalURL": "http://7d5bf9018610:9093",
+      "version": "4",
+      "groupKey": "{}:{alertname=\"LocalDrillAPIUnavailable\"}",
+      "truncatedAlerts": 0
+    }
+  }
+]
