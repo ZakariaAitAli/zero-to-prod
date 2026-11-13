@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
     -o /out/work-items-api \
     ./api
 
-FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 AS runtime
+FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS runtime
 
 RUN addgroup -S app \
     && adduser -S -G app app
