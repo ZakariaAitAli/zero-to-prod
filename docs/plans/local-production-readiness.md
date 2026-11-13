@@ -9,9 +9,9 @@ No issue should close solely because a template or configuration exists.
 | 1 | PR #139 | Empty-certificate diagnostic and baseline-failure recovery, regression tests | Fixed in signed commit e85268e; all five CI checks passed |
 | 2 | #131 | Compare restore isolation options; reject stale deliveries after ID reuse; preserve legitimate duplicates | Implemented; 42-check destructive experiment passed; PR review pending |
 | 3 | #130 | Explicit, auditable offline redrive; recover the same blocked accepted job; preserve ADR 0003 | Implemented; offline refusal and redrive tests passed; PR review pending |
-| 4 | #121 | Rate limiting and overload failure; secret distribution/rotation ADR and experiment; remaining transport and threat-model gaps | Pending |
-| 5 | #122 | Useful correlated logs, metrics, async trace, user SLIs/SLOs and alert investigation | Implemented (ADR 0012); lab experiment run 2 recorded in `evidence/issue-122/run2`; PR review pending. Not covered: notification delivery and on-call (#126), production sampling, multi-replica aggregation |
-| 6 | #123 | Reproducible workload, baseline, saturation, API/worker scaling, queue/pool behavior and cost model | Pending |
+| 4 | #121 | Rate limiting and overload failure; secret distribution/rotation ADR and experiment; remaining transport and threat-model gaps | Draft PRs #139/#141 implement application-hop TLS, admission, application DB rotation and threat model; remaining hops/secret and CA lifecycles stay open |
+| 5 | #122 | Useful correlated logs, metrics, async trace, user SLIs/SLOs and alert investigation | Implemented (ADR 0012); lab experiment run 2 recorded in `evidence/issue-122/run2`; PR review pending. Not covered: notification delivery and on-call (#126), production sampling; multi-replica aggregation exercised separately by #123 |
+| 6 | #123 | Reproducible workload, baseline, saturation, API/worker scaling, queue/pool behavior and cost model | Implemented in draft PR #143: matrix/invariants recorded; 0.5-CPU broker sustained failure retained; clean 2-CPU broker ten-minute run completed 12,000 jobs within initial thresholds. Local scope, no production sizing claim |
 | 7 | #124 | Local failure-domain topology, replication/failover, verified automated backups, PITR and measured recovery | Pending |
 | 8 | #125 | Immutable release identity, compare and exercise rollout strategies and rollback, patch/security workflow | Pending |
 | 9 | #126 | Operator-owned runbooks, supervised game days and postmortem, sustained traffic and readiness review | Pending |

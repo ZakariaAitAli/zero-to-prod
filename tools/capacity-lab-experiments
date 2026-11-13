@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Issue 123: bounded open-arrival workload and isolated Docker scaling matrix.
+Usage: tools/capacity-lab-experiments NEW_OUTPUT_DIR [STAGE ...]
+The lab must be up. No deletion/reset, cloud access, or secret output. Stdlib only.
+"""
+import concurrent.futures as futures
+import collections
+import datetime
+import hashlib
+import json
+import math
+import os
+import re
+from pathlib import Path
+import statistics
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+ROOT=Path(__file__).resolve().parent.parent
+DRIVER=ROOT/'tools/capacity-lab-local'
+PROJECT='zero-to-prod-capacity-lab'
+PROM='http://127.0.0.1:19091/api/v1/query?query='
+# name, jobs/s, duration, API replicas, worker replicas, API CPU each,
+# worker CPU each, API pool maximum, admission enabled, start with worker stopped
+STAGES=[
+ ('baseline',20,60,1,1,.25,.25,16,False,False),
+ ('ramp-60',60,60,1,1,.25,.25,16,False,False),
+ ('ramp-120',120,60,1,1,.25,.25,16,False,False),
+ ('saturated-api',60,60,1,1,.02,.25,16,False,False),
+ ('two-apis',60,60,2,1,.02,.25,16,False,False),
+ ('pool-one',60,60,2,1,.10,.25,1,False,False),
+ ('pool-sixteen',60,60,2,1,.10,.25,16,False,False),
+ ('one-worker-backlog',40,30,2,1,.25,.03,16,False,True),
+ ('three-workers-backlog',40,30,2,3,.25,.03,16,False,True),
+ ('overload-unlimited',80,60,1,1,.02,.25,16,False,False),
+ ('overload-limited',80,60,1,1,.02,.25,16,True,False),
+ ('sustained',20,600,1,1,.25,.25,16,False,False),
+]
+
+def compose(*args,env=None):
+ return subprocess.check_output(['bash',str(DRIVER),'compose',*args],cwd=ROOT,env=env,text=True,stderr=subprocess.PIPE)
+
+def sql(query):
+ return compose('exec','-T','postgres','psql','-X','-At','-v','ON_ERROR_STOP=1','-U','zero_to_prod_admin','-d','zero_to_prod','-c',query).strip()
+
+ACTIVE_INSTANCES=''
+
+def prom(expr):
+ # Prometheus retains old target samples briefly after replica replacement.
+ # Restrict application metrics to this stage's actual container endpoints.
+ if ACTIVE_INSTANCES:
+  def restrict(match):
+   labels=match.group(3) or ''
+   labels=labels+',' if labels else ''
+   return match.group(1)+'{'+labels+'instance=~'+json.dumps(ACTIVE_INSTANCES)+'}'
+  expr=re.sub(r'\b(work_items_[a-z_]+|process_[a-z_]+|up)(\{([^}]*)\})?',restrict,expr)
+ try:
+  with urllib.request.urlopen(PROM+urllib.parse.quote(expr),timeout=5) as r:
+   return json.load(r)['data']['result']
+ except Exception as e:return {'error':type(e).__name__}
+
+def request(base,path,method='GET',body=None):
+ data=None if body is None else json.dumps(body).encode()
+ req=urllib.request.Request(base+path,data=data,method=method,headers={'Content-Type':'application/json'})
+ start=time.monotonic()
+ try:
+  with urllib.request.urlopen(req,timeout=10) as r:code=r.status;response=r.read()
+ except urllib.error.HTTPError as e:code=e.code;response=e.read()
+ except Exception:return 0,time.monotonic()-start,{}
+ try:parsed=json.loads(response)
+ except Exception:parsed={}
+ return code,time.monotonic()-start,parsed
+
+def percentile(values,p):
+ if not values:return None
+ ordered=sorted(values);return ordered[min(len(ordered)-1,math.ceil(len(ordered)*p)-1)]
+
+def configure(stage):
+ _,_,_,apis,workers,api_cpu,worker_cpu,pool,_,_=stage
+ # Replace derived URL only in this project's protected state; recreate APIs
+ # so bind mounts see its new inode. Runtime password is never printed.
+ state=Path.home()/'.local/state/zero-to-prod/capacity-lab/secrets'
+ password=(state/'postgres-app-password').read_text().strip()
+ path=state/'api-database-url'
+ path.write_text(f'postgres://zero_to_prod_app:{password}@postgres:5432/zero_to_prod?sslmode=disable&pool_max_conns={pool}\n')
+ env=dict(os.environ,CAPACITY_API_CPUS=str(api_cpu),CAPACITY_WORKER_CPUS=str(worker_cpu))
+ compose('up','-d','--no-deps','--force-recreate','--scale',f'api={apis}','--scale',f'worker={workers}','api','worker',env=env)
+ # DNS refresh and collector discovery after replacing/scaling replicas.
+ time.sleep(12)
+ for _ in range(60):
+  if request('http://127.0.0.1:18081','/ready')[0]==200:break
+  time.sleep(1)
+ else:raise RuntimeError('API not ready')
+ return env
+
+INVARIANTS="""SELECT json_build_object(
+ 'results_without_success', (SELECT count(*) FROM work_item_results r JOIN processing_jobs j ON j.id=r.processing_job_id WHERE j.state<>'succeeded'),
+ 'done_without_result', (SELECT count(*) FROM work_items i WHERE i.status='done' AND NOT EXISTS(SELECT 1 FROM work_item_results r WHERE r.work_item_id=i.id)),
+ 'multiple_results_per_job', (SELECT count(*) FROM (SELECT processing_job_id FROM work_item_results GROUP BY 1 HAVING count(*)>1) s),
+ 'multiple_active_jobs', (SELECT count(*) FROM (SELECT work_item_id FROM processing_jobs WHERE state='accepted' GROUP BY 1 HAVING count(*)>1) s),
+ 'missing_outbox', (SELECT count(*) FROM processing_jobs j WHERE NOT EXISTS(SELECT 1 FROM outbox_messages o WHERE o.processing_job_id=j.id)))"""
+
+def run(stage,output):
+ name,rate,seconds,apis,workers,api_cpu,worker_cpu,pool,limited,backlog=stage
+ env=configure(stage)
+ global ACTIVE_INSTANCES
+ ids=compose('ps','-q','api','worker').split()
+ addresses=subprocess.check_output(['docker','inspect','--format','{{index .Config.Labels "com.docker.compose.service"}} {{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',*ids],text=True).splitlines()
+ ACTIVE_INSTANCES='|'.join(re.escape(ip)+(':'+('9464' if service=='api' else '9465')) for service,ip in (row.split() for row in addresses))
+ for _ in range(30):
+  targets=prom('count(up{job=~"work-items-api|work-items-worker"} == 1)')
+  if targets and isinstance(targets,list) and int(float(targets[0]['value'][1]))==apis+workers:break
+  time.sleep(2)
+ else:raise RuntimeError('Prometheus has not discovered every active replica')
+ # Carry-over backlog would confound the next stage. Refuse instead.
+ for _ in range(180):
+  if sql("SELECT count(*) FROM processing_jobs WHERE state='accepted'")=='0':break
+  time.sleep(1)
+ else:raise RuntimeError('Previous backlog did not drain')
+ if backlog:compose('stop','worker')
+ prefix=f'capacity-{name}-{time.time_ns()}-'
+ base='http://127.0.0.1:'+('18082' if limited else '18081')
+ records=[];lock=threading.Lock();slots=threading.BoundedSemaphore(128)
+ skipped=0;submitted=0;resource_samples=[];stop=threading.Event()
+ def sample():
+  while not stop.is_set():
+   ids=compose('ps','-q').split()
+   raw=subprocess.check_output(['docker','stats','--no-stream','--format','{{json .}}',*ids],text=True)
+   resource_samples.append({'time':time.time(),'containers':[json.loads(x) for x in raw.splitlines() if x]})
+   stop.wait(8)
+ sampler=threading.Thread(target=sample,daemon=True);sampler.start()
+ def iteration(n):
+  rows=[]
+  try:
+   code,latency,data=request(base,'/items','POST',{'title':prefix+str(n)})
+   rows.append(('create',code,latency))
+   if code==201 and 'id' in data:
+    code,latency,job=request(base,f"/items/{data['id']}/process",'POST')
+    rows.append(('process',code,latency))
+    if code==202 and 'id' in job:
+     code,latency,_=request(base,f"/processing-jobs/{job['id']}")
+     rows.append(('read_job',code,latency))
+   with lock:records.extend(rows)
+  finally:slots.release()
+ started=time.monotonic();wall_start=time.time()
+ with futures.ThreadPoolExecutor(max_workers=128) as executor:
+  while time.monotonic()-started<seconds:
+   target=started+submitted/rate
+   delay=target-time.monotonic()
+   if delay>0:time.sleep(delay)
+   if time.monotonic()-started>=seconds:break
+   if slots.acquire(blocking=False):executor.submit(iteration,submitted)
+   else:skipped+=1
+   submitted+=1
+  load_stopped=time.monotonic()
+ # Includes in-flight tail; no coordinated-omission claim. Arrival drops explicit.
+ elapsed=time.monotonic()-started
+ snapshot={k:prom(v) for k,v in {
+ 'pool_wait_seconds_per_second':'sum(rate(work_items_db_pool_empty_acquire_wait_seconds_total[1m]))',
+ 'pool_connections':'sum(work_items_db_pool_total_connections)',
+ 'queue_ready':'sum(rabbitmq_detailed_queue_messages_ready)',
+ 'accepted':'max(work_items_processing_jobs_accepted)',
+ 'unpublished':'max(work_items_outbox_unpublished_messages)',
+ 'api_cpu_cores':'sum(rate(process_cpu_seconds_total{job="work-items-api"}[1m]))',
+ 'worker_cpu_cores':'sum(rate(process_cpu_seconds_total{job="work-items-worker"}[1m]))',
+ 'api_memory_bytes':'sum(process_resident_memory_bytes{job="work-items-api"})',
+ 'worker_memory_bytes':'sum(process_resident_memory_bytes{job="work-items-worker"})',
+ 'api_targets':'count(up{job="work-items-api"} == 1)',
+ 'worker_targets':'count(up{job="work-items-worker"} == 1)',
+ }.items()}
+ if backlog:
+  compose('start','worker',env=env)
+ drain_start=time.monotonic()
+ while sql("SELECT count(*) FROM processing_jobs WHERE state='accepted'")!='0':
+  if time.monotonic()-drain_start>240:raise RuntimeError('Backlog drain exceeded 240 seconds')
+  time.sleep(1)
+ drain_seconds=time.monotonic()-drain_start
+ stop.set();sampler.join(timeout=15)
+ # Prefix is generated internally; no user-provided SQL text is interpolated.
+ jobs=json.loads(sql(f"""SELECT json_build_object('accepted',count(*),'succeeded',count(*) FILTER(WHERE j.state='succeeded'),
+ 'failed',count(*) FILTER(WHERE j.state='failed'),
+ 'within_30_seconds',count(*) FILTER(WHERE j.state='succeeded' AND j.finished_at-j.created_at<=interval '30 seconds'),
+ 'latency_p50',percentile_cont(.5) WITHIN GROUP(ORDER BY EXTRACT(EPOCH FROM j.finished_at-j.created_at)),
+ 'latency_p95',percentile_cont(.95) WITHIN GROUP(ORDER BY EXTRACT(EPOCH FROM j.finished_at-j.created_at)),
+ 'latency_p99',percentile_cont(.99) WITHIN GROUP(ORDER BY EXTRACT(EPOCH FROM j.finished_at-j.created_at)))
+ FROM processing_jobs j JOIN work_items i ON i.id=j.work_item_id WHERE i.title LIKE '{prefix}%'"""))
+ latencies=[r[2] for r in records];counts=collections.Counter(str(r[1]) for r in records)
+ bad=sum(1 for _,code,_ in records if code==0 or code>=500)
+ duplicate_probe=None
+ if apis>1:
+  code,_,item=request('http://127.0.0.1:18081','/items','POST',{'title':'capacity duplicate probe'})
+  assert code==201
+  with futures.ThreadPoolExecutor(max_workers=16) as probes:
+   responses=list(probes.map(lambda _:request('http://127.0.0.1:18081',f"/items/{item['id']}/process",'POST'),range(32)))
+  for _ in range(30):
+   if sql(f"SELECT count(*) FROM processing_jobs WHERE work_item_id={item['id']} AND state='succeeded'")=='1':break
+   time.sleep(1)
+  duplicate_probe=json.loads(sql(f"SELECT json_build_object('jobs',(SELECT count(*) FROM processing_jobs WHERE work_item_id={item['id']}),'results',(SELECT count(*) FROM work_item_results WHERE work_item_id={item['id']}),'outbox',(SELECT count(*) FROM outbox_messages o JOIN processing_jobs j ON j.id=o.processing_job_id WHERE j.work_item_id={item['id']}))"))
+  assert duplicate_probe=={'jobs':1,'results':1,'outbox':1},duplicate_probe
+ result={'broker_cpu_limit':float(os.environ.get('CAPACITY_BROKER_CPUS','0.5')),'item_prefix':prefix,'duplicate_probe':duplicate_probe,'stage':name,'started_utc':datetime.datetime.fromtimestamp(wall_start,datetime.timezone.utc).isoformat(),
+ 'config':dict(zip(('rate_jobs_s','duration_s','api_replicas','worker_replicas','api_cpu_each','worker_cpu_each','pool_max_each','limited','worker_stopped_during_load'),stage[1:])),
+ 'load_elapsed_s':load_stopped-started,'including_tail_s':elapsed,'scheduled_iterations':submitted,'client_dropped_iterations':skipped,
+ 'requests':len(records),'requests_per_second_including_tail':len(records)/elapsed,'status_counts':dict(counts),
+ 'availability_fraction':1-bad/len(records) if records else None,'within_250ms_fraction':sum(v<=.25 for v in latencies)/len(records) if records else None,
+ 'request_p50_s':percentile(latencies,.5),'request_p95_s':percentile(latencies,.95),'request_p99_s':percentile(latencies,.99),
+ 'drain_seconds':drain_seconds,'jobs':jobs,'metrics_end':snapshot,'resources':resource_samples,'invariants':json.loads(sql(INVARIANTS))}
+ (output/(name+'.json')).write_text(json.dumps(result,indent=2)+'\n')
+ print(json.dumps({k:result[k] for k in ('stage','requests','status_counts','request_p99_s','drain_seconds','jobs','invariants')}),flush=True)
+ assert not any(result['invariants'].values()),'Business invariants violated'
+ return result
+
+def main():
+ output=Path(sys.argv[1]);output.mkdir(parents=True,exist_ok=False)
+ selected=set(sys.argv[2:]);stages=[s for s in STAGES if not selected or s[0] in selected]
+ if not stages:raise SystemExit('No matching stage')
+ provenance={'commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
+ 'script_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+ 'started_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+ 'docker':subprocess.check_output(['docker','version','--format','{{.Server.Version}}'],text=True).strip(),
+ 'host_cpus':os.cpu_count(), 'note':'Working tree harness; source hashes recorded separately before publication.'}
+ (output/'provenance.json').write_text(json.dumps(provenance,indent=2)+'\n')
+ results=[]
+ try:
+  for stage in stages:results.append(run(stage,output))
+ finally:
+  # Scope is the dedicated capacity project; preserve every volume and network.
+  compose('stop')
+ (output/'summary.json').write_text(json.dumps([{'stage':r['stage'],'invariants':r['invariants']} for r in results],indent=2)+'\n')
+if __name__=='__main__':main()

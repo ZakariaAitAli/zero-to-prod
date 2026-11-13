@@ -1,0 +1,1145 @@
+{
+  "duplicate_probe": null,
+  "stage": "overload-unlimited",
+  "started_utc": "2026-10-18T15:40:56.688644+00:00",
+  "config": {
+    "rate_jobs_s": 80,
+    "duration_s": 60,
+    "api_replicas": 1,
+    "worker_replicas": 1,
+    "api_cpu_each": 0.02,
+    "worker_cpu_each": 0.25,
+    "pool_max_each": 16,
+    "limited": false,
+    "worker_stopped_during_load": false
+  },
+  "load_elapsed_s": 60.00007575199925,
+  "including_tail_s": 65.2821969209981,
+  "scheduled_iterations": 4800,
+  "client_dropped_iterations": 3394,
+  "requests": 2559,
+  "requests_per_second_including_tail": 39.199048449561204,
+  "status_counts": {
+    "201": 939,
+    "202": 214,
+    "200": 134,
+    "503": 1272
+  },
+  "availability_fraction": 0.5029308323563892,
+  "within_250ms_fraction": 0.0019538882375928096,
+  "request_p50_s": 3.1953789880026306,
+  "request_p95_s": 3.902302308000799,
+  "request_p99_s": 4.197818953001843,
+  "drain_seconds": 8.450750736003101,
+  "jobs": {
+    "accepted": 229,
+    "succeeded": 229,
+    "failed": 0,
+    "within_30_seconds": 197,
+    "latency_p50": 23.638933,
+    "latency_p95": 61.354123,
+    "latency_p99": 62.60748296
+  },
+  "metrics_end": {
+    "pool_wait_seconds_per_second": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.968,
+          "59.469513543130425"
+        ]
+      }
+    ],
+    "pool_connections": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.969,
+          "17"
+        ]
+      }
+    ],
+    "queue_ready": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.97,
+          "0"
+        ]
+      }
+    ],
+    "accepted": [],
+    "unpublished": [],
+    "api_cpu_cores": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.972,
+          "0.018364971997963487"
+        ]
+      }
+    ],
+    "worker_cpu_cores": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.972,
+          "0.0009091404985726494"
+        ]
+      }
+    ],
+    "api_memory_bytes": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.973,
+          "42323968"
+        ]
+      }
+    ],
+    "worker_memory_bytes": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.974,
+          "26587136"
+        ]
+      }
+    ],
+    "api_targets": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.974,
+          "1"
+        ]
+      }
+    ],
+    "worker_targets": [
+      {
+        "metric": {},
+        "value": [
+          1792338121.975,
+          "1"
+        ]
+      }
+    ]
+  },
+  "resources": [
+    {
+      "time": 1792338059.177041,
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "1.87%",
+          "Container": "2157157f3c17acd6bcf4dec0da333bd947d30be26a8d7dcf3b34f6ddd329c202",
+          "ID": "2157157f3c17",
+          "MemPerc": "0.10%",
+          "MemUsage": "15.23MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-api-1",
+          "NetIO": "123kB / 121kB",
+          "PIDs": "8"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.89%",
+          "Container": "ec8081f058a66104ce97fe326415accbbb175cb2e31a77a652ce58171b003cc0",
+          "ID": "ec8081f058a6",
+          "MemPerc": "0.06%",
+          "MemUsage": "8.953MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-gateway-1",
+          "NetIO": "63.7MB / 65MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 807kB",
+          "CPUPerc": "0.68%",
+          "Container": "d4252b45c3d27b0342bfcef7a16489f9b0920b45ff2bc8aaabed8c3dd8bd7220",
+          "ID": "d4252b45c3d2",
+          "MemPerc": "1.42%",
+          "MemUsage": "223.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-grafana-1",
+          "NetIO": "178kB / 12.3kB",
+          "PIDs": "194"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.05%",
+          "Container": "798bbe86dbf3d14a13e64fdddca3aa8e7a755a41991f38d4d82efbcc7d99bfad",
+          "ID": "798bbe86dbf3",
+          "MemPerc": "2.87%",
+          "MemUsage": "453MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-jaeger-1",
+          "NetIO": "24.9MB / 519kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 77.9MB",
+          "CPUPerc": "0.51%",
+          "Container": "ef9fc0e4c08ee623b49c84eeb4e5a24319bb03c9e1ef825e3c69055614c7e7b4",
+          "ID": "ef9fc0e4c08e",
+          "MemPerc": "0.98%",
+          "MemUsage": "154.9MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-loki-1",
+          "NetIO": "6.72MB / 100kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.08%",
+          "Container": "58b91039b7c5dec33dc51c0942d37c607f1169080401c98e7fc24d13847e3680",
+          "ID": "58b91039b7c5",
+          "MemPerc": "0.52%",
+          "MemUsage": "82.46MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-otel-collector-1",
+          "NetIO": "200MB / 32.7MB",
+          "PIDs": "23"
+        },
+        {
+          "BlockIO": "0B / 671MB",
+          "CPUPerc": "3.73%",
+          "Container": "9acf9ce642cfb57e4b58e8ed46348f3b86ba9baba4c04358327b63711112c927",
+          "ID": "9acf9ce642cf",
+          "MemPerc": "0.69%",
+          "MemUsage": "108.9MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-1",
+          "NetIO": "92.4MB / 79.8MB",
+          "PIDs": "27"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "e303368f840f6c7b8e93998f0fae7d06ecfa32b726bdefe310307f20d96a8d1e",
+          "ID": "e303368f840f",
+          "MemPerc": "0.07%",
+          "MemUsage": "10.69MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-exporter-1",
+          "NetIO": "10.6MB / 5.19MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 2.11MB",
+          "CPUPerc": "0.19%",
+          "Container": "fed4dedb8f73c21bd47f99a19ecffa847f28782b529b696c92243f643876a3fd",
+          "ID": "fed4dedb8f73",
+          "MemPerc": "0.33%",
+          "MemUsage": "52.47MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-prometheus-1",
+          "NetIO": "5.43MB / 688kB",
+          "PIDs": "20"
+        },
+        {
+          "BlockIO": "0B / 1.44MB",
+          "CPUPerc": "43.95%",
+          "Container": "6830925b90619ca6105991f03229267619ad979d576b241bac577aa9b44a4853",
+          "ID": "6830925b9061",
+          "MemPerc": "0.80%",
+          "MemUsage": "125.8MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-rabbitmq-1",
+          "NetIO": "12.9MB / 13.9MB",
+          "PIDs": "61"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.01%",
+          "Container": "fd6a6793379304af59172874fc6f5b9d7e2c830bf0d339dad407e663d1dc2870",
+          "ID": "fd6a67933793",
+          "MemPerc": "0.06%",
+          "MemUsage": "9.27MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-worker-1",
+          "NetIO": "11kB / 19.1kB",
+          "PIDs": "7"
+        }
+      ]
+    },
+    {
+      "time": 1792338069.5510569,
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "2.57%",
+          "Container": "2157157f3c17acd6bcf4dec0da333bd947d30be26a8d7dcf3b34f6ddd329c202",
+          "ID": "2157157f3c17",
+          "MemPerc": "0.16%",
+          "MemUsage": "25.92MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-api-1",
+          "NetIO": "404kB / 907kB",
+          "PIDs": "8"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.52%",
+          "Container": "ec8081f058a66104ce97fe326415accbbb175cb2e31a77a652ce58171b003cc0",
+          "ID": "ec8081f058a6",
+          "MemPerc": "0.05%",
+          "MemUsage": "7.691MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-gateway-1",
+          "NetIO": "64.1MB / 65.4MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 807kB",
+          "CPUPerc": "0.67%",
+          "Container": "d4252b45c3d27b0342bfcef7a16489f9b0920b45ff2bc8aaabed8c3dd8bd7220",
+          "ID": "d4252b45c3d2",
+          "MemPerc": "1.42%",
+          "MemUsage": "224MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-grafana-1",
+          "NetIO": "178kB / 12.3kB",
+          "PIDs": "194"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.04%",
+          "Container": "798bbe86dbf3d14a13e64fdddca3aa8e7a755a41991f38d4d82efbcc7d99bfad",
+          "ID": "798bbe86dbf3",
+          "MemPerc": "2.86%",
+          "MemUsage": "452.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-jaeger-1",
+          "NetIO": "24.9MB / 520kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 77.9MB",
+          "CPUPerc": "0.88%",
+          "Container": "ef9fc0e4c08ee623b49c84eeb4e5a24319bb03c9e1ef825e3c69055614c7e7b4",
+          "ID": "ef9fc0e4c08e",
+          "MemPerc": "0.99%",
+          "MemUsage": "155.8MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-loki-1",
+          "NetIO": "6.76MB / 101kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.32%",
+          "Container": "58b91039b7c5dec33dc51c0942d37c607f1169080401c98e7fc24d13847e3680",
+          "ID": "58b91039b7c5",
+          "MemPerc": "0.52%",
+          "MemUsage": "82.55MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-otel-collector-1",
+          "NetIO": "201MB / 32.8MB",
+          "PIDs": "23"
+        },
+        {
+          "BlockIO": "0B / 672MB",
+          "CPUPerc": "11.04%",
+          "Container": "9acf9ce642cfb57e4b58e8ed46348f3b86ba9baba4c04358327b63711112c927",
+          "ID": "9acf9ce642cf",
+          "MemPerc": "0.57%",
+          "MemUsage": "89.8MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-1",
+          "NetIO": "92.7MB / 80.1MB",
+          "PIDs": "21"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "e303368f840f6c7b8e93998f0fae7d06ecfa32b726bdefe310307f20d96a8d1e",
+          "ID": "e303368f840f",
+          "MemPerc": "0.07%",
+          "MemUsage": "10.34MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-exporter-1",
+          "NetIO": "10.7MB / 5.26MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 2.11MB",
+          "CPUPerc": "0.19%",
+          "Container": "fed4dedb8f73c21bd47f99a19ecffa847f28782b529b696c92243f643876a3fd",
+          "ID": "fed4dedb8f73",
+          "MemPerc": "0.34%",
+          "MemUsage": "53.4MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-prometheus-1",
+          "NetIO": "5.49MB / 695kB",
+          "PIDs": "20"
+        },
+        {
+          "BlockIO": "0B / 1.44MB",
+          "CPUPerc": "49.96%",
+          "Container": "6830925b90619ca6105991f03229267619ad979d576b241bac577aa9b44a4853",
+          "ID": "6830925b9061",
+          "MemPerc": "1.30%",
+          "MemUsage": "205.1MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-rabbitmq-1",
+          "NetIO": "12.9MB / 13.9MB",
+          "PIDs": "119"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.02%",
+          "Container": "fd6a6793379304af59172874fc6f5b9d7e2c830bf0d339dad407e663d1dc2870",
+          "ID": "fd6a67933793",
+          "MemPerc": "0.06%",
+          "MemUsage": "8.867MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-worker-1",
+          "NetIO": "16.7kB / 39.2kB",
+          "PIDs": "7"
+        }
+      ]
+    },
+    {
+      "time": 1792338079.9422622,
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "2.50%",
+          "Container": "2157157f3c17acd6bcf4dec0da333bd947d30be26a8d7dcf3b34f6ddd329c202",
+          "ID": "2157157f3c17",
+          "MemPerc": "0.17%",
+          "MemUsage": "27.63MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-api-1",
+          "NetIO": "682kB / 1.52MB",
+          "PIDs": "8"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.88%",
+          "Container": "ec8081f058a66104ce97fe326415accbbb175cb2e31a77a652ce58171b003cc0",
+          "ID": "ec8081f058a6",
+          "MemPerc": "0.05%",
+          "MemUsage": "8.285MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-gateway-1",
+          "NetIO": "64.4MB / 65.7MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 823kB",
+          "CPUPerc": "0.83%",
+          "Container": "d4252b45c3d27b0342bfcef7a16489f9b0920b45ff2bc8aaabed8c3dd8bd7220",
+          "ID": "d4252b45c3d2",
+          "MemPerc": "1.42%",
+          "MemUsage": "223.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-grafana-1",
+          "NetIO": "178kB / 12.3kB",
+          "PIDs": "194"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.24%",
+          "Container": "798bbe86dbf3d14a13e64fdddca3aa8e7a755a41991f38d4d82efbcc7d99bfad",
+          "ID": "798bbe86dbf3",
+          "MemPerc": "2.86%",
+          "MemUsage": "452.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-jaeger-1",
+          "NetIO": "24.9MB / 521kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 78.4MB",
+          "CPUPerc": "0.54%",
+          "Container": "ef9fc0e4c08ee623b49c84eeb4e5a24319bb03c9e1ef825e3c69055614c7e7b4",
+          "ID": "ef9fc0e4c08e",
+          "MemPerc": "0.94%",
+          "MemUsage": "148.4MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-loki-1",
+          "NetIO": "6.78MB / 102kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.44%",
+          "Container": "58b91039b7c5dec33dc51c0942d37c607f1169080401c98e7fc24d13847e3680",
+          "ID": "58b91039b7c5",
+          "MemPerc": "0.52%",
+          "MemUsage": "82.84MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-otel-collector-1",
+          "NetIO": "201MB / 32.9MB",
+          "PIDs": "23"
+        },
+        {
+          "BlockIO": "0B / 673MB",
+          "CPUPerc": "8.49%",
+          "Container": "9acf9ce642cfb57e4b58e8ed46348f3b86ba9baba4c04358327b63711112c927",
+          "ID": "9acf9ce642cf",
+          "MemPerc": "0.63%",
+          "MemUsage": "99.76MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-1",
+          "NetIO": "92.8MB / 80.4MB",
+          "PIDs": "27"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "e303368f840f6c7b8e93998f0fae7d06ecfa32b726bdefe310307f20d96a8d1e",
+          "ID": "e303368f840f",
+          "MemPerc": "0.07%",
+          "MemUsage": "11.49MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-exporter-1",
+          "NetIO": "10.8MB / 5.32MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 2.17MB",
+          "CPUPerc": "0.26%",
+          "Container": "fed4dedb8f73c21bd47f99a19ecffa847f28782b529b696c92243f643876a3fd",
+          "ID": "fed4dedb8f73",
+          "MemPerc": "0.33%",
+          "MemUsage": "52.36MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-prometheus-1",
+          "NetIO": "5.55MB / 701kB",
+          "PIDs": "20"
+        },
+        {
+          "BlockIO": "0B / 1.44MB",
+          "CPUPerc": "1.63%",
+          "Container": "6830925b90619ca6105991f03229267619ad979d576b241bac577aa9b44a4853",
+          "ID": "6830925b9061",
+          "MemPerc": "0.79%",
+          "MemUsage": "125.6MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-rabbitmq-1",
+          "NetIO": "12.9MB / 13.9MB",
+          "PIDs": "61"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.01%",
+          "Container": "fd6a6793379304af59172874fc6f5b9d7e2c830bf0d339dad407e663d1dc2870",
+          "ID": "fd6a67933793",
+          "MemPerc": "0.06%",
+          "MemUsage": "9.699MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-worker-1",
+          "NetIO": "20.1kB / 52.6kB",
+          "PIDs": "7"
+        }
+      ]
+    },
+    {
+      "time": 1792338090.3602767,
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "1.82%",
+          "Container": "2157157f3c17acd6bcf4dec0da333bd947d30be26a8d7dcf3b34f6ddd329c202",
+          "ID": "2157157f3c17",
+          "MemPerc": "0.17%",
+          "MemUsage": "26.18MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-api-1",
+          "NetIO": "957kB / 2.14MB",
+          "PIDs": "8"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.49%",
+          "Container": "ec8081f058a66104ce97fe326415accbbb175cb2e31a77a652ce58171b003cc0",
+          "ID": "ec8081f058a6",
+          "MemPerc": "0.05%",
+          "MemUsage": "7.203MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-gateway-1",
+          "NetIO": "64.7MB / 66MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 823kB",
+          "CPUPerc": "0.81%",
+          "Container": "d4252b45c3d27b0342bfcef7a16489f9b0920b45ff2bc8aaabed8c3dd8bd7220",
+          "ID": "d4252b45c3d2",
+          "MemPerc": "1.42%",
+          "MemUsage": "224.5MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-grafana-1",
+          "NetIO": "179kB / 12.3kB",
+          "PIDs": "194"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.17%",
+          "Container": "798bbe86dbf3d14a13e64fdddca3aa8e7a755a41991f38d4d82efbcc7d99bfad",
+          "ID": "798bbe86dbf3",
+          "MemPerc": "2.87%",
+          "MemUsage": "453.5MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-jaeger-1",
+          "NetIO": "24.9MB / 522kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 78.4MB",
+          "CPUPerc": "0.92%",
+          "Container": "ef9fc0e4c08ee623b49c84eeb4e5a24319bb03c9e1ef825e3c69055614c7e7b4",
+          "ID": "ef9fc0e4c08e",
+          "MemPerc": "0.94%",
+          "MemUsage": "149.2MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-loki-1",
+          "NetIO": "6.81MB / 103kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.03%",
+          "Container": "58b91039b7c5dec33dc51c0942d37c607f1169080401c98e7fc24d13847e3680",
+          "ID": "58b91039b7c5",
+          "MemPerc": "0.51%",
+          "MemUsage": "81.25MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-otel-collector-1",
+          "NetIO": "201MB / 32.9MB",
+          "PIDs": "23"
+        },
+        {
+          "BlockIO": "0B / 673MB",
+          "CPUPerc": "12.61%",
+          "Container": "9acf9ce642cfb57e4b58e8ed46348f3b86ba9baba4c04358327b63711112c927",
+          "ID": "9acf9ce642cf",
+          "MemPerc": "0.66%",
+          "MemUsage": "104.4MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-1",
+          "NetIO": "93.1MB / 80.7MB",
+          "PIDs": "27"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "2.16%",
+          "Container": "e303368f840f6c7b8e93998f0fae7d06ecfa32b726bdefe310307f20d96a8d1e",
+          "ID": "e303368f840f",
+          "MemPerc": "0.09%",
+          "MemUsage": "13.92MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-exporter-1",
+          "NetIO": "11MB / 5.41MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 2.2MB",
+          "CPUPerc": "0.62%",
+          "Container": "fed4dedb8f73c21bd47f99a19ecffa847f28782b529b696c92243f643876a3fd",
+          "ID": "fed4dedb8f73",
+          "MemPerc": "0.34%",
+          "MemUsage": "53.52MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-prometheus-1",
+          "NetIO": "5.63MB / 709kB",
+          "PIDs": "20"
+        },
+        {
+          "BlockIO": "0B / 1.44MB",
+          "CPUPerc": "50.44%",
+          "Container": "6830925b90619ca6105991f03229267619ad979d576b241bac577aa9b44a4853",
+          "ID": "6830925b9061",
+          "MemPerc": "1.30%",
+          "MemUsage": "205MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-rabbitmq-1",
+          "NetIO": "12.9MB / 13.9MB",
+          "PIDs": "119"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.01%",
+          "Container": "fd6a6793379304af59172874fc6f5b9d7e2c830bf0d339dad407e663d1dc2870",
+          "ID": "fd6a67933793",
+          "MemPerc": "0.06%",
+          "MemUsage": "9.609MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-worker-1",
+          "NetIO": "24.1kB / 66.1kB",
+          "PIDs": "7"
+        }
+      ]
+    },
+    {
+      "time": 1792338100.801936,
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "1.98%",
+          "Container": "2157157f3c17acd6bcf4dec0da333bd947d30be26a8d7dcf3b34f6ddd329c202",
+          "ID": "2157157f3c17",
+          "MemPerc": "0.18%",
+          "MemUsage": "27.71MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-api-1",
+          "NetIO": "1.31MB / 3.04MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "1.12%",
+          "Container": "ec8081f058a66104ce97fe326415accbbb175cb2e31a77a652ce58171b003cc0",
+          "ID": "ec8081f058a6",
+          "MemPerc": "0.06%",
+          "MemUsage": "9.094MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-gateway-1",
+          "NetIO": "65.1MB / 66.4MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 823kB",
+          "CPUPerc": "1.08%",
+          "Container": "d4252b45c3d27b0342bfcef7a16489f9b0920b45ff2bc8aaabed8c3dd8bd7220",
+          "ID": "d4252b45c3d2",
+          "MemPerc": "1.42%",
+          "MemUsage": "224.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-grafana-1",
+          "NetIO": "179kB / 12.3kB",
+          "PIDs": "194"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.09%",
+          "Container": "798bbe86dbf3d14a13e64fdddca3aa8e7a755a41991f38d4d82efbcc7d99bfad",
+          "ID": "798bbe86dbf3",
+          "MemPerc": "2.86%",
+          "MemUsage": "452.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-jaeger-1",
+          "NetIO": "25MB / 524kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 79.4MB",
+          "CPUPerc": "0.77%",
+          "Container": "ef9fc0e4c08ee623b49c84eeb4e5a24319bb03c9e1ef825e3c69055614c7e7b4",
+          "ID": "ef9fc0e4c08e",
+          "MemPerc": "0.94%",
+          "MemUsage": "148.2MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-loki-1",
+          "NetIO": "6.84MB / 104kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.21%",
+          "Container": "58b91039b7c5dec33dc51c0942d37c607f1169080401c98e7fc24d13847e3680",
+          "ID": "58b91039b7c5",
+          "MemPerc": "0.52%",
+          "MemUsage": "81.45MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-otel-collector-1",
+          "NetIO": "202MB / 33MB",
+          "PIDs": "23"
+        },
+        {
+          "BlockIO": "0B / 675MB",
+          "CPUPerc": "14.10%",
+          "Container": "9acf9ce642cfb57e4b58e8ed46348f3b86ba9baba4c04358327b63711112c927",
+          "ID": "9acf9ce642cf",
+          "MemPerc": "0.72%",
+          "MemUsage": "113.3MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-1",
+          "NetIO": "93.4MB / 81MB",
+          "PIDs": "27"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "2.21%",
+          "Container": "e303368f840f6c7b8e93998f0fae7d06ecfa32b726bdefe310307f20d96a8d1e",
+          "ID": "e303368f840f",
+          "MemPerc": "0.08%",
+          "MemUsage": "12.91MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-exporter-1",
+          "NetIO": "11.1MB / 5.47MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 2.2MB",
+          "CPUPerc": "0.62%",
+          "Container": "fed4dedb8f73c21bd47f99a19ecffa847f28782b529b696c92243f643876a3fd",
+          "ID": "fed4dedb8f73",
+          "MemPerc": "0.34%",
+          "MemUsage": "54.46MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-prometheus-1",
+          "NetIO": "5.69MB / 715kB",
+          "PIDs": "20"
+        },
+        {
+          "BlockIO": "0B / 1.44MB",
+          "CPUPerc": "0.19%",
+          "Container": "6830925b90619ca6105991f03229267619ad979d576b241bac577aa9b44a4853",
+          "ID": "6830925b9061",
+          "MemPerc": "0.79%",
+          "MemUsage": "124.4MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-rabbitmq-1",
+          "NetIO": "12.9MB / 13.9MB",
+          "PIDs": "61"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.02%",
+          "Container": "fd6a6793379304af59172874fc6f5b9d7e2c830bf0d339dad407e663d1dc2870",
+          "ID": "fd6a67933793",
+          "MemPerc": "0.06%",
+          "MemUsage": "9.629MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-worker-1",
+          "NetIO": "29.6kB / 86.2kB",
+          "PIDs": "7"
+        }
+      ]
+    },
+    {
+      "time": 1792338111.1611762,
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "1.79%",
+          "Container": "2157157f3c17acd6bcf4dec0da333bd947d30be26a8d7dcf3b34f6ddd329c202",
+          "ID": "2157157f3c17",
+          "MemPerc": "0.17%",
+          "MemUsage": "26.16MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-api-1",
+          "NetIO": "1.61MB / 4.01MB",
+          "PIDs": "8"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.63%",
+          "Container": "ec8081f058a66104ce97fe326415accbbb175cb2e31a77a652ce58171b003cc0",
+          "ID": "ec8081f058a6",
+          "MemPerc": "0.05%",
+          "MemUsage": "8.5MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-gateway-1",
+          "NetIO": "65.5MB / 66.8MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 840kB",
+          "CPUPerc": "0.97%",
+          "Container": "d4252b45c3d27b0342bfcef7a16489f9b0920b45ff2bc8aaabed8c3dd8bd7220",
+          "ID": "d4252b45c3d2",
+          "MemPerc": "1.42%",
+          "MemUsage": "224.2MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-grafana-1",
+          "NetIO": "179kB / 12.3kB",
+          "PIDs": "194"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.06%",
+          "Container": "798bbe86dbf3d14a13e64fdddca3aa8e7a755a41991f38d4d82efbcc7d99bfad",
+          "ID": "798bbe86dbf3",
+          "MemPerc": "2.86%",
+          "MemUsage": "452.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-jaeger-1",
+          "NetIO": "25.1MB / 526kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 79.4MB",
+          "CPUPerc": "0.65%",
+          "Container": "ef9fc0e4c08ee623b49c84eeb4e5a24319bb03c9e1ef825e3c69055614c7e7b4",
+          "ID": "ef9fc0e4c08e",
+          "MemPerc": "0.94%",
+          "MemUsage": "148.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-loki-1",
+          "NetIO": "6.87MB / 105kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.09%",
+          "Container": "58b91039b7c5dec33dc51c0942d37c607f1169080401c98e7fc24d13847e3680",
+          "ID": "58b91039b7c5",
+          "MemPerc": "0.52%",
+          "MemUsage": "81.97MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-otel-collector-1",
+          "NetIO": "202MB / 33.1MB",
+          "PIDs": "23"
+        },
+        {
+          "BlockIO": "0B / 678MB",
+          "CPUPerc": "10.65%",
+          "Container": "9acf9ce642cfb57e4b58e8ed46348f3b86ba9baba4c04358327b63711112c927",
+          "ID": "9acf9ce642cf",
+          "MemPerc": "0.60%",
+          "MemUsage": "95.16MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-1",
+          "NetIO": "93.7MB / 81.3MB",
+          "PIDs": "27"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "1.50%",
+          "Container": "e303368f840f6c7b8e93998f0fae7d06ecfa32b726bdefe310307f20d96a8d1e",
+          "ID": "e303368f840f",
+          "MemPerc": "0.08%",
+          "MemUsage": "12.55MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-exporter-1",
+          "NetIO": "11.3MB / 5.53MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 2.2MB",
+          "CPUPerc": "0.98%",
+          "Container": "fed4dedb8f73c21bd47f99a19ecffa847f28782b529b696c92243f643876a3fd",
+          "ID": "fed4dedb8f73",
+          "MemPerc": "0.34%",
+          "MemUsage": "54.04MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-prometheus-1",
+          "NetIO": "5.74MB / 721kB",
+          "PIDs": "20"
+        },
+        {
+          "BlockIO": "0B / 1.44MB",
+          "CPUPerc": "49.86%",
+          "Container": "6830925b90619ca6105991f03229267619ad979d576b241bac577aa9b44a4853",
+          "ID": "6830925b9061",
+          "MemPerc": "1.31%",
+          "MemUsage": "206.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-rabbitmq-1",
+          "NetIO": "12.9MB / 13.9MB",
+          "PIDs": "119"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.01%",
+          "Container": "fd6a6793379304af59172874fc6f5b9d7e2c830bf0d339dad407e663d1dc2870",
+          "ID": "fd6a67933793",
+          "MemPerc": "0.06%",
+          "MemUsage": "9.91MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-worker-1",
+          "NetIO": "35kB / 106kB",
+          "PIDs": "7"
+        }
+      ]
+    },
+    {
+      "time": 1792338121.6213233,
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "1.78%",
+          "Container": "2157157f3c17acd6bcf4dec0da333bd947d30be26a8d7dcf3b34f6ddd329c202",
+          "ID": "2157157f3c17",
+          "MemPerc": "0.16%",
+          "MemUsage": "25.27MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-api-1",
+          "NetIO": "1.9MB / 4.83MB",
+          "PIDs": "8"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.53%",
+          "Container": "ec8081f058a66104ce97fe326415accbbb175cb2e31a77a652ce58171b003cc0",
+          "ID": "ec8081f058a6",
+          "MemPerc": "0.03%",
+          "MemUsage": "5.258MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-gateway-1",
+          "NetIO": "65.9MB / 67.2MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 840kB",
+          "CPUPerc": "0.80%",
+          "Container": "d4252b45c3d27b0342bfcef7a16489f9b0920b45ff2bc8aaabed8c3dd8bd7220",
+          "ID": "d4252b45c3d2",
+          "MemPerc": "1.42%",
+          "MemUsage": "224.2MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-grafana-1",
+          "NetIO": "179kB / 12.3kB",
+          "PIDs": "194"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.07%",
+          "Container": "798bbe86dbf3d14a13e64fdddca3aa8e7a755a41991f38d4d82efbcc7d99bfad",
+          "ID": "798bbe86dbf3",
+          "MemPerc": "2.86%",
+          "MemUsage": "452.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-jaeger-1",
+          "NetIO": "25.1MB / 526kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 79.4MB",
+          "CPUPerc": "0.88%",
+          "Container": "ef9fc0e4c08ee623b49c84eeb4e5a24319bb03c9e1ef825e3c69055614c7e7b4",
+          "ID": "ef9fc0e4c08e",
+          "MemPerc": "0.94%",
+          "MemUsage": "149.2MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-loki-1",
+          "NetIO": "6.91MB / 106kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.20%",
+          "Container": "58b91039b7c5dec33dc51c0942d37c607f1169080401c98e7fc24d13847e3680",
+          "ID": "58b91039b7c5",
+          "MemPerc": "0.52%",
+          "MemUsage": "82.19MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-otel-collector-1",
+          "NetIO": "203MB / 33.2MB",
+          "PIDs": "23"
+        },
+        {
+          "BlockIO": "0B / 679MB",
+          "CPUPerc": "7.11%",
+          "Container": "9acf9ce642cfb57e4b58e8ed46348f3b86ba9baba4c04358327b63711112c927",
+          "ID": "9acf9ce642cf",
+          "MemPerc": "0.73%",
+          "MemUsage": "115.1MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-1",
+          "NetIO": "94MB / 81.6MB",
+          "PIDs": "27"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "e303368f840f6c7b8e93998f0fae7d06ecfa32b726bdefe310307f20d96a8d1e",
+          "ID": "e303368f840f",
+          "MemPerc": "0.08%",
+          "MemUsage": "12.42MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-exporter-1",
+          "NetIO": "11.4MB / 5.59MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 2.29MB",
+          "CPUPerc": "0.17%",
+          "Container": "fed4dedb8f73c21bd47f99a19ecffa847f28782b529b696c92243f643876a3fd",
+          "ID": "fed4dedb8f73",
+          "MemPerc": "0.34%",
+          "MemUsage": "54.2MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-prometheus-1",
+          "NetIO": "5.8MB / 728kB",
+          "PIDs": "20"
+        },
+        {
+          "BlockIO": "0B / 1.44MB",
+          "CPUPerc": "23.63%",
+          "Container": "6830925b90619ca6105991f03229267619ad979d576b241bac577aa9b44a4853",
+          "ID": "6830925b9061",
+          "MemPerc": "0.79%",
+          "MemUsage": "125.5MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-rabbitmq-1",
+          "NetIO": "12.9MB / 13.9MB",
+          "PIDs": "61"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.02%",
+          "Container": "fd6a6793379304af59172874fc6f5b9d7e2c830bf0d339dad407e663d1dc2870",
+          "ID": "fd6a67933793",
+          "MemPerc": "0.07%",
+          "MemUsage": "10.54MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-worker-1",
+          "NetIO": "40.8kB / 123kB",
+          "PIDs": "8"
+        }
+      ]
+    },
+    {
+      "time": 1792338132.0386515,
+      "containers": [
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.11%",
+          "Container": "2157157f3c17acd6bcf4dec0da333bd947d30be26a8d7dcf3b34f6ddd329c202",
+          "ID": "2157157f3c17",
+          "MemPerc": "0.15%",
+          "MemUsage": "24.24MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-api-1",
+          "NetIO": "2.03MB / 5.27MB",
+          "PIDs": "8"
+        },
+        {
+          "BlockIO": "0B / 4.1kB",
+          "CPUPerc": "0.01%",
+          "Container": "ec8081f058a66104ce97fe326415accbbb175cb2e31a77a652ce58171b003cc0",
+          "ID": "ec8081f058a6",
+          "MemPerc": "0.02%",
+          "MemUsage": "3.34MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-gateway-1",
+          "NetIO": "65.9MB / 67.2MB",
+          "PIDs": "2"
+        },
+        {
+          "BlockIO": "0B / 856kB",
+          "CPUPerc": "1.03%",
+          "Container": "d4252b45c3d27b0342bfcef7a16489f9b0920b45ff2bc8aaabed8c3dd8bd7220",
+          "ID": "d4252b45c3d2",
+          "MemPerc": "1.42%",
+          "MemUsage": "224.7MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-grafana-1",
+          "NetIO": "179kB / 12.3kB",
+          "PIDs": "194"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.05%",
+          "Container": "798bbe86dbf3d14a13e64fdddca3aa8e7a755a41991f38d4d82efbcc7d99bfad",
+          "ID": "798bbe86dbf3",
+          "MemPerc": "2.87%",
+          "MemUsage": "452.9MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-jaeger-1",
+          "NetIO": "25.2MB / 529kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 79.4MB",
+          "CPUPerc": "0.74%",
+          "Container": "ef9fc0e4c08ee623b49c84eeb4e5a24319bb03c9e1ef825e3c69055614c7e7b4",
+          "ID": "ef9fc0e4c08e",
+          "MemPerc": "0.95%",
+          "MemUsage": "149.4MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-loki-1",
+          "NetIO": "6.93MB / 107kB",
+          "PIDs": "25"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.16%",
+          "Container": "58b91039b7c5dec33dc51c0942d37c607f1169080401c98e7fc24d13847e3680",
+          "ID": "58b91039b7c5",
+          "MemPerc": "0.53%",
+          "MemUsage": "83.21MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-otel-collector-1",
+          "NetIO": "203MB / 33.3MB",
+          "PIDs": "23"
+        },
+        {
+          "BlockIO": "0B / 680MB",
+          "CPUPerc": "2.33%",
+          "Container": "9acf9ce642cfb57e4b58e8ed46348f3b86ba9baba4c04358327b63711112c927",
+          "ID": "9acf9ce642cf",
+          "MemPerc": "0.72%",
+          "MemUsage": "114.6MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-1",
+          "NetIO": "94.5MB / 82.1MB",
+          "PIDs": "27"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.00%",
+          "Container": "e303368f840f6c7b8e93998f0fae7d06ecfa32b726bdefe310307f20d96a8d1e",
+          "ID": "e303368f840f",
+          "MemPerc": "0.08%",
+          "MemUsage": "12.05MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-postgres-exporter-1",
+          "NetIO": "11.5MB / 5.65MB",
+          "PIDs": "14"
+        },
+        {
+          "BlockIO": "0B / 2.29MB",
+          "CPUPerc": "0.18%",
+          "Container": "fed4dedb8f73c21bd47f99a19ecffa847f28782b529b696c92243f643876a3fd",
+          "ID": "fed4dedb8f73",
+          "MemPerc": "0.34%",
+          "MemUsage": "53.72MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-prometheus-1",
+          "NetIO": "5.87MB / 741kB",
+          "PIDs": "20"
+        },
+        {
+          "BlockIO": "0B / 1.44MB",
+          "CPUPerc": "52.25%",
+          "Container": "6830925b90619ca6105991f03229267619ad979d576b241bac577aa9b44a4853",
+          "ID": "6830925b9061",
+          "MemPerc": "1.31%",
+          "MemUsage": "206.3MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-rabbitmq-1",
+          "NetIO": "13.1MB / 14.1MB",
+          "PIDs": "119"
+        },
+        {
+          "BlockIO": "0B / 0B",
+          "CPUPerc": "0.03%",
+          "Container": "fd6a6793379304af59172874fc6f5b9d7e2c830bf0d339dad407e663d1dc2870",
+          "ID": "fd6a67933793",
+          "MemPerc": "0.07%",
+          "MemUsage": "11.34MiB / 15.44GiB",
+          "Name": "zero-to-prod-capacity-lab-worker-1",
+          "NetIO": "418kB / 1.14MB",
+          "PIDs": "8"
+        }
+      ]
+    }
+  ],
+  "invariants": {
+    "results_without_success": 0,
+    "done_without_result": 0,
+    "multiple_results_per_job": 0,
+    "multiple_active_jobs": 0,
+    "missing_outbox": 0
+  }
+}
