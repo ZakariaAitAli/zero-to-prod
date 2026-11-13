@@ -1,0 +1,288 @@
+# Zero-to-Prod observability lab (issue #122, ADR 0012). Opt-in, local only.
+#
+# Use through tools/observability-lab-local, which generates the runtime
+# secrets outside Git and refuses to start without them.
+#
+# The API, worker, PostgreSQL, and RabbitMQ run as in the development
+# baseline, plus the telemetry pipeline:
+#
+#   API, worker --OTLP/HTTP--> collector --> Jaeger (traces), Loki (logs)
+#   Prometheus scrapes API, worker, collector, RabbitMQ, postgres-exporter,
+#   evaluates the SLO recording and alerting rules; Grafana reads all three.
+#
+# Scope limits: authentication is disabled (AUTHENTICATION=disabled) and
+# internal hops are plaintext; those controls are exercised in the security
+# lab. Published ports bind to host loopback only. Images are pinned by digest.
+
+name: zero-to-prod-observability-lab
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+x-telemetry-env: &telemetry-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=observability-lab
+  LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    environment:
+      POSTGRES_DB: zero_to_prod
+      POSTGRES_USER: zero_to_prod_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-admin-password
+      ZTP_POSTGRES_MIGRATOR_USER: zero_to_prod_migrator
+      ZTP_POSTGRES_APP_USER: zero_to_prod_app
+      ZTP_POSTGRES_WORKER_USER: zero_to_prod_worker
+    # pg_stat_statements gives the exporter per-query timing for diagnosis.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+    secrets:
+      - postgres-admin-password
+      - postgres-migrator-password
+      - postgres-app-password
+      - postgres-worker-password
+      - postgres-monitor-password
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ../security-lab/postgres/init/001-security-lab-roles.sh:/docker-entrypoint-initdb.d/001-roles.sh:ro
+      - ./postgres/init/002-monitoring.sh:/docker-entrypoint-initdb.d/002-monitoring.sh:ro
+      - ../local/postgres/init/001-roles.sh:/opt/zero-to-prod/001-roles.sh:ro
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  rabbitmq:
+    image: rabbitmq:4.3.6-management@sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95
+    hostname: zero-to-prod-observability-lab-rabbitmq
+    secrets:
+      - rabbitmq-definitions
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  migrate:
+    profiles:
+      - tools
+    build:
+      context: ../../tools/migrate
+    image: zero-to-prod-migrate:v4.20.1
+    entrypoint:
+      - /bin/sh
+      - -c
+      - exec migrate -path=/migrations -database "$$(cat /run/secrets/postgres-migrator-url)" "$$@"
+      - migrate
+    command: ["up"]
+    secrets:
+      - postgres-migrator-url
+    volumes:
+      - ../../apps/work-items/migrations:/migrations:ro
+    networks:
+      - lab
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *hardened
+    build:
+      context: ../../apps/work-items
+      dockerfile: api/Dockerfile
+      args:
+        VERSION: ${ZTP_OBSERVABILITY_LAB_VERSION:-observability-lab}
+    image: zero-to-prod-observability-lab-api:local
+    environment:
+      <<: *telemetry-env
+      AUTHENTICATION: disabled
+      DATABASE_URL_FILE: /run/secrets/api-database-url
+      RABBITMQ_PUBLISHER_URL_FILE: /run/secrets/api-rabbitmq-url
+      METRICS_ADDRESS: 0.0.0.0:9464
+    secrets:
+      - api-database-url
+      - api-rabbitmq-url
+    ports:
+      - "127.0.0.1:${ZTP_OBSERVABILITY_LAB_API_PORT:-18080}:8080"
+    networks:
+      - lab
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    <<: *hardened
+    build:
+      context: ../../apps/work-items
+      dockerfile: worker/Dockerfile
+      args:
+        VERSION: ${ZTP_OBSERVABILITY_LAB_VERSION:-observability-lab}
+    image: zero-to-prod-observability-lab-worker:local
+    environment:
+      <<: *telemetry-env
+      DATABASE_URL_FILE: /run/secrets/worker-database-url
+      RABBITMQ_WORKER_URL_FILE: /run/secrets/worker-rabbitmq-url
+      WORKER_METRICS_ADDRESS: 0.0.0.0:9465
+    secrets:
+      - worker-database-url
+      - worker-rabbitmq-url
+    networks:
+      - lab
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  postgres-exporter:
+    <<: *hardened
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: postgres:5432/zero_to_prod?sslmode=disable
+      DATA_SOURCE_USER: zero_to_prod_monitor
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres-monitor-password
+    command:
+      - --collector.stat_statements
+    secrets:
+      - postgres-monitor-password
+    networks:
+      - lab
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  otel-collector:
+    <<: *hardened
+    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    networks:
+      - lab
+    depends_on:
+      - jaeger
+      - loki
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0@sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3
+    command: ["--config=/etc/jaeger/config.yaml"]
+    volumes:
+      - ./jaeger/config.yaml:/etc/jaeger/config.yaml:ro
+    ports:
+      - "127.0.0.1:${ZTP_OBSERVABILITY_LAB_JAEGER_PORT:-16686}:16686"
+    networks:
+      - lab
+
+  loki:
+    image: grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    networks:
+      - lab
+
+  prometheus:
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Retention bounds local disk use; see the observability guide.
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:${ZTP_OBSERVABILITY_LAB_PROMETHEUS_PORT:-19090}:9090"
+    networks:
+      - lab
+
+  grafana:
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana-admin-password
+      # Read-only anonymous viewing on host loopback, for local investigation.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    secrets:
+      - grafana-admin-password
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${ZTP_OBSERVABILITY_LAB_GRAFANA_PORT:-13000}:3000"
+    networks:
+      - lab
+
+networks:
+  # Explicit subnet: the Docker default address pools are exhausted on the
+  # lab host. tools/observability-lab-local checks it is free before creating.
+  lab:
+    ipam:
+      config:
+        - subnet: ${ZTP_OBSERVABILITY_LAB_SUBNET:-10.213.20.0/24}
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  loki_data:
+  prometheus_data:
+  grafana_data:
+
+secrets:
+  postgres-admin-password:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR:?set by tools/observability-lab-local}/postgres-admin-password
+  postgres-migrator-password:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/postgres-migrator-password
+  postgres-app-password:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/postgres-app-password
+  postgres-worker-password:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/postgres-worker-password
+  postgres-monitor-password:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/postgres-monitor-password
+  postgres-migrator-url:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/postgres-migrator-url
+  api-database-url:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/api-database-url
+  worker-database-url:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/worker-database-url
+  api-rabbitmq-url:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/api-rabbitmq-url
+  worker-rabbitmq-url:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/worker-rabbitmq-url
+  rabbitmq-definitions:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/rabbitmq-definitions
+  grafana-admin-password:
+    file: ${ZTP_OBSERVABILITY_LAB_SECRETS_DIR}/grafana-admin-password

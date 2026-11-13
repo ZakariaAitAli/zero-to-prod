@@ -1,0 +1,25 @@
+{
+  "source_sha256": {
+    "infra/capacity-lab/compose.yaml": "3e51d20a05712e5e51b4897baabd81681a7c3f0c75fd66533a45864ba773fe04",
+    "infra/capacity-lab/nginx.conf": "7843c258069afc8a8cfc986c31ad79d3d73ed97afc409e54995eb9ddf9951259",
+    "infra/capacity-lab/prometheus.yml": "26e8298633dbc6f8c41406dc876d684d2450b18649661dfafebaac071250e7fb",
+    "tools/capacity-lab-local": "e588d9db7f87abfcee7a4d70fb1a294b69fae3950fbc4959ff7b68f5b824f560",
+    "tools/capacity-lab-experiments": "5bac87cf8205b59fe544756ced8df2c9af2efdfb76974494a93633ed42765488"
+  },
+  "application_tree": "200c62cada86cec6c47971c2ec560a74811e508e",
+  "harness_committed_at": "f838018",
+  "images": [
+    "/zero-to-prod-capacity-lab-api-1 sha256:ebc5663507935a193a38eac6d2c830768053447daa123aea542c19e9455e7879 250000000",
+    "/zero-to-prod-capacity-lab-gateway-1 sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94 0",
+    "/zero-to-prod-capacity-lab-grafana-1 sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572 0",
+    "/zero-to-prod-capacity-lab-jaeger-1 sha256:3d0ac795ff98aa04d1be04311d2dac6c25b4bfc8322dc02e53bc5b170c5018c3 0",
+    "/zero-to-prod-capacity-lab-loki-1 sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193 0",
+    "/zero-to-prod-capacity-lab-otel-collector-1 sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6 0",
+    "/zero-to-prod-capacity-lab-postgres-1 sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873 1000000000",
+    "/zero-to-prod-capacity-lab-postgres-exporter-1 sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e 0",
+    "/zero-to-prod-capacity-lab-prometheus-1 sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e 0",
+    "/zero-to-prod-capacity-lab-rabbitmq-1 sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95 500000000",
+    "/zero-to-prod-capacity-lab-worker-1 sha256:2e02e4dd6118751d15ed0ad557326d4f5f13f9f991eced0dc4b885ce68263d78 250000000"
+  ],
+  "note": "Application source and images stayed fixed. Final-stage container identities/CPU limits shown; stage-specific counts and CPU settings are in each result."
+}

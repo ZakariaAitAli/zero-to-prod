@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/observability"
 	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/runtimeconfig"
 )
 
@@ -37,6 +39,8 @@ const (
 	outboxPublisherIdlePollDelay   = 500 * time.Millisecond
 	outboxPublisherStoreRetryDelay = 1 * time.Second
 	defaultWorkItemProcessingQueue = "work_item_processing"
+	apiServiceName                 = "work-items-api"
+	telemetryFlushTimeout          = 5 * time.Second
 )
 
 type statusResponse struct {
@@ -60,6 +64,16 @@ func (state *readinessState) isReady() bool {
 }
 
 func main() {
+	flushTelemetry, err := observability.Setup(context.Background(), apiServiceName, version, os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), telemetryFlushTimeout)
+		defer cancel()
+		_ = flushTelemetry(ctx)
+	}()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -102,7 +116,7 @@ func main() {
 	readiness := &readinessState{}
 	server := newHTTPServer(
 		address,
-		newApplicationHandler(version, readiness, store, authenticate),
+		instrumentHTTP(newApplicationHandler(version, readiness, store, authenticate)),
 	)
 	server.TLSConfig = tlsConfig
 
@@ -113,11 +127,23 @@ func main() {
 	)
 	defer stop()
 
+	// METRICS_ADDRESS (for example 0.0.0.0:9464) enables the private
+	// Prometheus listener; it is off when unset.
+	if metricsAddress := os.Getenv("METRICS_ADDRESS"); metricsAddress != "" {
+		registry := observability.NewRegistry(apiServiceName, version)
+		registerAPIMetrics(registry, store)
+		registry.MustRegister(observability.NewPoolCollector(store.pool))
+
+		if err := observability.StartMetricsServer(shutdownContext, metricsAddress, registry); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	scheme := "HTTP"
 	if tlsConfig != nil {
 		scheme = "HTTPS"
 	}
-	log.Printf("work-items-api version=%s listening on %s (%s)", version, address, scheme)
+	slog.Info("work-items-api listening", "address", address, "scheme", scheme)
 
 	publisherFactory := func() (
 		closeableBrokerMessagePublisher,

@@ -1,0 +1,143 @@
+{
+  "experiment": "e5-api-failure",
+  "started": "2026-10-18T14:47:39Z",
+  "checks": {
+    "api_unavailable_alert_fired": true,
+    "client_saw_connection_failures": true,
+    "server_side_sli_did_not_see_failures": true,
+    "recovered": true
+  },
+  "fault": {
+    "action": "docker kill api",
+    "at": "2026-10-18T14:48:09Z"
+  },
+  "alerts": [
+    {
+      "alert": "WorkItemsAPIUnavailable",
+      "fired": true,
+      "seconds_until_firing": 75.0,
+      "active_at": "2026-10-18T14:48:14.363959511Z",
+      "summary": "Prometheus cannot reach the Work Items API; its SLIs are blind and users are likely failing.",
+      "description": "The API metrics endpoint has not answered for more than a minute.",
+      "runbook": "docs/runbooks/work-items-observability.md#api-unavailable"
+    }
+  ],
+  "during_outage": {
+    "targets_up": [
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "otel-collector:8888",
+          "job": "otel-collector"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "loki:3100",
+          "job": "loki"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues"
+        },
+        "value": 1.0
+      }
+    ],
+    "availability_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:availability_bad:ratio_rate5m"
+        },
+        "value": 0.0
+      }
+    ]
+  },
+  "client_during_outage": {
+    "requests": 301,
+    "by_operation_status": {
+      "create:0": 301
+    },
+    "server_errors": 0,
+    "connection_failures": 301,
+    "latency_s": {
+      "p50": null,
+      "p95": null,
+      "p99": null
+    }
+  },
+  "recovery": {
+    "api_healthy": true,
+    "at": "2026-10-18T14:49:31Z"
+  },
+  "client_after_recovery": {
+    "requests": 480,
+    "by_operation_status": {
+      "create:201": 160,
+      "get_job:200": 160,
+      "process:202": 160
+    },
+    "server_errors": 0,
+    "connection_failures": 0,
+    "latency_s": {
+      "p50": 0.0042,
+      "p95": 0.0065,
+      "p99": 0.0069
+    }
+  },
+  "quiet": {
+    "pages_resolved": true,
+    "seconds_until_no_pages": 0.0,
+    "still_firing": [
+      "WorkItemsAvailabilitySlowBurn",
+      "WorkItemsLatencySlowBurn"
+    ]
+  },
+  "finished": "2026-10-18T14:50:16Z",
+  "passed": true
+}

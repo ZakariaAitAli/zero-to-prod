@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/observability"
 	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/workitems"
 
 	"github.com/jackc/pgx/v5"
@@ -64,6 +65,7 @@ func newPostgresStore(
 	if err != nil {
 		return nil, fmt.Errorf("parse database configuration: %w", err)
 	}
+	config.ConnConfig.Tracer = observability.QueryTracer{}
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -278,21 +280,27 @@ func (store *postgresStore) AcceptProcessingJob(
 		)
 	}
 
+	// trace_context links the later publish and processing spans to the
+	// accepting request (ADR 0012). It is outside the payload, so the message
+	// contract and delivery identity are unchanged; NULL means no trace.
 	const insertOutboxQuery = `
 		INSERT INTO public.outbox_messages (
 			processing_job_id,
 			event_type,
-			payload
+			payload,
+			trace_context
 		)
 		VALUES (
 			$1::BIGINT,
 			'work_item.process',
 			jsonb_build_object(
 				'type', 'work_item.process',
-				'version', 1,
+				'version', 2,
+				'delivery_id', gen_random_uuid()::text,
 				'job_id', $1::BIGINT,
 				'work_item_id', $2::BIGINT
-			)
+			),
+			NULLIF($3::TEXT, '')
 		)
 	`
 
@@ -301,6 +309,7 @@ func (store *postgresStore) AcceptProcessingJob(
 		insertOutboxQuery,
 		job.ID,
 		job.WorkItemID,
+		observability.TraceParent(ctx),
 	); err != nil {
 		return processingJob{}, fmt.Errorf(
 			"insert processing outbox message: %w",
@@ -339,7 +348,9 @@ func (store *postgresStore) BeginOutboxPublishAttempt(
 			message.processing_job_id,
 			message.event_type,
 			message.payload,
-			message.publish_attempts
+			message.publish_attempts,
+			message.created_at,
+			COALESCE(message.trace_context, '')
 	`
 
 	var message outboxMessage
@@ -353,6 +364,8 @@ func (store *postgresStore) BeginOutboxPublishAttempt(
 		&message.EventType,
 		&message.Payload,
 		&message.PublishAttempts,
+		&message.CreatedAt,
+		&message.TraceParent,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return outboxMessage{}, errNoOutboxMessage

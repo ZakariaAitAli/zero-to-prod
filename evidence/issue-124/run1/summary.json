@@ -1,0 +1,12 @@
+{
+  "experiments_completed": 7,
+  "all_assertions_passed": true,
+  "final_state": "all containers stopped; volumes/archive/backup copy retained except the explicitly destroyed primary volume",
+  "remaining_limits": [
+    "one host and proxy/operator failure domain",
+    "async data loss under unreceived WAL not bounded",
+    "no actual independent-site backup survival",
+    "no automatic consensus/fencing controller",
+    "WAL retention conservative/unbounded across timelines; storage monitoring required"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "base_commit": "5e25d2960b30f63bf56021c56f9eeb7d8ceeb370",
+  "sha256": {
+    "tools/delivery-lab-local": "156147a4d3ca7dd8f687f8e374c7207dc6766963dcfe34efb76cf944372ec395",
+    "tools/delivery-lab-experiments": "891e04cb908278b2d477703cad2e3d5101d15883ea2c933fa5028d818dd5be04",
+    "tools/delivery-image-gate": "722c891edb83a76cbdb8a430985008c33533414da4d638cf03feccca173dc7b3",
+    "infra/delivery-lab/compose.yaml": "4e184722a290d3dc6e87420ebb79ef48a5922d1e6d421af4740fb73a2d152592",
+    "apps/work-items/go.mod": "c3745f591ae4a1ec4e74f4e3986d01024bb2d9b742dc7620fd1ef1ab2fccd070",
+    "apps/work-items/go.sum": "9707210d0c3e488a9a9f4cc83d0cdd39466e8fb92fd60f58693bd1e82683fff1",
+    "apps/work-items/api/Dockerfile": "aa0de155628de1223fe59b0020b84f9db613d9523fd0a8ad382b1cc00fd11ea9",
+    "apps/work-items/worker/Dockerfile": "2a2f307a7adce25fd86c50bc3e7b07e3e1fbf38a28f9496a65a889aecc741c84"
+  },
+  "note": "run1 aborted before traffic due Compose inheritance. run2 predates schema fixture; run3 adds schema fixture. run4 patched runtime/modules; run5 final digest-pinned Dockerfiles. Build versions include tracked application diff hash. These are dirty-tree local artifacts, not clean commit releases.",
+  "final_containers_running": []
+}

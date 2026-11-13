@@ -862,7 +862,7 @@ func openExperimentLab(t *testing.T, id, classification, question string) *exper
 }
 
 // createAcceptedJob inserts a pending Work Item and an accepted job directly;
-// the harness then publishes the message itself (no outbox involvement).
+// the harness seeds a delivery identity and publishes the message itself.
 func (lab *experimentLab) createAcceptedJob(t *testing.T, title string) (workItemID, jobID int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -870,6 +870,10 @@ func (lab *experimentLab) createAcceptedJob(t *testing.T, title string) (workIte
 		t.Fatal(err)
 	}
 	if err := lab.fixture.QueryRow(ctx, "INSERT INTO public.processing_jobs (work_item_id) VALUES ($1) RETURNING id", workItemID).Scan(&jobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lab.fixture.Exec(ctx, `INSERT INTO public.outbox_messages(processing_job_id,event_type,payload,published_at)
+        VALUES ($1,'work_item.process',$2::jsonb,now())`, jobID, string(workerPayload(jobID, workItemID))); err != nil {
 		t.Fatal(err)
 	}
 	lab.record.observe("work_item_id", workItemID)
@@ -881,7 +885,11 @@ func (lab *experimentLab) publish(t *testing.T, workItemID, jobID int64) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := publishFixturePayload(ctx, lab.config.RabbitFixtureURL, lab.config.Queue, workerPayload(jobID, workItemID)); err != nil {
+	var payload []byte
+	if err := lab.fixture.QueryRow(ctx, `SELECT payload FROM public.outbox_messages WHERE processing_job_id=$1`, jobID).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishFixturePayload(ctx, lab.config.RabbitFixtureURL, lab.config.Queue, payload); err != nil {
 		t.Fatal(err)
 	}
 }

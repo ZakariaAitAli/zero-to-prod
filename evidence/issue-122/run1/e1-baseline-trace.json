@@ -1,0 +1,668 @@
+{
+  "experiment": "e1-baseline-trace",
+  "started": "2026-10-18T14:00:59Z",
+  "checks": {
+    "no_client_errors": true,
+    "trace_has_api_and_worker": true,
+    "publish_span_child_of_request": true,
+    "process_span_child_of_publish": true,
+    "db_spans_under_both_services": true,
+    "logs_from_both_services_share_trace": true,
+    "no_alerts_firing": true
+  },
+  "client": {
+    "requests": 1800,
+    "by_operation_status": {
+      "create:201": 600,
+      "get_job:200": 600,
+      "process:202": 600
+    },
+    "server_errors": 0,
+    "connection_failures": 0,
+    "latency_s": {
+      "p50": 0.0039,
+      "p95": 0.0066,
+      "p99": 0.0078
+    }
+  },
+  "sample": {
+    "job_id": 1202,
+    "trace_id": "2c67db2192cde435c60f4aa7324ac24f",
+    "spans": [
+      {
+        "service": "work-items-api",
+        "name": "POST /items/{id}/process",
+        "span_id": "c917b47c3d46a46c",
+        "parent": [],
+        "kind": "server",
+        "duration_ms": 3.63,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "BEGIN postgresql",
+        "span_id": "b0bd7fab9c9b74d7",
+        "parent": [
+          "c917b47c3d46a46c"
+        ],
+        "kind": "client",
+        "duration_ms": 0.139,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "SELECT postgresql",
+        "span_id": "ac715229d78f0e4f",
+        "parent": [
+          "c917b47c3d46a46c"
+        ],
+        "kind": "client",
+        "duration_ms": 0.125,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "SELECT postgresql",
+        "span_id": "e8bd7d8d98c84373",
+        "parent": [
+          "c917b47c3d46a46c"
+        ],
+        "kind": "client",
+        "duration_ms": 0.25,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "SELECT postgresql",
+        "span_id": "3c5c36a009672593",
+        "parent": [
+          "c917b47c3d46a46c"
+        ],
+        "kind": "client",
+        "duration_ms": 0.172,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "INSERT postgresql",
+        "span_id": "2bdd0f7b46339b85",
+        "parent": [
+          "c917b47c3d46a46c"
+        ],
+        "kind": "client",
+        "duration_ms": 0.366,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "INSERT postgresql",
+        "span_id": "883cd14a180a578e",
+        "parent": [
+          "c917b47c3d46a46c"
+        ],
+        "kind": "client",
+        "duration_ms": 0.284,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "COMMIT postgresql",
+        "span_id": "469bbd4218f6a0e5",
+        "parent": [
+          "c917b47c3d46a46c"
+        ],
+        "kind": "client",
+        "duration_ms": 2.074,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "work_item.process publish",
+        "span_id": "cb223e3ecdfde48c",
+        "parent": [
+          "c917b47c3d46a46c"
+        ],
+        "kind": "producer",
+        "duration_ms": 3.921,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "work_item.process process",
+        "span_id": "7110e832f821d806",
+        "parent": [
+          "cb223e3ecdfde48c"
+        ],
+        "kind": "consumer",
+        "duration_ms": 5.767,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "SELECT postgresql",
+        "span_id": "840ab685d496a82c",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.311,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "SELECT postgresql",
+        "span_id": "f64c63f1d8bf1932",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.205,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "UPDATE postgresql",
+        "span_id": "35b5a9ad1b9c1c22",
+        "parent": [
+          "cb223e3ecdfde48c"
+        ],
+        "kind": "client",
+        "duration_ms": 2.591,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "BEGIN postgresql",
+        "span_id": "548f6aeeaca0d59e",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.132,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "SELECT postgresql",
+        "span_id": "ae3c3d9cb3625641",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.067,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "SELECT postgresql",
+        "span_id": "afa5c74e0a094b47",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.276,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "SELECT postgresql",
+        "span_id": "9f32b85f0d39cfe1",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.201,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "INSERT postgresql",
+        "span_id": "84ee1ab33f9404b2",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.264,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "UPDATE postgresql",
+        "span_id": "c8e7cf983d73a636",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.251,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "UPDATE postgresql",
+        "span_id": "15ea09f6e1ffd118",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 0.296,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "COMMIT postgresql",
+        "span_id": "f8b28a8cbde1e506",
+        "parent": [
+          "7110e832f821d806"
+        ],
+        "kind": "client",
+        "duration_ms": 3.317,
+        "error": false,
+        "status_description": null
+      }
+    ],
+    "logs": [
+      {
+        "service": "work-items-worker",
+        "trace_id": "2c67db2192cde435c60f4aa7324ac24f",
+        "level": "info",
+        "line": "delivery settled"
+      },
+      {
+        "service": "work-items-api",
+        "trace_id": "2c67db2192cde435c60f4aa7324ac24f",
+        "level": "info",
+        "line": "http request"
+      },
+      {
+        "service": "work-items-api",
+        "trace_id": "2c67db2192cde435c60f4aa7324ac24f",
+        "level": "info",
+        "line": "processing accepted"
+      }
+    ]
+  },
+  "telemetry": {
+    "availability_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:availability_bad:ratio_rate5m"
+        },
+        "value": 0.0
+      }
+    ],
+    "availability_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:availability_bad:ratio_rate1h"
+        },
+        "value": 0.0
+      }
+    ],
+    "latency_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate5m"
+        },
+        "value": 0.0
+      }
+    ],
+    "latency_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate1h"
+        },
+        "value": 0.0002837703708129524
+      }
+    ],
+    "freshness_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate5m"
+        },
+        "value": 0.0
+      }
+    ],
+    "freshness_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate1h"
+        },
+        "value": 0.0
+      }
+    ],
+    "requests_by_route_code_1m": [
+      {
+        "metric": {
+          "code": "200",
+          "route": "/processing-jobs/{id}"
+        },
+        "value": 3.780075601512031
+      },
+      {
+        "metric": {
+          "code": "201",
+          "route": "/items"
+        },
+        "value": 3.7400748014960308
+      },
+      {
+        "metric": {
+          "code": "202",
+          "route": "/items/{id}/process"
+        },
+        "value": 3.7400748014960308
+      },
+      {
+        "metric": {
+          "code": "503",
+          "route": "/items/{id}/process"
+        },
+        "value": 0.0
+      }
+    ],
+    "latency_p95_1m": [
+      {
+        "metric": {},
+        "value": 0.007438679245283026
+      }
+    ],
+    "accepted_jobs": [
+      {
+        "metric": {
+          "__name__": "work_items_processing_jobs_accepted",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "oldest_accepted_age_s": [
+      {
+        "metric": {
+          "__name__": "work_items_processing_job_oldest_accepted_age_seconds",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "outbox_unpublished": [
+      {
+        "metric": {
+          "__name__": "work_items_outbox_unpublished_messages",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "oldest_unpublished_age_s": [
+      {
+        "metric": {
+          "__name__": "work_items_outbox_oldest_unpublished_age_seconds",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "backlog_scrape_success": [
+      {
+        "metric": {
+          "__name__": "work_items_backlog_scrape_success",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "queue_ready": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_messages_ready",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 0.0
+      }
+    ],
+    "queue_unacked": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_messages_unacked",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 0.0
+      }
+    ],
+    "queue_consumers": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_consumers",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 1.0
+      }
+    ],
+    "outbox_publish_rate_1m": [
+      {
+        "metric": {
+          "result": "published"
+        },
+        "value": 3.7800756015120305
+      }
+    ],
+    "broker_connect_failures_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "worker_deliveries_1m": [
+      {
+        "metric": {
+          "redelivered": "false",
+          "settlement": "ack"
+        },
+        "value": 3.6001440057602303
+      }
+    ],
+    "worker_session_exits_1m": [
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "completion_latency_p95_5m": [
+      {
+        "metric": {},
+        "value": 0.4829014227642276
+      }
+    ],
+    "pool_acquired": [
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "pool_wait_s_per_s_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "cpu_cores_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.015000300006000122
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.00800032001280051
+      }
+    ],
+    "rss_bytes": [
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 32616448.0
+      },
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 31764480.0
+      }
+    ],
+    "pg_up": [
+      {
+        "metric": {
+          "__name__": "pg_up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      }
+    ],
+    "targets_up": [
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "otel-collector:8888",
+          "job": "otel-collector"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "loki:3100",
+          "job": "loki"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues"
+        },
+        "value": 1.0
+      }
+    ]
+  },
+  "quiet": {
+    "alerts_resolved": true,
+    "seconds_until_quiet": 0.0,
+    "still_firing": []
+  },
+  "finished": "2026-10-18T14:03:38Z",
+  "passed": true
+}

@@ -1,0 +1,152 @@
+# Overlay on ../observability-lab/compose.yaml. Local-only, auth disabled.
+services:
+  postgres:
+    entrypoint: [/bin/sh, /opt/ha/primary.sh]
+    command: [postgres, -c, wal_level=replica, -c, max_wal_senders=10, -c, archive_mode=on, -c, archive_timeout=5s, -c, 'archive_command=/bin/sh /opt/ha/archive.sh %p %f', -c, shared_preload_libraries=pg_stat_statements]
+    secrets: [replication-password]
+    volumes:
+      - ${HA_ROOT}/infra/availability-lab/postgres:/opt/ha:ro
+      - ${HA_ROOT}/infra/availability-lab/postgres/003-replication.sh:/docker-entrypoint-initdb.d/003-replication.sh:ro
+      - wal_archive:/wal-archive
+  pg-standby:
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    entrypoint: [/bin/sh, /opt/ha/standby.sh]
+    command: [postgres, -c, archive_mode=on, -c, 'archive_command=/bin/sh /opt/ha/archive.sh %p %f', -c, 'restore_command=cp /wal-archive/%f %p', -c, shared_preload_libraries=pg_stat_statements]
+    secrets: [replication-password]
+    volumes:
+      - standby_data:/var/lib/postgresql
+      - wal_archive:/wal-archive
+      - ${HA_ROOT}/infra/availability-lab/postgres:/opt/ha:ro
+    networks: [lab]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U zero_to_prod_admin -d zero_to_prod']
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  backup:
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    entrypoint: [/bin/sh, /opt/ha/backup.sh]
+    healthcheck:
+      test: [CMD, /bin/sh, /opt/ha/backup-health.sh]
+      interval: 5s
+      timeout: 3s
+      retries: 2
+      start_period: 15s
+    environment:
+      BACKUP_INTERVAL_SECONDS: ${HA_BACKUP_INTERVAL_SECONDS:-300}
+    secrets: [replication-password]
+    volumes:
+      - backups:/backups
+      - ${HA_ROOT}/infra/availability-lab/postgres:/opt/ha:ro
+    networks: [lab]
+    depends_on:
+      postgres: {condition: service_healthy}
+  rabbitmq: &broker
+    hostname: rabbitmq
+    entrypoint: [/bin/sh, /opt/ha/start.sh]
+    command: [rabbitmq-server]
+    environment:
+      RABBITMQ_NODENAME: rabbit@rabbitmq
+    secrets: [erlang-cookie]
+    ports: ['127.0.0.1:15675:15672']
+    volumes:
+      - ${HA_ROOT}/infra/availability-lab/rabbitmq/start.sh:/opt/ha/start.sh:ro
+      - ${HA_ROOT}/infra/availability-lab/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+  rabbit2:
+    <<: *broker
+    image: rabbitmq:4.3.6-management@sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95
+    hostname: rabbit2
+    environment: {RABBITMQ_NODENAME: 'rabbit@rabbit2'}
+    ports: ['127.0.0.1:15676:15672']
+    secrets: [erlang-cookie, rabbitmq-definitions]
+    volumes:
+      - rabbit2_data:/var/lib/rabbitmq
+      - ${HA_ROOT}/infra/availability-lab/rabbitmq/start.sh:/opt/ha/start.sh:ro
+      - ${HA_ROOT}/infra/availability-lab/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ${HA_ROOT}/infra/observability-lab/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    networks: [lab]
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+  rabbit3:
+    <<: *broker
+    image: rabbitmq:4.3.6-management@sha256:cdf40d8cb363d145e377ed88d59696a42386ffe54b30125f10eb128b862eea95
+    hostname: rabbit3
+    environment: {RABBITMQ_NODENAME: 'rabbit@rabbit3'}
+    ports: ['127.0.0.1:15677:15672']
+    secrets: [erlang-cookie, rabbitmq-definitions]
+    volumes:
+      - rabbit3_data:/var/lib/rabbitmq
+      - ${HA_ROOT}/infra/availability-lab/rabbitmq/start.sh:/opt/ha/start.sh:ro
+      - ${HA_ROOT}/infra/availability-lab/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ${HA_ROOT}/infra/observability-lab/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    networks: [lab]
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+  proxies:
+    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    volumes:
+      - ${HA_STATE}/proxies.conf:/etc/nginx/nginx.conf:ro
+    networks: [lab]
+  api:
+    image: zero-to-prod-availability-lab-api:local
+    ports: !reset []
+  worker:
+    image: zero-to-prod-availability-lab-worker:local
+  postgres-exporter:
+    environment:
+      DATA_SOURCE_URI: proxies:5432/zero_to_prod?sslmode=disable
+  prometheus:
+    volumes:
+      - ${HA_ROOT}/infra/capacity-lab/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  gateway:
+    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    volumes:
+      - ${HA_ROOT}/infra/capacity-lab/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports: ['127.0.0.1:18083:8080']
+    networks: [lab]
+    depends_on: [api]
+  offsite-transfer:
+    profiles: [tools]
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    entrypoint: [/bin/sh, /opt/ha/transfer.sh]
+    volumes:
+      - backups:/source-backups:ro
+      - wal_archive:/source-wal:ro
+      - offsite_copy:/offsite
+      - ${HA_ROOT}/infra/availability-lab/postgres:/opt/ha:ro
+    network_mode: none
+  pg-recover:
+    profiles: [recovery]
+    image: postgres:18.6-alpine3.24@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    entrypoint: [/bin/sh, /opt/ha/recover.sh]
+    volumes:
+      - recovered_data:/var/lib/postgresql
+      - offsite_copy:/restore-source:ro
+      - ${HA_ROOT}/infra/availability-lab/postgres:/opt/ha:ro
+    networks: [lab]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U zero_to_prod_admin -d zero_to_prod']
+      interval: 2s
+      timeout: 3s
+      retries: 90
+volumes:
+  recovered_data:
+  standby_data:
+  wal_archive:
+  backups:
+  offsite_copy:
+  rabbit2_data:
+  rabbit3_data:
+secrets:
+  replication-password:
+    file: ${HA_STATE}/secrets/replication-password
+  erlang-cookie:
+    file: ${HA_STATE}/secrets/erlang-cookie

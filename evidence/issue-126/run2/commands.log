@@ -1,0 +1,111 @@
+compose stop api
+ Container zero-to-prod-operations-lab-api-1 Stopping 
+ Container zero-to-prod-operations-lab-api-1 Stopped 
+
+compose up -d --wait api
+ Container zero-to-prod-operations-lab-rabbitmq-1 Running 
+ Container zero-to-prod-operations-lab-postgres-1 Running 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-api-1 Starting 
+ Container zero-to-prod-operations-lab-api-1 Started 
+ Container zero-to-prod-operations-lab-api-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-api-1 Healthy 
+
+compose stop postgres
+ Container zero-to-prod-operations-lab-postgres-1 Stopping 
+ Container zero-to-prod-operations-lab-postgres-1 Stopped 
+
+compose up -d --wait postgres
+ Container zero-to-prod-operations-lab-postgres-1 Starting 
+ Container zero-to-prod-operations-lab-postgres-1 Started 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+
+compose stop rabbitmq
+ Container zero-to-prod-operations-lab-rabbitmq-1 Stopping 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Stopped 
+
+compose up -d --wait rabbitmq
+ Container zero-to-prod-operations-lab-rabbitmq-1 Starting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Started 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+
+compose stop worker
+ Container zero-to-prod-operations-lab-worker-1 Stopping 
+ Container zero-to-prod-operations-lab-worker-1 Stopped 
+
+compose up -d --wait worker
+ Container zero-to-prod-operations-lab-postgres-1 Running 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Running 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-worker-1 Starting 
+ Container zero-to-prod-operations-lab-worker-1 Started 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-worker-1 Waiting 
+ Container zero-to-prod-operations-lab-worker-1 Healthy 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+
+compose up -d --wait postgres rabbitmq api worker
+ Container zero-to-prod-operations-lab-worker-1 Running 
+ Container zero-to-prod-operations-lab-api-1 Running 
+ Container zero-to-prod-operations-lab-postgres-1 Running 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Running 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+ Container zero-to-prod-operations-lab-postgres-1 Waiting 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Waiting 
+ Container zero-to-prod-operations-lab-worker-1 Waiting 
+ Container zero-to-prod-operations-lab-api-1 Waiting 
+ Container zero-to-prod-operations-lab-postgres-1 Healthy 
+ Container zero-to-prod-operations-lab-api-1 Healthy 
+ Container zero-to-prod-operations-lab-worker-1 Healthy 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Healthy 
+
+compose exec -T postgres psql -U zero_to_prod_admin -d zero_to_prod -Atc SELECT json_build_object('jobs',count(*),'succeeded',count(*) FILTER(WHERE state='succeeded'),'accepted',count(*) FILTER(WHERE state='accepted'),'fresh',count(*) FILTER(WHERE state='succeeded' AND finished_at-created_at<=interval '30 seconds')) FROM processing_jobs WHERE created_at >= to_timestamp(1792345146.4864402)
+{"jobs" : 3695, "succeeded" : 3695, "accepted" : 0, "fresh" : 3594}
+
+stop
+ Container zero-to-prod-operations-lab-receiver-1 Stopping 
+ Container zero-to-prod-operations-lab-otel-collector-1 Stopping 
+ Container zero-to-prod-operations-lab-alertmanager-1 Stopping 
+ Container zero-to-prod-operations-lab-grafana-1 Stopping 
+ Container zero-to-prod-operations-lab-prometheus-1 Stopping 
+ Container zero-to-prod-operations-lab-postgres-exporter-1 Stopping 
+ Container zero-to-prod-operations-lab-worker-1 Stopping 
+ Container zero-to-prod-operations-lab-api-1 Stopping 
+ Container zero-to-prod-operations-lab-api-1 Stopped 
+ Container zero-to-prod-operations-lab-alertmanager-1 Stopped 
+ Container zero-to-prod-operations-lab-postgres-exporter-1 Stopped 
+ Container zero-to-prod-operations-lab-prometheus-1 Stopped 
+ Container zero-to-prod-operations-lab-otel-collector-1 Stopped 
+ Container zero-to-prod-operations-lab-loki-1 Stopping 
+ Container zero-to-prod-operations-lab-jaeger-1 Stopping 
+ Container zero-to-prod-operations-lab-worker-1 Stopped 
+ Container zero-to-prod-operations-lab-postgres-1 Stopping 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Stopping 
+ Container zero-to-prod-operations-lab-grafana-1 Stopped 
+ Container zero-to-prod-operations-lab-jaeger-1 Stopped 
+ Container zero-to-prod-operations-lab-postgres-1 Stopped 
+ Container zero-to-prod-operations-lab-loki-1 Stopped 
+ Container zero-to-prod-operations-lab-rabbitmq-1 Stopped 
+ Container zero-to-prod-operations-lab-receiver-1 Stopped 
+

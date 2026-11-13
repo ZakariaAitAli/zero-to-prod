@@ -1,0 +1,28 @@
+# Explicit short-window drill alerts; production SLO thresholds remain intact.
+groups:
+  - name: operations-drills
+    rules:
+      - alert: LocalDrillAPIUnavailable
+        expr: up{job="work-items-api"} == 0
+        for: 5s
+        labels: {severity: drill}
+        annotations:
+          runbook: docs/runbooks/local-operations.md#api
+      - alert: LocalDrillDatabaseUnavailable
+        expr: pg_up == 0
+        for: 5s
+        labels: {severity: drill}
+        annotations:
+          runbook: docs/runbooks/local-operations.md#database
+      - alert: LocalDrillBrokerUnavailable
+        expr: up{job="rabbitmq"} == 0
+        for: 5s
+        labels: {severity: drill}
+        annotations:
+          runbook: docs/runbooks/local-operations.md#broker
+      - alert: LocalDrillBacklog
+        expr: max(work_items_processing_job_oldest_accepted_age_seconds) > 20
+        for: 5s
+        labels: {severity: drill}
+        annotations:
+          runbook: docs/runbooks/local-operations.md#backlog

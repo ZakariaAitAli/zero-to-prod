@@ -1,0 +1,1143 @@
+{
+  "id": "e12-snapshot-recovery",
+  "classification": "EXTERNAL destructive loss of the isolated PostgreSQL volume, migration-first logical restore; ACTUAL API and worker processes",
+  "question": "Do delivery identities reject stale messages after ID reuse, and does explicit offline redrive recover accepted jobs with lost delivery?",
+  "environment": {
+    "amqp_port": "5678",
+    "classification": "LOCAL-FIRST",
+    "postgres_compose_project": "zero-to-prod-118-recovery-pg",
+    "postgres_port": "55440",
+    "rabbitmq_compose_project": "zero-to-prod-118-recovery-mq",
+    "server_client_connection_check_interval": "0"
+  },
+  "synchronization": [
+    {
+      "step": "start e12-api-a",
+      "condition": "GET /ready returns 200",
+      "elapsed_ms": 1202,
+      "observation": 200
+    },
+    {
+      "step": "start e12-w1",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 3425,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "B completes",
+      "condition": "done once",
+      "elapsed_ms": 3780,
+      "observation": {
+        "work_item_id": 1,
+        "title": "issue118 E12 B done before backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 1,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 1,
+            "input_title": "issue118 E12 B done before backup",
+            "analysis_version": 1,
+            "character_count": 33,
+            "word_count": 6
+          }
+        ]
+      }
+    },
+    {
+      "step": "B acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 4947,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "C published",
+      "condition": "outbox for job 2 published",
+      "elapsed_ms": 5262
+    },
+    {
+      "step": "C message waiting",
+      "condition": "queue ready=1 unacknowledged=0 consumers=0",
+      "elapsed_ms": 6463,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "rabbitmq stop",
+      "condition": "docker stop on validated container of project zero-to-prod-118-recovery-mq",
+      "elapsed_ms": 8525
+    },
+    {
+      "step": "rabbitmq start",
+      "condition": "docker start on validated container of project zero-to-prod-118-recovery-mq",
+      "elapsed_ms": 10744
+    },
+    {
+      "step": "rabbitmq healthy",
+      "condition": "container healthy and queue listable",
+      "elapsed_ms": 18454,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "A published after backup",
+      "condition": "outbox for job 3 published",
+      "elapsed_ms": 18835
+    },
+    {
+      "step": "start e12-w2",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 21214,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "A completes after backup",
+      "condition": "done",
+      "elapsed_ms": 21216,
+      "observation": {
+        "work_item_id": 3,
+        "title": "issue118 E12 A unpublished at backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 3,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 3,
+            "input_title": "issue118 E12 A unpublished at backup",
+            "analysis_version": 1,
+            "character_count": 36,
+            "word_count": 6
+          }
+        ]
+      }
+    },
+    {
+      "step": "C completes after backup",
+      "condition": "done",
+      "elapsed_ms": 21218,
+      "observation": {
+        "work_item_id": 2,
+        "title": "issue118 E12 C published before backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 2,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 2,
+            "input_title": "issue118 E12 C published before backup",
+            "analysis_version": 1,
+            "character_count": 38,
+            "word_count": 6
+          }
+        ]
+      }
+    },
+    {
+      "step": "A and C acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 22383,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "no consumer",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 23539,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "D published",
+      "condition": "outbox for job 4 published",
+      "elapsed_ms": 23871
+    },
+    {
+      "step": "D message left in broker",
+      "condition": "queue ready=1 unacknowledged=0 consumers=0",
+      "elapsed_ms": 25047,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "validate destroy target",
+      "condition": "volume label, container mount, port binding and project prefix verified",
+      "elapsed_ms": 25302,
+      "observation": {
+        "project": "zero-to-prod-118-recovery-pg",
+        "volume": "zero-to-prod-118-recovery-pg_postgres_data"
+      }
+    },
+    {
+      "step": "isolated PostgreSQL destroyed",
+      "condition": "volume zero-to-prod-118-recovery-pg_postgres_data absent",
+      "elapsed_ms": 26673
+    },
+    {
+      "step": "stale D message still in broker",
+      "condition": "queue ready=1 unacknowledged=0 consumers=0",
+      "elapsed_ms": 37548,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "rabbitmq stop",
+      "condition": "docker stop on validated container of project zero-to-prod-118-recovery-mq",
+      "elapsed_ms": 39558
+    },
+    {
+      "step": "start e12-api-b",
+      "condition": "GET /ready returns 200",
+      "elapsed_ms": 39611,
+      "observation": 200
+    },
+    {
+      "step": "rabbitmq start",
+      "condition": "docker start on validated container of project zero-to-prod-118-recovery-mq",
+      "elapsed_ms": 44354
+    },
+    {
+      "step": "rabbitmq healthy",
+      "condition": "container healthy and queue listable",
+      "elapsed_ms": 52870,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "only the stale message is queued",
+      "condition": "queue ready=1 unacknowledged=0 consumers=0",
+      "elapsed_ms": 54265,
+      "observation": {
+        "ready": 1,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "start e12-w3",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 56524,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "stale message settled",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 57626,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "start e12-api-c",
+      "condition": "GET /ready returns 200",
+      "elapsed_ms": 57656,
+      "observation": 200
+    },
+    {
+      "step": "A recovers from restored outbox",
+      "condition": "done once",
+      "elapsed_ms": 57681,
+      "observation": {
+        "work_item_id": 3,
+        "title": "issue118 E12 A unpublished at backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 3,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 3,
+            "input_title": "issue118 E12 A unpublished at backup",
+            "analysis_version": 1,
+            "character_count": 36,
+            "word_count": 6
+          }
+        ]
+      }
+    },
+    {
+      "step": "A outbox republished",
+      "condition": "outbox for job 3 published",
+      "elapsed_ms": 57682
+    },
+    {
+      "step": "E outbox published",
+      "condition": "outbox for job 4 published",
+      "elapsed_ms": 57682
+    },
+    {
+      "step": "E done",
+      "condition": "done once",
+      "elapsed_ms": 57683,
+      "observation": {
+        "work_item_id": 4,
+        "title": "issue118 E12 E created after restore",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 4,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 4,
+            "input_title": "issue118 E12 E created after restore",
+            "analysis_version": 1,
+            "character_count": 36,
+            "word_count": 6
+          }
+        ]
+      }
+    },
+    {
+      "step": "all messages acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 58906,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "quiet queue",
+      "condition": "queue ready=0 unacknowledged=0 consumers=0",
+      "elapsed_ms": 60024,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      }
+    },
+    {
+      "step": "start recovery-api",
+      "condition": "GET /ready returns 200",
+      "elapsed_ms": 61918,
+      "observation": 200
+    },
+    {
+      "step": "start recovery-worker",
+      "condition": "queue consumers \u003e 0",
+      "elapsed_ms": 64280,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "C recovered by redrive",
+      "condition": "same job completed once",
+      "elapsed_ms": 64282,
+      "observation": {
+        "work_item_id": 2,
+        "title": "issue118 E12 C published before backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 2,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 2,
+            "input_title": "issue118 E12 C published before backup",
+            "analysis_version": 1,
+            "character_count": 38,
+            "word_count": 6
+          }
+        ]
+      }
+    },
+    {
+      "step": "redrive acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 65438,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    },
+    {
+      "step": "legitimate duplicate acknowledged",
+      "condition": "queue ready=0 unacknowledged=0 consumers=1",
+      "elapsed_ms": 66717,
+      "observation": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 1
+      }
+    }
+  ],
+  "checks": [
+    {
+      "name": "precondition: isolated queue is quiet",
+      "expected": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "observed": {
+        "ready": 0,
+        "unacknowledged": 0,
+        "consumers": 0
+      },
+      "passed": true
+    },
+    {
+      "name": "e12-w1 graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "backup point: B: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "backup point: B",
+      "expected": "done once",
+      "observed": {
+        "work_item_id": 1,
+        "title": "issue118 E12 B done before backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 1,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 1,
+            "input_title": "issue118 E12 B done before backup",
+            "analysis_version": 1,
+            "character_count": 33,
+            "word_count": 6
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "name": "backup point: C: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "backup point: C",
+      "expected": "accepted",
+      "observed": {
+        "work_item_id": 2,
+        "title": "issue118 E12 C published before backup",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 2,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "backup point: A: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "backup point: A",
+      "expected": "accepted",
+      "observed": {
+        "work_item_id": 3,
+        "title": "issue118 E12 A unpublished at backup",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 3,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "backup point: A outbox unpublished, C published",
+      "expected": "A=false C=true",
+      "observed": "A=false C=true",
+      "passed": true
+    },
+    {
+      "name": "e12-w2 graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "e12-api-a graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "protected lab volumes untouched by destroy",
+      "expected": [
+        "zero-to-prod-117_postgres_data",
+        "zero-to-prod-local_postgres_data",
+        "zero-to-prod-rabbitmq_rabbitmq_data"
+      ],
+      "observed": [
+        "zero-to-prod-117_postgres_data",
+        "zero-to-prod-local_postgres_data",
+        "zero-to-prod-rabbitmq_rabbitmq_data"
+      ],
+      "passed": true
+    },
+    {
+      "name": "restored into a new cluster",
+      "expected": "system identifier differs from destroyed cluster",
+      "observed": "7697985614237892647",
+      "passed": true
+    },
+    {
+      "name": "restored B: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "restored B",
+      "expected": "identical to backup",
+      "observed": {
+        "work_item_id": 1,
+        "title": "issue118 E12 B done before backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 1,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 1,
+            "input_title": "issue118 E12 B done before backup",
+            "analysis_version": 1,
+            "character_count": 33,
+            "word_count": 6
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "name": "restored C (completion after backup lost): ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "restored C (completion after backup lost)",
+      "expected": "pending; accepted; no result",
+      "observed": {
+        "work_item_id": 2,
+        "title": "issue118 E12 C published before backup",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 2,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "restored A: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "restored A",
+      "expected": "pending; accepted; no result",
+      "observed": {
+        "work_item_id": 3,
+        "title": "issue118 E12 A unpublished at backup",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 3,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "restored outbox: A unpublished, C published",
+      "expected": "A=false C=true",
+      "observed": "A=false C=true",
+      "passed": true
+    },
+    {
+      "name": "post-backup item D absent",
+      "expected": 0,
+      "observed": 0,
+      "passed": true
+    },
+    {
+      "name": "sequences rewound to the recovery point",
+      "expected": {
+        "outbox_messages_id_seq": {
+          "last_value": 3,
+          "is_called": true
+        },
+        "processing_jobs_id_seq": {
+          "last_value": 3,
+          "is_called": true
+        },
+        "work_items_id_seq": {
+          "last_value": 3,
+          "is_called": true
+        }
+      },
+      "observed": {
+        "outbox_messages_id_seq": {
+          "last_value": 3,
+          "is_called": true
+        },
+        "processing_jobs_id_seq": {
+          "last_value": 3,
+          "is_called": true
+        },
+        "work_items_id_seq": {
+          "last_value": 3,
+          "is_called": true
+        }
+      },
+      "passed": true
+    },
+    {
+      "name": "e12-api-b graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "rewound sequences reissue the stale message's identities to new work",
+      "expected": "item=4 job=4",
+      "observed": "item=4 job=4",
+      "passed": true
+    },
+    {
+      "name": "E and A outbox rows unpublished",
+      "expected": "false/false",
+      "observed": "false/false",
+      "passed": true
+    },
+    {
+      "name": "E after the stale message: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "E after the stale message",
+      "expected": "invariant holds",
+      "observed": {
+        "work_item_id": 4,
+        "title": "issue118 E12 E created after restore",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 4,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "stale message for lost job D cannot process new job E",
+      "expected": "E remains accepted with no effects while its own outbox row is unpublished",
+      "observed": {
+        "work_item_id": 4,
+        "title": "issue118 E12 E created after restore",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 4,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "e12-w3 graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "C blocked after restore: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "C blocked after restore",
+      "expected": "accepted job with published outbox and no message",
+      "observed": {
+        "work_item_id": 2,
+        "title": "issue118 E12 C published before backup",
+        "status": "pending",
+        "jobs": [
+          {
+            "id": 2,
+            "state": "accepted",
+            "attempt_count": 0,
+            "last_error_code": null,
+            "finished": false
+          }
+        ],
+        "results": []
+      },
+      "passed": true
+    },
+    {
+      "name": "new request for C is refused while blocked",
+      "expected": "409 processing_already_active job 2",
+      "observed": "409 map[error:processing_already_active processing_job_id:2]",
+      "passed": true
+    },
+    {
+      "name": "B after recovery: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "B after recovery",
+      "expected": "unchanged",
+      "observed": {
+        "work_item_id": 1,
+        "title": "issue118 E12 B done before backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 1,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 1,
+            "input_title": "issue118 E12 B done before backup",
+            "analysis_version": 1,
+            "character_count": 33,
+            "word_count": 6
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "name": "e12-api-c graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "offline inspection identifies C without an age threshold",
+      "expected": "one accepted job C with published outbox",
+      "observed": {
+        "accepted_jobs": [
+          {
+            "job_id": 2,
+            "was_published": true
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "name": "legitimate duplicate preserves business and job state",
+      "expected": "{\"work_item_id\":2,\"title\":\"issue118 E12 C published before backup\",\"status\":\"done\",\"jobs\":[{\"id\":2,\"state\":\"succeeded\",\"attempt_count\":1,\"last_error_code\":null,\"finished\":true}],\"results\":[{\"processing_job_id\":2,\"input_title\":\"issue118 E12 C published before backup\",\"analysis_version\":1,\"character_count\":38,\"word_count\":6}]}",
+      "observed": "{\"work_item_id\":2,\"title\":\"issue118 E12 C published before backup\",\"status\":\"done\",\"jobs\":[{\"id\":2,\"state\":\"succeeded\",\"attempt_count\":1,\"last_error_code\":null,\"finished\":true}],\"results\":[{\"processing_job_id\":2,\"input_title\":\"issue118 E12 C published before backup\",\"analysis_version\":1,\"character_count\":38,\"word_count\":6}]}",
+      "passed": true
+    },
+    {
+      "name": "B unchanged after explicit redrive: ADR 0003 success invariant",
+      "expected": "holds",
+      "observed": "\u003cnil\u003e",
+      "passed": true
+    },
+    {
+      "name": "B unchanged after explicit redrive",
+      "expected": "unchanged",
+      "observed": {
+        "work_item_id": 1,
+        "title": "issue118 E12 B done before backup",
+        "status": "done",
+        "jobs": [
+          {
+            "id": 1,
+            "state": "succeeded",
+            "attempt_count": 1,
+            "last_error_code": null,
+            "finished": true
+          }
+        ],
+        "results": [
+          {
+            "processing_job_id": 1,
+            "input_title": "issue118 E12 B done before backup",
+            "analysis_version": 1,
+            "character_count": 33,
+            "word_count": 6
+          }
+        ]
+      },
+      "passed": true
+    },
+    {
+      "name": "recovery-api graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "recovery-worker graceful exit status",
+      "expected": "exit_code=0",
+      "observed": "exit_code=0",
+      "passed": true
+    },
+    {
+      "name": "protected lab volumes still present",
+      "expected": [
+        "zero-to-prod-117_postgres_data",
+        "zero-to-prod-local_postgres_data",
+        "zero-to-prod-rabbitmq_rabbitmq_data"
+      ],
+      "observed": [
+        "zero-to-prod-117_postgres_data",
+        "zero-to-prod-local_postgres_data",
+        "zero-to-prod-rabbitmq_rabbitmq_data"
+      ],
+      "passed": true
+    }
+  ],
+  "observations": {
+    "backup_sequences": {
+      "outbox_messages_id_seq": {
+        "last_value": 3,
+        "is_called": true
+      },
+      "processing_jobs_id_seq": {
+        "last_value": 3,
+        "is_called": true
+      },
+      "work_items_id_seq": {
+        "last_value": 3,
+        "is_called": true
+      }
+    },
+    "c_new_request": {
+      "body": {
+        "error": "processing_already_active",
+        "processing_job_id": 2
+      },
+      "status": 409
+    },
+    "e12-api-a_graceful_exit": {
+      "elapsed_ms": 3,
+      "status": "exit_code=0"
+    },
+    "e12-api-b_graceful_exit": {
+      "elapsed_ms": 4042,
+      "status": "exit_code=0"
+    },
+    "e12-api-c_graceful_exit": {
+      "elapsed_ms": 3,
+      "status": "exit_code=0"
+    },
+    "e12-w1_graceful_exit": {
+      "elapsed_ms": 2,
+      "status": "exit_code=0"
+    },
+    "e12-w2_graceful_exit": {
+      "elapsed_ms": 3,
+      "status": "exit_code=0"
+    },
+    "e12-w3_graceful_exit": {
+      "elapsed_ms": 3,
+      "status": "exit_code=0"
+    },
+    "identity_alias": {
+      "collision": true,
+      "new_work": {
+        "job_id": 4,
+        "work_item_id": 4
+      },
+      "stale_message": {
+        "job_id": 4,
+        "work_item_id": 4
+      }
+    },
+    "ids": {
+      "item_a": 3,
+      "item_b": 1,
+      "item_c": 2,
+      "item_d": 4,
+      "job_a": 3,
+      "job_b": 1,
+      "job_c": 2,
+      "job_d": 4
+    },
+    "recovery-api_graceful_exit": {
+      "elapsed_ms": 2,
+      "status": "exit_code=0"
+    },
+    "recovery-worker_graceful_exit": {
+      "elapsed_ms": 3,
+      "status": "exit_code=0"
+    },
+    "redrive_report": "{\"database\":\"zero_to_prod\",\"applied\":true,\"accepted_jobs\":[{\"job_id\":2,\"work_item_id\":2,\"delivery_id\":\"6df5c95b-b2ba-4b4c-a8b5-ad2bcb406f58\",\"was_published\":true,\"attempt_count\":0}]}",
+    "restore_output": "restored=/tmp/TestIssue130131SnapshotRecovery650666254/001/issue118-e12.dump",
+    "stale_message_outcome": {
+      "completed_new_job": false,
+      "new_job_outbox_published": false,
+      "result_title": []
+    }
+  },
+  "processes": [
+    {
+      "name": "recovery-worker",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+2ms 2026/10/18 12:36:20 worker starting queue=work_item_processing",
+        "+3732ms 2026/10/18 12:36:24 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "recovery-api",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 6,
+      "log_excerpt": [
+        "+2ms 2026/10/18 12:36:19 authentication and authorization disabled (AUTHENTICATION=disabled): development use only",
+        "+3ms 2026/10/18 12:36:19 work-items-api version=dev listening on :36443",
+        "+7ms 2026/10/18 12:36:19 readiness changed: ready",
+        "+4837ms 2026/10/18 12:36:24 readiness changed: not ready",
+        "+4837ms 2026/10/18 12:36:24 shutdown requested",
+        "+4837ms 2026/10/18 12:36:24 graceful shutdown complete"
+      ]
+    },
+    {
+      "name": "e12-api-c",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 6,
+      "log_excerpt": [
+        "+2ms 2026/10/18 12:36:14 authentication and authorization disabled (AUTHENTICATION=disabled): development use only",
+        "+3ms 2026/10/18 12:36:14 work-items-api version=dev listening on :43451",
+        "+7ms 2026/10/18 12:36:14 readiness changed: ready",
+        "+2404ms 2026/10/18 12:36:17 readiness changed: not ready",
+        "+2404ms 2026/10/18 12:36:17 shutdown requested",
+        "+2404ms 2026/10/18 12:36:17 graceful shutdown complete"
+      ]
+    },
+    {
+      "name": "e12-w3",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+3ms 2026/10/18 12:36:12 worker starting queue=work_item_processing",
+        "+3550ms 2026/10/18 12:36:16 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "e12-api-b",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 6,
+      "log_excerpt": [
+        "+11ms 2026/10/18 12:35:56 authentication and authorization disabled (AUTHENTICATION=disabled): development use only",
+        "+13ms 2026/10/18 12:35:56 work-items-api version=dev listening on :39033",
+        "+20ms 2026/10/18 12:35:56 readiness changed: ready",
+        "+69ms 2026/10/18 12:35:56 readiness changed: not ready",
+        "+69ms 2026/10/18 12:35:56 shutdown requested",
+        "+69ms 2026/10/18 12:35:56 graceful shutdown complete"
+      ]
+    },
+    {
+      "name": "e12-w2",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+4ms 2026/10/18 12:35:37 worker starting queue=work_item_processing",
+        "+2369ms 2026/10/18 12:35:39 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "e12-w1",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 2,
+      "log_excerpt": [
+        "+2ms 2026/10/18 12:35:19 worker starting queue=work_item_processing",
+        "+2644ms 2026/10/18 12:35:22 worker shutdown complete"
+      ]
+    },
+    {
+      "name": "e12-api-a",
+      "signals": [
+        "terminated"
+      ],
+      "exit_status": "exit_code=0",
+      "log_lines": 6,
+      "log_excerpt": [
+        "+5ms 2026/10/18 12:35:18 authentication and authorization disabled (AUTHENTICATION=disabled): development use only",
+        "+6ms 2026/10/18 12:35:18 work-items-api version=dev listening on :46549",
+        "+10ms 2026/10/18 12:35:18 readiness changed: ready",
+        "+23878ms 2026/10/18 12:35:42 readiness changed: not ready",
+        "+23878ms 2026/10/18 12:35:42 shutdown requested",
+        "+23878ms 2026/10/18 12:35:42 graceful shutdown complete"
+      ]
+    }
+  ],
+  "passed": true,
+  "duration_ms": 66774,
+  "recorded_at": "2026-10-18T12:36:24Z"
+}

@@ -1,0 +1,51 @@
+{
+  "received_unix": 1792345654.3517318,
+  "payload": {
+    "receiver": "local-evidence",
+    "status": "resolved",
+    "alerts": [
+      {
+        "status": "resolved",
+        "labels": {
+          "alertname": "WorkItemsAPIUnavailable",
+          "environment": "operations-lab",
+          "instance": "api:9464",
+          "job": "work-items-api",
+          "severity": "page",
+          "slo": "availability"
+        },
+        "annotations": {
+          "description": "The API metrics endpoint has not answered for more than a minute.",
+          "runbook": "docs/runbooks/work-items-observability.md#api-unavailable",
+          "summary": "Prometheus cannot reach the Work Items API; its SLIs are blind and users are likely failing."
+        },
+        "startsAt": "2026-10-18T17:46:04.363Z",
+        "endsAt": "2026-10-18T17:47:24.363Z",
+        "generatorURL": "http://589e88b58ab7:9090/graph?g0.expr=up%7Bjob%3D%22work-items-api%22%7D+%3D%3D+0+or+absent%28up%7Bjob%3D%22work-items-api%22%7D%29&g0.tab=1",
+        "fingerprint": "17a1e6e06da9e163"
+      }
+    ],
+    "notification_reason": "all alerts resolved",
+    "groupLabels": {
+      "alertname": "WorkItemsAPIUnavailable"
+    },
+    "commonLabels": {
+      "alertname": "WorkItemsAPIUnavailable",
+      "environment": "operations-lab",
+      "instance": "api:9464",
+      "job": "work-items-api",
+      "severity": "page",
+      "slo": "availability"
+    },
+    "commonAnnotations": {
+      "description": "The API metrics endpoint has not answered for more than a minute.",
+      "runbook": "docs/runbooks/work-items-observability.md#api-unavailable",
+      "summary": "Prometheus cannot reach the Work Items API; its SLIs are blind and users are likely failing."
+    },
+    "routeLabels": {},
+    "externalURL": "http://7d5bf9018610:9093",
+    "version": "4",
+    "groupKey": "{}:{alertname=\"WorkItemsAPIUnavailable\"}",
+    "truncatedAlerts": 0
+  }
+}

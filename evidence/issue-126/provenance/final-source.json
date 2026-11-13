@@ -1,0 +1,14 @@
+{
+  "base_commit": "ab76b29ce218e9a7df58293b975182cbbe1e18ac",
+  "sha256": {
+    "tools/operations-lab-local": "2cb6ecab5f64a37f444a1c5a6d2487a61334afac459a3978a4d271c26f604d58",
+    "tools/operations-lab-experiments": "6080a04be61952ded3763f6a30cef49c68910abc41a03880e81e9e749ad3b6da",
+    "tools/operations-lab-report": "3a938038922e88a0e3733891acf8054675b925bfc161f7cb942f6d6ecb13ebef",
+    "infra/operations-lab/compose.yaml": "3f21d5e340d4265f6b6ed25a79d892e9814d0697ff92b6e5c09d46e5d6f1647c",
+    "infra/operations-lab/receiver.py": "a73dc3755a5a2dc6cf6d4c5b10a84f26ca6b851f411a569b36ffe5c769fbc587",
+    "infra/operations-lab/prometheus.yml": "9b819ce647ba02463150a4707b193f9e23948d4b635765d3942551170df4ac89",
+    "infra/operations-lab/drills.yml": "00e57d6b56a42b67d7d865324901e0e9e163c42e1f628ab13a22bdd80cf51552",
+    "infra/operations-lab/alertmanager.yml": "ad7fc34f02d1f67b7c3b6bb8c0a353dab7e98e197219f4634528939567355a9b"
+  },
+  "timed_run_source_changes": "Final interface and image-pinning corrections occurred after timed run; original receiver and running monitoring commands retained separately. Timed runner source unchanged since run2 began; final-source hashes identify that runner and report implementation."
+}

@@ -1,0 +1,7 @@
+{
+  "fault_to_local_notification_s": 36.02480936050415,
+  "notification_to_response_observed_s": 103.4705171585083,
+  "prompt_to_response_observed_s": 76.71352672576904,
+  "fault_to_verified_processing_s": 155.08965611457825,
+  "limits": "Assistant-observed chat timing includes delivery/processing delays; response was pasted notifications, not an independent diagnosis or chosen recovery. Not production MTTA."
+}

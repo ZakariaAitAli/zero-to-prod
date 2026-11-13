@@ -35,6 +35,8 @@ type workerProcessingJob struct {
 type processingCompletion struct {
 	Disposition completionDisposition
 	Job         workerProcessingJob
+	// AcceptedAt is set only when this call completed the job.
+	AcceptedAt time.Time
 }
 
 type processingFailureDisposition string
@@ -288,4 +290,18 @@ func (store *workerStore) RecordProcessingFailure(
 			job.State,
 		)
 	}
+}
+
+// The outbox carries a random identity committed with acceptance. Numeric IDs
+// can be reused after a snapshot restore; this identity must still match before
+// a delivery can invoke the processor or change either business or job state.
+var errDeliveryIdentityMismatch = errors.New("delivery identity mismatch")
+
+func (store *workerStore) VerifyDeliveryIdentity(ctx context.Context, jobID int64, deliveryID string) error {
+	var expected string
+	err := store.db.QueryRow(ctx, `SELECT COALESCE(payload->>'delivery_id', '') FROM public.outbox_messages WHERE processing_job_id=$1`, jobID).Scan(&expected)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && expected != deliveryID) {
+		return errDeliveryIdentityMismatch
+	}
+	return err
 }

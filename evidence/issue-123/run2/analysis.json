@@ -1,0 +1,433 @@
+[
+  {
+    "stage": "baseline",
+    "requests_s": 59.99948183647233,
+    "p99_ms": 5.236562999925809,
+    "availability": 1.0,
+    "within_250ms": 1.0,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 1200,
+      "202": 1200,
+      "200": 1200
+    },
+    "accepted": 1200,
+    "succeeded": 1200,
+    "within_30s": 1.0,
+    "job_p99_s": 0.50301557,
+    "drain_s": 0.4599691309995251,
+    "sampled_stack_cpu_cores_mean": 0.4500571428571429,
+    "sampled_stack_memory_gib_mean": 0.7322811104910714,
+    "approx_stack_cpu_seconds_per_1000_successes": 22.675561807949563,
+    "approx_stack_gib_hours_per_1000_successes": 0.010248627958366802,
+    "sampled_api_cpu_cores_mean": 0.04424285714285714,
+    "sampled_worker_cpu_cores_mean": 0.028428571428571428,
+    "sampled_postgres_cpu_cores_mean": 0.07247142857142858,
+    "resource_samples": 7,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": null
+  },
+  {
+    "stage": "one-worker-backlog",
+    "requests_s": 119.9989462132497,
+    "p99_ms": 5.151121000380954,
+    "availability": 1.0,
+    "within_250ms": 1.0,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 1200,
+      "202": 1200,
+      "200": 1200
+    },
+    "accepted": 1200,
+    "succeeded": 1200,
+    "within_30s": 0.0,
+    "job_p99_s": 67.97811944,
+    "drain_s": 67.63464884700079,
+    "sampled_stack_cpu_cores_mean": 0.43143,
+    "sampled_stack_memory_gib_mean": 1.309533984375,
+    "approx_stack_cpu_seconds_per_1000_successes": 35.10219184322006,
+    "approx_stack_gib_hours_per_1000_successes": 0.029596350859510873,
+    "sampled_api_cpu_cores_mean": 0.032979999999999995,
+    "sampled_worker_cpu_cores_mean": 0.02014,
+    "sampled_postgres_cpu_cores_mean": 0.07892,
+    "resource_samples": 10,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": {
+      "jobs": 1,
+      "results": 1,
+      "outbox": 1
+    }
+  },
+  {
+    "stage": "overload-limited",
+    "requests_s": 100.64415917828774,
+    "p99_ms": 625.9191690005537,
+    "availability": 1.0,
+    "within_250ms": 0.9860904123199206,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 1237,
+      "202": 2,
+      "200": 1,
+      "429": 4799
+    },
+    "accepted": 2,
+    "succeeded": 2,
+    "within_30s": 1.0,
+    "job_p99_s": 1.8977689899999999,
+    "drain_s": 0.37208367100174655,
+    "sampled_stack_cpu_cores_mean": 0.35395,
+    "sampled_stack_memory_gib_mean": 1.2223922526041666,
+    "approx_stack_cpu_seconds_per_1000_successes": 10684.965745774774,
+    "approx_stack_gib_hours_per_1000_successes": 10.250364416643896,
+    "sampled_api_cpu_cores_mean": 0.0149,
+    "sampled_worker_cpu_cores_mean": 0.0021666666666666666,
+    "sampled_postgres_cpu_cores_mean": 0.03188333333333333,
+    "resource_samples": 6,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": null
+  },
+  {
+    "stage": "overload-unlimited",
+    "requests_s": 39.199048449561204,
+    "p99_ms": 4197.818953001843,
+    "availability": 0.5029308323563892,
+    "within_250ms": 0.0019538882375928096,
+    "client_drops": 3394,
+    "status_counts": {
+      "201": 939,
+      "202": 214,
+      "200": 134,
+      "503": 1272
+    },
+    "accepted": 229,
+    "succeeded": 229,
+    "within_30s": 0.8602620087336245,
+    "job_p99_s": 62.60748296,
+    "drain_s": 8.450750736003101,
+    "sampled_stack_cpu_cores_mean": 0.4821625,
+    "sampled_stack_memory_gib_mean": 1.2577890624999999,
+    "approx_stack_cpu_seconds_per_1000_successes": 155.24568722562816,
+    "approx_stack_gib_hours_per_1000_successes": 0.11249453555174807,
+    "sampled_api_cpu_cores_mean": 0.018025,
+    "sampled_worker_cpu_cores_mean": 0.0001625,
+    "sampled_postgres_cpu_cores_mean": 0.087575,
+    "resource_samples": 8,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": null
+  },
+  {
+    "stage": "pool-one",
+    "requests_s": 179.99508045546372,
+    "p99_ms": 124.40881099973922,
+    "availability": 1.0,
+    "within_250ms": 0.9986111111111111,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 3600,
+      "202": 3600,
+      "200": 3600
+    },
+    "accepted": 3600,
+    "succeeded": 3600,
+    "within_30s": 1.0,
+    "job_p99_s": 2.562189249999999,
+    "drain_s": 1.7587771350008552,
+    "sampled_stack_cpu_cores_mean": 0.8144833333333333,
+    "sampled_stack_memory_gib_mean": 1.1801728515624998,
+    "approx_stack_cpu_seconds_per_1000_successes": 13.973008424728212,
+    "approx_stack_gib_hours_per_1000_successes": 0.005624071564631404,
+    "sampled_api_cpu_cores_mean": 0.17576666666666665,
+    "sampled_worker_cpu_cores_mean": 0.07043333333333333,
+    "sampled_postgres_cpu_cores_mean": 0.21533333333333332,
+    "resource_samples": 6,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": {
+      "jobs": 1,
+      "results": 1,
+      "outbox": 1
+    }
+  },
+  {
+    "stage": "pool-sixteen",
+    "requests_s": 179.99561086702855,
+    "p99_ms": 78.0381690019567,
+    "availability": 1.0,
+    "within_250ms": 0.9987962962962963,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 3600,
+      "202": 3600,
+      "200": 3600
+    },
+    "accepted": 3600,
+    "succeeded": 3600,
+    "within_30s": 1.0,
+    "job_p99_s": 1.2785400199999999,
+    "drain_s": 0.3908622769995418,
+    "sampled_stack_cpu_cores_mean": 0.8837166666666667,
+    "sampled_stack_memory_gib_mean": 1.3222911783854165,
+    "approx_stack_cpu_seconds_per_1000_successes": 14.824917904648931,
+    "approx_stack_gib_hours_per_1000_successes": 0.006161746841183793,
+    "sampled_api_cpu_cores_mean": 0.1761,
+    "sampled_worker_cpu_cores_mean": 0.08875,
+    "sampled_postgres_cpu_cores_mean": 0.3022666666666667,
+    "resource_samples": 6,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": {
+      "jobs": 1,
+      "results": 1,
+      "outbox": 1
+    }
+  },
+  {
+    "stage": "ramp-120",
+    "requests_s": 359.9919552177632,
+    "p99_ms": 66.82640700091724,
+    "availability": 1.0,
+    "within_250ms": 1.0,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 7200,
+      "202": 7200,
+      "200": 7200
+    },
+    "accepted": 7200,
+    "succeeded": 7200,
+    "within_30s": 1.0,
+    "job_p99_s": 15.918960590000001,
+    "drain_s": 15.704233981003199,
+    "sampled_stack_cpu_cores_mean": 1.0881875,
+    "sampled_stack_memory_gib_mean": 1.0318997802734375,
+    "approx_stack_cpu_seconds_per_1000_successes": 11.44192502588703,
+    "approx_stack_gib_hours_per_1000_successes": 0.0030139107256888617,
+    "sampled_api_cpu_cores_mean": 0.1893,
+    "sampled_worker_cpu_cores_mean": 0.1613625,
+    "sampled_postgres_cpu_cores_mean": 0.328675,
+    "resource_samples": 8,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": null
+  },
+  {
+    "stage": "ramp-60",
+    "requests_s": 179.99759634510346,
+    "p99_ms": 7.9688850019010715,
+    "availability": 1.0,
+    "within_250ms": 1.0,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 3600,
+      "202": 3600,
+      "200": 3600
+    },
+    "accepted": 3600,
+    "succeeded": 3600,
+    "within_30s": 1.0,
+    "job_p99_s": 1.3088367199999997,
+    "drain_s": 1.712538013001904,
+    "sampled_stack_cpu_cores_mean": 0.9281,
+    "sampled_stack_memory_gib_mean": 0.8415397135416667,
+    "approx_stack_cpu_seconds_per_1000_successes": 15.910041708472297,
+    "approx_stack_gib_hours_per_1000_successes": 0.004007270511374416,
+    "sampled_api_cpu_cores_mean": 0.16485,
+    "sampled_worker_cpu_cores_mean": 0.10533333333333333,
+    "sampled_postgres_cpu_cores_mean": 0.2776666666666667,
+    "resource_samples": 6,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": null
+  },
+  {
+    "stage": "saturated-api",
+    "requests_s": 44.074701839996344,
+    "p99_ms": 4097.466797000379,
+    "availability": 0.6743690010664771,
+    "within_250ms": 0.002132954141485958,
+    "client_drops": 2388,
+    "status_counts": {
+      "201": 1126,
+      "202": 475,
+      "200": 296,
+      "503": 916
+    },
+    "accepted": 493,
+    "succeeded": 493,
+    "within_30s": 0.20486815415821502,
+    "job_p99_s": 62.81286448,
+    "drain_s": 17.06284971200148,
+    "sampled_stack_cpu_cores_mean": 0.395575,
+    "sampled_stack_memory_gib_mean": 1.0999168701171875,
+    "approx_stack_cpu_seconds_per_1000_successes": 64.90183009027002,
+    "approx_stack_gib_hours_per_1000_successes": 0.05012858765212897,
+    "sampled_api_cpu_cores_mean": 0.0191625,
+    "sampled_worker_cpu_cores_mean": 0.013162499999999999,
+    "sampled_postgres_cpu_cores_mean": 0.0866875,
+    "resource_samples": 8,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": null
+  },
+  {
+    "stage": "sustained",
+    "requests_s": 59.99941448601387,
+    "p99_ms": 15.41005800027051,
+    "availability": 1.0,
+    "within_250ms": 0.9991944444444445,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 12000,
+      "202": 12000,
+      "200": 12000
+    },
+    "accepted": 12000,
+    "succeeded": 12000,
+    "within_30s": 0.6548333333333334,
+    "job_p99_s": 246.00213887,
+    "drain_s": 195.9572132680005,
+    "sampled_stack_cpu_cores_mean": 0.770844,
+    "sampled_stack_memory_gib_mean": 1.4733218880208334,
+    "approx_stack_cpu_seconds_per_1000_successes": 51.1302796289862,
+    "approx_stack_gib_hours_per_1000_successes": 0.02714606043578032,
+    "sampled_api_cpu_cores_mean": 0.08045866666666666,
+    "sampled_worker_cpu_cores_mean": 0.05044933333333333,
+    "sampled_postgres_cpu_cores_mean": 0.13897866666666667,
+    "resource_samples": 75,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": null
+  },
+  {
+    "stage": "three-workers-backlog",
+    "requests_s": 119.9986086121304,
+    "p99_ms": 7.468087998859119,
+    "availability": 1.0,
+    "within_250ms": 1.0,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 1200,
+      "202": 1200,
+      "200": 1200
+    },
+    "accepted": 1200,
+    "succeeded": 1200,
+    "within_30s": 0.6683333333333333,
+    "job_p99_s": 32.64053783,
+    "drain_s": 21.332674280998617,
+    "sampled_stack_cpu_cores_mean": 0.4901333333333333,
+    "sampled_stack_memory_gib_mean": 1.2804313151041666,
+    "approx_stack_cpu_seconds_per_1000_successes": 20.96668770635883,
+    "approx_stack_gib_hours_per_1000_successes": 0.015214909499247031,
+    "sampled_api_cpu_cores_mean": 0.05423333333333333,
+    "sampled_worker_cpu_cores_mean": 0.024633333333333333,
+    "sampled_postgres_cpu_cores_mean": 0.10741666666666666,
+    "resource_samples": 6,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": {
+      "jobs": 1,
+      "results": 1,
+      "outbox": 1
+    }
+  },
+  {
+    "stage": "two-apis",
+    "requests_s": 114.64161393954213,
+    "p99_ms": 2612.416760999622,
+    "availability": 1.0,
+    "within_250ms": 0.0705718270571827,
+    "client_drops": 1210,
+    "status_counts": {
+      "201": 2390,
+      "202": 2390,
+      "200": 2390
+    },
+    "accepted": 2390,
+    "succeeded": 2390,
+    "within_30s": 0.010460251046025104,
+    "job_p99_s": 65.30528553,
+    "drain_s": 64.16366058899803,
+    "sampled_stack_cpu_cores_mean": 0.5241615384615385,
+    "sampled_stack_memory_gib_mean": 1.1954535757211537,
+    "approx_stack_cpu_seconds_per_1000_successes": 27.788543462912045,
+    "approx_stack_gib_hours_per_1000_successes": 0.017604789962017954,
+    "sampled_api_cpu_cores_mean": 0.02805384615384615,
+    "sampled_worker_cpu_cores_mean": 0.03307692307692308,
+    "sampled_postgres_cpu_cores_mean": 0.12593846153846155,
+    "resource_samples": 13,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": {
+      "jobs": 1,
+      "results": 1,
+      "outbox": 1
+    }
+  }
+]

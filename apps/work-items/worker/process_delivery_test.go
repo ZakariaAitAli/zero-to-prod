@@ -124,7 +124,7 @@ func validWorkerDelivery(
 		DeliveryTag:  42,
 		Body: []byte(`{
 			"type":"work_item.process",
-			"version":1,
+			"version":2,"delivery_id":"11111111-1111-4111-8111-111111111111",
 			"job_id":101,
 			"work_item_id":201
 		}`),
@@ -509,4 +509,8 @@ func TestProcessRabbitMQDeliveryRequeuesProcessingFailureBeforeDatabaseCompletio
 			events,
 		)
 	}
+}
+
+func (store *orderedCompleter) VerifyDeliveryIdentity(context.Context, int64, string) error {
+	return nil
 }

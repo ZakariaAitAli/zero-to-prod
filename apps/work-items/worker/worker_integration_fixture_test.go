@@ -94,6 +94,11 @@ func requireWorkerPostgresIntegrationFixture(
 		)
 	}
 
+	if _, err := fixturePool.Exec(ctx, `INSERT INTO public.outbox_messages(processing_job_id,event_type,payload)
+        VALUES ($1,'work_item.process',$2::jsonb)`, jobID, string(workerPayload(jobID, workItemID))); err != nil {
+		t.Fatal(err)
+	}
+
 	t.Cleanup(func() {
 		cleanupContext, cancel := context.WithTimeout(
 			context.Background(),
@@ -104,7 +109,7 @@ func requireWorkerPostgresIntegrationFixture(
 		if _, err := fixturePool.Exec(
 			cleanupContext,
 			`
-				WITH removed_results AS (DELETE FROM public.work_item_results WHERE processing_job_id=$1),
+				WITH removed_outbox AS (DELETE FROM public.outbox_messages WHERE processing_job_id=$1), removed_results AS (DELETE FROM public.work_item_results WHERE processing_job_id=$1),
                 removed_jobs AS (DELETE FROM public.processing_jobs WHERE id=$1)
                 DELETE FROM public.work_items WHERE id=$2
 			`,

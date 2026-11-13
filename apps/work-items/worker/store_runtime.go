@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/observability"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,6 +26,7 @@ func newPostgresWorkerStore(
 			err,
 		)
 	}
+	config.ConnConfig.Tracer = observability.QueryTracer{}
 
 	pool, err := pgxpool.NewWithConfig(
 		ctx,

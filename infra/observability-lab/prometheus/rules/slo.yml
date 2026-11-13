@@ -1,0 +1,227 @@
+# Work Items SLIs and SLO burn-rate alerts (docs/reference/work-items-slos.md).
+#
+# SLOs over a 28-day window:
+#   availability  99.5 %  of business requests answered without a 5xx
+#   latency       99 %    of business requests answered within 0.25 s
+#   freshness     99 %    of accepted jobs completed within 30 s
+#
+# Business requests are every route except /health, /ready, /version, and
+# requests that matched no route. The ratios below are bad-event ratios:
+# they are NaN without traffic, so no alert fires on an idle service.
+#
+# Burn rate = bad ratio / (1 - SLO). The page condition (14.4x over 1 h and
+# 5 m) spends about 2.14 % of a 28-day budget in one hour; the ticket condition (6x
+# over 6 h and 30 m) spends about 5.36 % in six hours. The short window stops the
+# alert soon after recovery.
+#
+# Bucket boundaries are matched as Prometheus 3 stores them: whole numbers
+# carry ".0" (le="30.0"); matching the integer spelling would silently yield
+# no data, which was caught in the first lab run.
+
+groups:
+  - name: work-items-sli
+    rules:
+      - record: work_items:availability_bad:ratio_rate5m
+        expr: |
+          (
+            sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched",code=~"5.."}[5m]))
+            or
+            0 * sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[5m]))
+          )
+          /
+          sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[5m]))
+      - record: work_items:availability_bad:ratio_rate30m
+        expr: |
+          (
+            sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched",code=~"5.."}[30m]))
+            or
+            0 * sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[30m]))
+          )
+          /
+          sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[30m]))
+      - record: work_items:availability_bad:ratio_rate1h
+        expr: |
+          (
+            sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched",code=~"5.."}[1h]))
+            or
+            0 * sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[1h]))
+          )
+          /
+          sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[1h]))
+      - record: work_items:availability_bad:ratio_rate6h
+        expr: |
+          (
+            sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched",code=~"5.."}[6h]))
+            or
+            0 * sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[6h]))
+          )
+          /
+          sum(rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[6h]))
+
+      - record: work_items:latency_bad:ratio_rate5m
+        expr: |
+          1 - (
+            sum(rate(work_items_http_request_duration_seconds_bucket{route!~"/health|/ready|/version|unmatched",le="0.25"}[5m]))
+            /
+            sum(rate(work_items_http_request_duration_seconds_count{route!~"/health|/ready|/version|unmatched"}[5m]))
+          )
+      - record: work_items:latency_bad:ratio_rate30m
+        expr: |
+          1 - (
+            sum(rate(work_items_http_request_duration_seconds_bucket{route!~"/health|/ready|/version|unmatched",le="0.25"}[30m]))
+            /
+            sum(rate(work_items_http_request_duration_seconds_count{route!~"/health|/ready|/version|unmatched"}[30m]))
+          )
+      - record: work_items:latency_bad:ratio_rate1h
+        expr: |
+          1 - (
+            sum(rate(work_items_http_request_duration_seconds_bucket{route!~"/health|/ready|/version|unmatched",le="0.25"}[1h]))
+            /
+            sum(rate(work_items_http_request_duration_seconds_count{route!~"/health|/ready|/version|unmatched"}[1h]))
+          )
+      - record: work_items:latency_bad:ratio_rate6h
+        expr: |
+          1 - (
+            sum(rate(work_items_http_request_duration_seconds_bucket{route!~"/health|/ready|/version|unmatched",le="0.25"}[6h]))
+            /
+            sum(rate(work_items_http_request_duration_seconds_count{route!~"/health|/ready|/version|unmatched"}[6h]))
+          )
+
+      - record: work_items:freshness_bad:ratio_rate5m
+        expr: |
+          1 - (
+            sum(rate(work_items_worker_job_completion_latency_seconds_bucket{le="30.0"}[5m]))
+            /
+            sum(rate(work_items_worker_job_completion_latency_seconds_count[5m]))
+          )
+      - record: work_items:freshness_bad:ratio_rate30m
+        expr: |
+          1 - (
+            sum(rate(work_items_worker_job_completion_latency_seconds_bucket{le="30.0"}[30m]))
+            /
+            sum(rate(work_items_worker_job_completion_latency_seconds_count[30m]))
+          )
+      - record: work_items:freshness_bad:ratio_rate1h
+        expr: |
+          1 - (
+            sum(rate(work_items_worker_job_completion_latency_seconds_bucket{le="30.0"}[1h]))
+            /
+            sum(rate(work_items_worker_job_completion_latency_seconds_count[1h]))
+          )
+      - record: work_items:freshness_bad:ratio_rate6h
+        expr: |
+          1 - (
+            sum(rate(work_items_worker_job_completion_latency_seconds_bucket{le="30.0"}[6h]))
+            /
+            sum(rate(work_items_worker_job_completion_latency_seconds_count[6h]))
+          )
+
+  - name: work-items-slo-alerts
+    rules:
+      - alert: WorkItemsAvailabilityFastBurn
+        expr: |
+          work_items:availability_bad:ratio_rate1h > (14.4 * 0.005)
+          and
+          work_items:availability_bad:ratio_rate5m > (14.4 * 0.005)
+        for: 1m
+        labels:
+          severity: page
+          slo: availability
+        annotations:
+          summary: Work Items API is failing requests fast enough to exhaust the monthly error budget in about two days.
+          description: '{{ $value | humanizePercentage }} of business requests returned 5xx over the last hour (SLO allows 0.5 %).'
+          runbook: docs/runbooks/work-items-observability.md#availability-burn
+
+      - alert: WorkItemsAvailabilitySlowBurn
+        expr: |
+          work_items:availability_bad:ratio_rate6h > (6 * 0.005)
+          and
+          work_items:availability_bad:ratio_rate30m > (6 * 0.005)
+        for: 5m
+        labels:
+          severity: ticket
+          slo: availability
+        annotations:
+          summary: Work Items API error rate is consuming the error budget steadily.
+          description: '{{ $value | humanizePercentage }} of business requests returned 5xx over the last six hours.'
+          runbook: docs/runbooks/work-items-observability.md#availability-burn
+
+      - alert: WorkItemsLatencyFastBurn
+        expr: |
+          work_items:latency_bad:ratio_rate1h > (14.4 * 0.01)
+          and
+          work_items:latency_bad:ratio_rate5m > (14.4 * 0.01)
+        for: 1m
+        labels:
+          severity: page
+          slo: latency
+        annotations:
+          summary: Work Items API requests are slower than 250 ms often enough to exhaust the latency budget in about two days.
+          description: '{{ $value | humanizePercentage }} of business requests took longer than 250 ms over the last hour (SLO allows 1 %).'
+          runbook: docs/runbooks/work-items-observability.md#latency-burn
+
+      - alert: WorkItemsLatencySlowBurn
+        expr: |
+          work_items:latency_bad:ratio_rate6h > (6 * 0.01)
+          and
+          work_items:latency_bad:ratio_rate30m > (6 * 0.01)
+        for: 5m
+        labels:
+          severity: ticket
+          slo: latency
+        annotations:
+          summary: Work Items API latency is consuming the latency budget steadily.
+          description: '{{ $value | humanizePercentage }} of business requests took longer than 250 ms over the last six hours.'
+          runbook: docs/runbooks/work-items-observability.md#latency-burn
+
+      - alert: WorkItemsFreshnessFastBurn
+        expr: |
+          work_items:freshness_bad:ratio_rate1h > (14.4 * 0.01)
+          and
+          work_items:freshness_bad:ratio_rate5m > (14.4 * 0.01)
+        for: 1m
+        labels:
+          severity: page
+          slo: freshness
+        annotations:
+          summary: Accepted jobs are completing later than 30 s often enough to exhaust the freshness budget in about two days.
+          description: '{{ $value | humanizePercentage }} of jobs completed in the last hour took longer than 30 s from acceptance.'
+          runbook: docs/runbooks/work-items-observability.md#async-stalled
+
+  - name: work-items-symptoms
+    rules:
+      # Completion latency is observed only when a job completes; work that is
+      # stuck produces no samples. The oldest accepted job's age covers that.
+      - alert: WorkItemsAsyncProcessingStalled
+        expr: max(work_items_processing_job_oldest_accepted_age_seconds) > 120
+        for: 1m
+        labels:
+          severity: page
+          slo: freshness
+        annotations:
+          summary: An accepted job has waited more than two minutes without completing.
+          description: The oldest accepted job is {{ $value | humanizeDuration }} old. Users waiting on processing see no result.
+          runbook: docs/runbooks/work-items-observability.md#async-stalled
+
+      # When the API is down, its own request metrics stop, so the
+      # availability SLI cannot see the failure. Treat absence as an outage.
+      - alert: WorkItemsAPIUnavailable
+        expr: up{job="work-items-api"} == 0 or absent(up{job="work-items-api"})
+        for: 1m
+        labels:
+          severity: page
+          slo: availability
+        annotations:
+          summary: Prometheus cannot reach the Work Items API; its SLIs are blind and users are likely failing.
+          description: The API metrics endpoint has not answered for more than a minute.
+          runbook: docs/runbooks/work-items-observability.md#api-unavailable
+
+      - alert: WorkItemsBacklogUnobservable
+        expr: work_items_backlog_scrape_success == 0
+        for: 2m
+        labels:
+          severity: ticket
+        annotations:
+          summary: The API cannot read the processing backlog from PostgreSQL.
+          description: Backlog gauges are missing, so the stalled-processing alert cannot fire.
+          runbook: docs/runbooks/work-items-observability.md#backlog-unobservable

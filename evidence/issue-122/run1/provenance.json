@@ -1,0 +1,10 @@
+{
+  "run": "run1",
+  "base_commit": "6d10868ecd58fb873ec15a9fd015e258d27c7cbf",
+  "work_items_tree_of_built_working_copy": "23ba2002aa3b5f85aecb3aa92cbb4ce54a3cae4e",
+  "lab_tree_of_working_copy": "6a40d3ba31b911390f30d47eef55c099a1561d31",
+  "api_image": "sha256:f522e95ef56ca08bde9da46c30c32083c38993f7e900e898bcea04105f1de096",
+  "worker_image": "sha256:ed4e7d091545e943c87ed7c51521e72d4bd0f659141a8404fb017e8c202f63c7",
+  "docker": "29.6.2",
+  "started": "2026-10-18T14:00:59Z"
+}

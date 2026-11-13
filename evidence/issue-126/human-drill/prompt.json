@@ -1,0 +1,5 @@
+{
+  "prompt_unix": 1792345554.5146143,
+  "question": "Identify unhealthy component from local alerts/notifications and choose first investigation or recovery action; fault not disclosed.",
+  "automatic_recovery_deadline_seconds_after_watchdog_start": 300
+}

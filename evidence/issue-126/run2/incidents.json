@@ -1,0 +1,42 @@
+[
+  {
+    "service": "api",
+    "alert": "LocalDrillAPIUnavailable",
+    "fault_unix": 1792345176.4854307,
+    "operator": "script; fault known",
+    "notification_unix": 1792345207.7771664,
+    "script_ack_unix": 1792345208.3628666,
+    "business_recovered_unix": 1792345215.211656,
+    "resolved_notification_unix": 1792345227.788996
+  },
+  {
+    "service": "postgres",
+    "alert": "LocalDrillDatabaseUnavailable",
+    "fault_unix": 1792345248.2345715,
+    "operator": "script; fault known",
+    "notification_unix": 1792345277.7704263,
+    "script_ack_unix": 1792345277.9398022,
+    "business_recovered_unix": 1792345284.7535741,
+    "resolved_notification_unix": 1792345297.7833843
+  },
+  {
+    "service": "rabbitmq",
+    "alert": "LocalDrillBrokerUnavailable",
+    "fault_unix": 1792345318.7809258,
+    "operator": "script; fault known",
+    "notification_unix": 1792345347.7699795,
+    "script_ack_unix": 1792345348.5367825,
+    "business_recovered_unix": 1792345355.7152178,
+    "resolved_notification_unix": 1792345377.776778
+  },
+  {
+    "service": "worker",
+    "alert": "LocalDrillBacklog",
+    "fault_unix": 1792345398.756071,
+    "operator": "script; fault known",
+    "notification_unix": 1792345447.7621026,
+    "script_ack_unix": 1792345448.6096916,
+    "business_recovered_unix": 1792345450.9193804,
+    "resolved_notification_unix": 1792345477.776827
+  }
+]
