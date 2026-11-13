@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Scripted operations drills under sustained traffic; not human MTTA."""
+import concurrent.futures,json,subprocess,sys,threading,time,urllib.request,urllib.error
+from pathlib import Path
+root=Path(__file__).resolve().parents[1];helper=str(root/'tools/operations-lab-local')
+out=Path(sys.argv[1]);out.mkdir(parents=True,exist_ok=False)
+duration=int(sys.argv[2]) if len(sys.argv)>2 else 1200
+rows=[];incidents=[];samples=[];stop=threading.Event();epoch=time.time()
+def command(*args):
+ p=subprocess.run([helper,*args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+ with (out/'commands.log').open('a') as f:f.write(' '.join(args)+'\n'+p.stdout+'\n')
+ if p.returncode:raise RuntimeError('command failed: '+' '.join(args))
+ return p.stdout
+
+def http(path,body=None,base='http://127.0.0.1:18085'):
+ start=time.time()
+ try:
+  req=urllib.request.Request(base+path,data=None if body is None else json.dumps(body).encode(),headers={'Content-Type':'application/json'})
+  with urllib.request.urlopen(req,timeout=3) as r:code=r.status;data=json.load(r)
+ except urllib.error.HTTPError as e:code=e.code;data={}
+ except Exception:code=0;data={}
+ rows.append({'start':start,'path':path,'status':code,'seconds':time.time()-start})
+ return code,data
+
+def load():
+ i=0
+ while not stop.is_set():
+  c,item=http('/items',{'title':'operations drill '+str(i)});i+=1
+  if c==201:http('/items/'+str(item['id'])+'/process',{})
+  http('/items');stop.wait(.25)
+
+def receipts():
+ try:
+  with urllib.request.urlopen('http://127.0.0.1:18086',timeout=3) as r:return [json.loads(x) for x in r.read().decode().splitlines()]
+ except Exception:return []
+
+def delivered(name,start,status):
+ return next((r for r in receipts() if r['received_unix']>=start and any(a['labels']['alertname']==name and a['status']==status for a in r['payload'].get('alerts',[]))),None)
+
+def wait_for(fn,timeout=240):
+ end=time.time()+timeout
+ while time.time()<end:
+  value=fn()
+  if value:return value
+  time.sleep(1)
+ raise RuntimeError('condition timed out')
+
+def business():
+ c,item=http('/items',{'title':'recovery proof'})
+ if c!=201:return False
+ c,job=http('/items/'+str(item['id'])+'/process',{})
+ if c!=202:return False
+ for _ in range(30):
+  c,j=http('/processing-jobs/'+str(job['id']))
+  if j.get('state')=='succeeded':return True
+  time.sleep(.5)
+ return False
+
+def drill(service,alert):
+ start=time.time();incident={'service':service,'alert':alert,'fault_unix':start,'operator':'script; fault known'};incidents.append(incident)
+ command('compose','stop',service)
+ try:
+  receipt=wait_for(lambda:delivered(alert,start,'firing'))
+  incident['notification_unix']=receipt['received_unix'];incident['script_ack_unix']=time.time()
+ finally:
+  command('compose','up','-d','--wait',service)
+ wait_for(business);incident['business_recovered_unix']=time.time()
+ resolved=wait_for(lambda:delivered(alert,start,'resolved'))
+ incident['resolved_notification_unix']=resolved['received_unix']
+ (out/'incidents.json').write_text(json.dumps(incidents,indent=2)+'\n')
+
+def sample():
+ while not stop.is_set():
+  p=subprocess.run(['docker','stats','--no-stream','--format','{{json .}}'],capture_output=True,text=True)
+  samples.append({'unix':time.time(),'containers':[json.loads(x) for x in p.stdout.splitlines() if 'zero-to-prod-operations-lab-' in x]})
+  stop.wait(10)
+
+t=threading.Thread(target=load);s=threading.Thread(target=sample)
+try:
+ wait_for(business);epoch=time.time();t.start();s.start();time.sleep(30)
+ for service,alert in [('api','LocalDrillAPIUnavailable'),('postgres','LocalDrillDatabaseUnavailable'),('rabbitmq','LocalDrillBrokerUnavailable'),('worker','LocalDrillBacklog')]:
+  drill(service,alert);time.sleep(20)
+ while time.time()-epoch<duration:time.sleep(1)
+ wait_for(business)
+finally:
+ stop.set()
+ if t.is_alive():t.join()
+ if s.is_alive():s.join()
+ # Recover intentionally stopped services before final state queries or cleanup.
+ command('compose','up','-d','--wait','postgres','rabbitmq','api','worker')
+ (out/'requests.json').write_text(json.dumps(rows,indent=2)+'\n')
+ (out/'resources.json').write_text(json.dumps(samples,indent=2)+'\n')
+ (out/'notifications.json').write_text(json.dumps(receipts(),indent=2)+'\n')
+ (out/'incidents.json').write_text(json.dumps(incidents,indent=2)+'\n')
+ sql="SELECT json_build_object('jobs',count(*),'succeeded',count(*) FILTER(WHERE state='succeeded'),'accepted',count(*) FILTER(WHERE state='accepted'),'fresh',count(*) FILTER(WHERE state='succeeded' AND finished_at-created_at<=interval '30 seconds')) FROM processing_jobs WHERE created_at >= to_timestamp("+str(epoch)+")"
+ try:
+  (out/'database.json').write_text(command('compose','exec','-T','postgres','psql','-U','zero_to_prod_admin','-d','zero_to_prod','-Atc',sql)+'\n')
+ finally:
+  command('stop')
+ summary={'elapsed_s':time.time()-epoch,'requests':len(rows),'http_errors':sum(r['status']==0 or r['status']>=500 for r in rows),'incidents':len(incidents),'human_response_measured':False}
+ (out/'summary.json').write_text(json.dumps(summary,indent=2)+'\n');print(json.dumps(summary))

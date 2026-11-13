@@ -1,0 +1,76 @@
+[
+  {
+    "name": "topology-and-scheduled-backups",
+    "time_utc": "2026-10-18T17:11:14.381956+00:00",
+    "system_identifier": "7698055011423363113",
+    "standby_in_recovery": true,
+    "quorum_members": 3,
+    "verified_backup_generations": 3,
+    "backup_health": "healthy",
+    "retention_max": 3
+  },
+  {
+    "name": "api-instance-loss",
+    "time_utc": "2026-10-18T17:11:24.012073+00:00",
+    "requests": 131,
+    "errors": 1,
+    "last_error_after_failure_s": 0.14255012099602027,
+    "accepted_job_completed": 1,
+    "objective_s": 10
+  },
+  {
+    "name": "quorum-leader-loss",
+    "time_utc": "2026-10-18T17:11:37.479500+00:00",
+    "leader": "rabbit@rabbitmq",
+    "known_confirmed_messages": 25,
+    "jobs_completed": 25,
+    "rto_s": 9.262796305003576,
+    "objective_s": 60,
+    "nodes_rejoined": 3
+  },
+  {
+    "name": "quorum-majority-loss",
+    "time_utc": "2026-10-18T17:11:58.239453+00:00",
+    "previously_confirmed_jobs": 10,
+    "accepted_without_confirm": 37,
+    "not_marked_published_without_majority": true,
+    "all_11_eventually_completed": true,
+    "resume_s": 9.788577972001804
+  },
+  {
+    "name": "verified-transfer-and-pitr-target",
+    "time_utc": "2026-10-18T17:12:23.321458+00:00",
+    "target_name": "ha_before_delete",
+    "target_marker_timestamp": "2026-10-18 17:12:02.910926+00",
+    "archived_wal": "000000010000000000000028",
+    "transfer_s": 14.956206081005803,
+    "boundary": "separate local volume, primary cannot mount it; same physical host/disk, not independent-site durability"
+  },
+  {
+    "name": "postgres-fenced-promotion",
+    "time_utc": "2026-10-18T17:12:35.238024+00:00",
+    "old_primary_running": false,
+    "new_primary": "pg-standby",
+    "caught_up_marker_preserved": true,
+    "async_staleness_observed_then_replayed": true,
+    "rto_s": 5.549598442994466,
+    "observed_marker_rpo_s": 0,
+    "rpo_limit": "caught-up local case only; no bound proved for unreceived WAL/partitions",
+    "post_failover_job_completed": 60
+  },
+  {
+    "name": "destructive-primary-volume-pitr",
+    "time_utc": "2026-10-18T17:12:53.338166+00:00",
+    "destroyed_volume": "zero-to-prod-availability-lab_postgres_data",
+    "ownership_and_stopped_state_verified": true,
+    "restored_system_identifier": "7698055011423363113",
+    "restore_source": "verified local transferred copy only",
+    "original_backup_archive_standby_not_mounted": true,
+    "before_target_marker_restored": true,
+    "after_target_and_post_failover_data_absent": true,
+    "rto_s": 13.184112114999152,
+    "objective_s": 600,
+    "rpo": "intentional named-point recovery; later commits deliberately discarded, not zero-loss DR",
+    "target_timestamp": "2026-10-18 17:12:02.910926+00"
+  }
+]

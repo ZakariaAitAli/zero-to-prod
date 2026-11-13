@@ -315,3 +315,7 @@ func TestRunWorkerProcessWiresRuntimeAndClosesResourcesOnCancellation(
 		)
 	}
 }
+
+func (store *stubWorkerRuntimeStore) VerifyDeliveryIdentity(context.Context, int64, string) error {
+	return nil
+}

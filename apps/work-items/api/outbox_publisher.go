@@ -4,6 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
+	"github.com/ZakariaAitAli/zero-to-prod/apps/work-items/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const outboxPublishFailureCode = "broker_publish_failed"
@@ -19,6 +25,9 @@ type outboxMessage struct {
 	EventType       string
 	Payload         []byte
 	PublishAttempts int
+	CreatedAt       time.Time
+	// TraceParent is the W3C traceparent stored at acceptance, or "".
+	TraceParent string
 }
 
 type outboxPublisherStore interface {
@@ -41,16 +50,40 @@ func publishNextOutboxMessage(
 		return false, nil
 	}
 	if err != nil {
+		outboxPublishResults.WithLabelValues("store_error").Inc()
 		return false, fmt.Errorf(
 			"begin outbox publish attempt: %w",
 			err,
 		)
 	}
 
-	if err := publisher.Publish(ctx, message); err != nil {
-		publishErr := fmt.Errorf(
+	// The publish continues the trace of the request that accepted the job,
+	// even though that request finished earlier.
+	ctx, span := apiTracer.Start(
+		observability.ContextWithTraceParent(ctx, message.TraceParent),
+		message.EventType+" publish",
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "rabbitmq"),
+			attribute.String("messaging.operation.type", "send"),
+			attribute.Int64("work_items.outbox_id", message.ID),
+			attribute.Int64("work_items.job_id", message.ProcessingJobID),
+			attribute.Int("work_items.publish_attempt", message.PublishAttempts),
+		),
+	)
+	defer span.End()
+
+	started := time.Now()
+	publishErr := publisher.Publish(ctx, message)
+	outboxPublishDuration.Observe(time.Since(started).Seconds())
+
+	if publishErr != nil {
+		outboxPublishResults.WithLabelValues("broker_error").Inc()
+		span.SetStatus(codes.Error, "broker publish failed")
+
+		publishErr = fmt.Errorf(
 			"publish outbox message: %w",
-			errors.Join(errBrokerPublish, err),
+			errors.Join(errBrokerPublish, publishErr),
 		)
 
 		if recordErr := store.RecordOutboxPublishFailure(
@@ -74,10 +107,19 @@ func publishNextOutboxMessage(
 		ctx,
 		message.ID,
 	); err != nil {
+		// The broker holds the message; the row stays unpublished and is sent
+		// again, a duplicate the worker already tolerates.
+		outboxPublishResults.WithLabelValues("store_error").Inc()
+		span.SetStatus(codes.Error, "mark published failed")
 		return true, fmt.Errorf(
 			"mark outbox message published: %w",
 			err,
 		)
+	}
+
+	outboxPublishResults.WithLabelValues("published").Inc()
+	if !message.CreatedAt.IsZero() {
+		outboxPublishLag.Observe(time.Since(message.CreatedAt).Seconds())
 	}
 
 	return true, nil

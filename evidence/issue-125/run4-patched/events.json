@@ -1,0 +1,57 @@
+[
+  {
+    "name": "expand schema",
+    "start": 0.0012269779981579632,
+    "end": 0.2766523039972526
+  },
+  {
+    "name": "blue business on expanded schema",
+    "start": 0.27666242999839596,
+    "end": 0.5022104759991635
+  },
+  {
+    "name": "switch green",
+    "start": 2.5023286279974855,
+    "end": 3.0803932749986416
+  },
+  {
+    "name": "green business",
+    "start": 5.080493237001065,
+    "end": 5.505962923998595
+  },
+  {
+    "name": "rollback blue",
+    "start": 5.50596480799868,
+    "end": 6.007804389002558
+  },
+  {
+    "name": "bad candidate startup",
+    "start": 8.008028247997572,
+    "end": 14.931229449000966
+  },
+  {
+    "name": "bad candidate switch refused",
+    "start": 16.93148667800415,
+    "end": 17.024527228997613
+  },
+  {
+    "name": "blue survives failed rollout",
+    "start": 17.024532347000786,
+    "end": 17.555983233003644
+  },
+  {
+    "name": "restore green",
+    "start": 17.555984883998462,
+    "end": 23.844821826001862
+  },
+  {
+    "name": "switch restored green",
+    "start": 23.8448277819989,
+    "end": 24.648266042000614
+  },
+  {
+    "name": "restored green business",
+    "start": 26.648396764998324,
+    "end": 26.878345375997014
+  }
+]

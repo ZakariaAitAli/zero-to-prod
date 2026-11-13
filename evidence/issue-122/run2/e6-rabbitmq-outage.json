@@ -1,0 +1,776 @@
+{
+  "experiment": "e6-rabbitmq-outage",
+  "started": "2026-10-18T14:50:16Z",
+  "checks": {
+    "stalled_alert_fired": true,
+    "api_stayed_available": true,
+    "outbox_backlog_visible": true,
+    "publisher_degraded_logged": true,
+    "backlog_drained": true,
+    "delayed_job_trace_spans_outage": true
+  },
+  "fault": {
+    "action": "docker stop rabbitmq",
+    "at": "2026-10-18T14:50:47Z"
+  },
+  "alerts": [
+    {
+      "alert": "WorkItemsAsyncProcessingStalled",
+      "fired": true,
+      "seconds_until_firing": 200.1,
+      "active_at": "2026-10-18T14:52:54.363959511Z",
+      "summary": "An accepted job has waited more than two minutes without completing.",
+      "description": "The oldest accepted job is 3m 6s old. Users waiting on processing see no result.",
+      "runbook": "docs/runbooks/work-items-observability.md#async-stalled"
+    }
+  ],
+  "during_outage": {
+    "availability_bad_5m": [],
+    "availability_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:availability_bad:ratio_rate1h"
+        },
+        "value": 0.13442928213598893
+      }
+    ],
+    "latency_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate5m"
+        },
+        "value": 0.0
+      }
+    ],
+    "latency_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate1h"
+        },
+        "value": 0.1851993297121557
+      }
+    ],
+    "freshness_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate5m"
+        },
+        "value": 0.0
+      }
+    ],
+    "freshness_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate1h"
+        },
+        "value": 0.023603917820693043
+      }
+    ],
+    "requests_by_route_code_1m": [
+      {
+        "metric": {
+          "code": "200",
+          "route": "/processing-jobs/{id}"
+        },
+        "value": 4.000160006400256
+      },
+      {
+        "metric": {
+          "code": "201",
+          "route": "/items"
+        },
+        "value": 4.000160006400256
+      },
+      {
+        "metric": {
+          "code": "202",
+          "route": "/items/{id}/process"
+        },
+        "value": 4.000160006400256
+      }
+    ],
+    "latency_p95_1m": [
+      {
+        "metric": {},
+        "value": 0.004765886287625418
+      }
+    ],
+    "accepted_jobs": [
+      {
+        "metric": {
+          "__name__": "work_items_processing_jobs_accepted",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 785.0
+      }
+    ],
+    "oldest_accepted_age_s": [
+      {
+        "metric": {
+          "__name__": "work_items_processing_job_oldest_accepted_age_seconds",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 196.260964
+      }
+    ],
+    "outbox_unpublished": [
+      {
+        "metric": {
+          "__name__": "work_items_outbox_unpublished_messages",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 785.0
+      }
+    ],
+    "oldest_unpublished_age_s": [
+      {
+        "metric": {
+          "__name__": "work_items_outbox_oldest_unpublished_age_seconds",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 196.260964
+      }
+    ],
+    "backlog_scrape_success": [
+      {
+        "metric": {
+          "__name__": "work_items_backlog_scrape_success",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "queue_ready": [],
+    "queue_unacked": [],
+    "queue_consumers": [],
+    "outbox_publish_rate_1m": [
+      {
+        "metric": {
+          "result": "published"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "result": "broker_error"
+        },
+        "value": 0.0
+      }
+    ],
+    "broker_connect_failures_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.20000800032001279
+      }
+    ],
+    "worker_deliveries_1m": [
+      {
+        "metric": {
+          "redelivered": "false",
+          "settlement": "ack"
+        },
+        "value": 0.0
+      }
+    ],
+    "worker_session_exits_1m": [
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.20000800032001279
+      }
+    ],
+    "completion_latency_p95_5m": [
+      {
+        "metric": {},
+        "value": 0.4825310559006211
+      }
+    ],
+    "pool_acquired": [
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "pool_wait_s_per_s_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "cpu_cores_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.012800512020480811
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0006000240009600611
+      }
+    ],
+    "rss_bytes": [
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 33882112.0
+      },
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 33325056.0
+      }
+    ],
+    "pg_up": [
+      {
+        "metric": {
+          "__name__": "pg_up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      }
+    ],
+    "targets_up": [
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "otel-collector:8888",
+          "job": "otel-collector"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "loki:3100",
+          "job": "loki"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues"
+        },
+        "value": 0.0
+      }
+    ]
+  },
+  "client_during_outage": {
+    "requests": 2415,
+    "by_operation_status": {
+      "create:201": 805,
+      "get_job:200": 805,
+      "process:202": 805
+    },
+    "server_errors": 0,
+    "connection_failures": 0,
+    "latency_s": {
+      "p50": 0.004,
+      "p95": 0.0065,
+      "p99": 0.0074
+    }
+  },
+  "publisher_logs": [
+    {
+      "service": "work-items-api",
+      "trace_id": null,
+      "level": "warn",
+      "line": "outbox publisher degraded",
+      "error": "publish outbox message: broker publish failed\npublish RabbitMQ message: Exception (504) Reason: \"channel/connection is not open\""
+    }
+  ],
+  "recovery": {
+    "rabbitmq_healthy": true,
+    "at": "2026-10-18T14:54:14Z",
+    "backlog_drained": true,
+    "drain_seconds_after_restart": 16.1
+  },
+  "delayed_job": {
+    "job_id": 6126,
+    "state": "succeeded",
+    "trace_id": "c2e3ef02f10fe6936b3ddd0bf9021832",
+    "spans": [
+      {
+        "service": "work-items-api",
+        "name": "POST /items/{id}/process",
+        "span_id": "536f7fe8a4133a21",
+        "parent": [],
+        "kind": "server",
+        "duration_ms": 2.166,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-api",
+        "name": "work_item.process publish",
+        "span_id": "d2d10a9f55a36226",
+        "parent": [
+          "536f7fe8a4133a21"
+        ],
+        "kind": "producer",
+        "duration_ms": 1.603,
+        "error": false,
+        "status_description": null
+      },
+      {
+        "service": "work-items-worker",
+        "name": "work_item.process process",
+        "span_id": "1a85f84d58582bd0",
+        "parent": [
+          "d2d10a9f55a36226"
+        ],
+        "kind": "consumer",
+        "duration_ms": 2.831,
+        "error": false,
+        "status_description": null
+      }
+    ]
+  },
+  "after_recovery": {
+    "availability_bad_5m": [],
+    "availability_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:availability_bad:ratio_rate1h"
+        },
+        "value": 0.1327977357428344
+      }
+    ],
+    "latency_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate5m"
+        },
+        "value": 0.0
+      }
+    ],
+    "latency_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate1h"
+        },
+        "value": 0.18295153201217196
+      }
+    ],
+    "freshness_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate5m"
+        },
+        "value": 0.6398570151921359
+      }
+    ],
+    "freshness_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate1h"
+        },
+        "value": 0.13886131955903525
+      }
+    ],
+    "requests_by_route_code_1m": [
+      {
+        "metric": {
+          "code": "200",
+          "route": "/processing-jobs/{id}"
+        },
+        "value": 2.520050401008021
+      },
+      {
+        "metric": {
+          "code": "201",
+          "route": "/items"
+        },
+        "value": 2.520050401008021
+      },
+      {
+        "metric": {
+          "code": "202",
+          "route": "/items/{id}/process"
+        },
+        "value": 2.520050401008021
+      }
+    ],
+    "latency_p95_1m": [
+      {
+        "metric": {},
+        "value": 0.004800802139037433
+      }
+    ],
+    "accepted_jobs": [
+      {
+        "metric": {
+          "__name__": "work_items_processing_jobs_accepted",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "oldest_accepted_age_s": [
+      {
+        "metric": {
+          "__name__": "work_items_processing_job_oldest_accepted_age_seconds",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "outbox_unpublished": [
+      {
+        "metric": {
+          "__name__": "work_items_outbox_unpublished_messages",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "oldest_unpublished_age_s": [
+      {
+        "metric": {
+          "__name__": "work_items_outbox_oldest_unpublished_age_seconds",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "backlog_scrape_success": [
+      {
+        "metric": {
+          "__name__": "work_items_backlog_scrape_success",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      }
+    ],
+    "queue_ready": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_messages_ready",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 0.0
+      }
+    ],
+    "queue_unacked": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_messages_unacked",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 0.0
+      }
+    ],
+    "queue_consumers": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_consumers",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 1.0
+      }
+    ],
+    "outbox_publish_rate_1m": [
+      {
+        "metric": {
+          "result": "published"
+        },
+        "value": 16.620332406648135
+      },
+      {
+        "metric": {
+          "result": "broker_error"
+        },
+        "value": 0.0
+      }
+    ],
+    "broker_connect_failures_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.1600032000640013
+      }
+    ],
+    "worker_deliveries_1m": [
+      {
+        "metric": {
+          "redelivered": "false",
+          "settlement": "ack"
+        },
+        "value": 16.620997259835594
+      }
+    ],
+    "worker_session_exits_1m": [
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.12000720043202594
+      }
+    ],
+    "completion_latency_p95_5m": [
+      {
+        "metric": {},
+        "value": 272.38461538461536
+      }
+    ],
+    "pool_acquired": [
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "pool_wait_s_per_s_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "cpu_cores_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.017000340006800133
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.02740164409864594
+      }
+    ],
+    "rss_bytes": [
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 31457280.0
+      },
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 29728768.0
+      }
+    ],
+    "pg_up": [
+      {
+        "metric": {
+          "__name__": "pg_up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      }
+    ],
+    "targets_up": [
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "otel-collector:8888",
+          "job": "otel-collector"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "loki:3100",
+          "job": "loki"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues"
+        },
+        "value": 1.0
+      }
+    ]
+  },
+  "freshness_alert": {
+    "WorkItemsFreshnessFastBurn": false
+  },
+  "quiet": {
+    "pages_resolved": true,
+    "seconds_until_no_pages": 0.0,
+    "still_firing": [
+      "WorkItemsAvailabilitySlowBurn",
+      "WorkItemsLatencySlowBurn"
+    ]
+  },
+  "finished": "2026-10-18T14:54:39Z",
+  "passed": true
+}

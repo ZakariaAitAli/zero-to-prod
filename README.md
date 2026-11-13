@@ -154,13 +154,13 @@ Evidence-backed capabilities currently include:
 Important current limitations include:
 
 - no exactly-once guarantee;
-- no broker high-availability experiment;
-- no horizontal worker-scaling experiment;
-- no distributed tracing;
+- broker leader and quorum-loss recovery is tested in a local three-node cluster; independent-host availability remains unproven;
+- local worker scaling is measured with explicit CPU budgets; production scale and cost remain unproven;
+- async distributed tracing is exercised locally; production retention and sampling remain unproven;
 - no representative messaging-architecture comparison;
 - no sustained-operation L6 claim;
 - snapshot recovery remains limited to the captured recovery point;
-- restoring PostgreSQL does not restore RabbitMQ: a job whose message was already delivered can restore blocked ([#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)), and a stale queued message can target reused IDs ([#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131)); both are unmitigated;
+- PostgreSQL restore does not restore RabbitMQ: delivery identity rejects stale reused-ID messages and explicit offline redrive repairs lost deliveries in the tested recovery scenarios ([experiment](docs/experiments/issue-130-131-restore-recovery.md)); reviewed fencing and recovery procedures are still required;
 - no automated frontend behavioral tests.
 
 These limitations are experiment boundaries rather than hidden production-readiness assumptions.

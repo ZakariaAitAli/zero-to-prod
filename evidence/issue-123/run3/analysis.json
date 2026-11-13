@@ -1,0 +1,36 @@
+[
+  {
+    "stage": "sustained",
+    "requests_s": 59.99979405590714,
+    "p99_ms": 35.5504769977415,
+    "availability": 1.0,
+    "within_250ms": 1.0,
+    "client_drops": 0,
+    "status_counts": {
+      "201": 12000,
+      "202": 12000,
+      "200": 12000
+    },
+    "accepted": 12000,
+    "succeeded": 12000,
+    "within_30s": 1.0,
+    "job_p99_s": 0.52136706,
+    "drain_s": 0.6797085510006582,
+    "sampled_stack_cpu_cores_mean": 1.2652089285714285,
+    "sampled_stack_memory_gib_mean": 0.9252885567801339,
+    "approx_stack_cpu_seconds_per_1000_successes": 63.332328008533636,
+    "approx_stack_gib_hours_per_1000_successes": 0.012865832550831763,
+    "sampled_api_cpu_cores_mean": 0.1460107142857143,
+    "sampled_worker_cpu_cores_mean": 0.08405892857142858,
+    "sampled_postgres_cpu_cores_mean": 0.22128214285714287,
+    "resource_samples": 56,
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    },
+    "duplicate_probe": null
+  }
+]

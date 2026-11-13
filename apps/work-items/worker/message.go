@@ -7,17 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 )
 
 const (
 	workItemProcessMessageType    = "work_item.process"
-	workItemProcessMessageVersion = 1
+	workItemProcessMessageVersion = 2
 
 	workerProcessingFailureCode = "processing_failed"
 	workerProcessingMaxAttempts = 3
 )
 
 type workerMessage struct {
+	DeliveryID string `json:"delivery_id"`
 	Type       string `json:"type"`
 	Version    int    `json:"version"`
 	JobID      int64  `json:"job_id"`
@@ -33,6 +35,8 @@ const (
 )
 
 type processingJobCompleter interface {
+	VerifyDeliveryIdentity(context.Context, int64, string) error
+
 	GetProcessingJob(
 		context.Context,
 		int64,
@@ -88,6 +92,8 @@ func decodeWorkerMessage(
 	return message, nil
 }
 
+var deliveryIdentityPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
 func validateWorkerMessage(
 	message workerMessage,
 ) error {
@@ -119,6 +125,9 @@ func validateWorkerMessage(
 		)
 	}
 
+	if !deliveryIdentityPattern.MatchString(message.DeliveryID) {
+		return errors.New("invalid worker message delivery_id")
+	}
 	return nil
 }
 
@@ -177,6 +186,13 @@ func handleWorkerMessageWithProcessor(
 				err,
 			)
 		}
+	}
+
+	if err := store.VerifyDeliveryIdentity(ctx, message.JobID, message.DeliveryID); err != nil {
+		if errors.Is(err, errDeliveryIdentityMismatch) {
+			return settlementReject, err
+		}
+		return settlementNackRequeue, fmt.Errorf("delivery identity unavailable: %w", err)
 	}
 
 	switch job.State {

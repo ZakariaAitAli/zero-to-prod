@@ -1,0 +1,7 @@
+{
+  "containers": "all dedicated capacity project containers stopped by harness finally block",
+  "volumes_network_secrets": "preserved",
+  "unrelated_labs": "not started during benchmarks; isolated recovery PG used only between/after runs for prior restore validation",
+  "source_hash_verification": "passed after completion",
+  "ci": "manual exact-head run dispatched after signed evidence commit"
+}

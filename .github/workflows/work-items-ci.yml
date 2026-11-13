@@ -193,6 +193,12 @@ jobs:
 
           echo "All Go files are correctly formatted."
 
+      - name: Reject reachable Go vulnerabilities
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          # Plain-text mode exits nonzero for reachable findings and tool errors.
+          govulncheck ./...
+
       - name: Run Go vet
         run: |
           go vet ./...
@@ -315,6 +321,18 @@ jobs:
             exit 1
           fi
 
+      - name: Run offline restore recovery integration tests
+        env:
+          RECOVERY_TEST_ADMIN_URL: postgres://zero_to_prod_admin:zero-to-prod-local-admin@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          WORKER_DATABASE_URL: postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:55432/zero_to_prod?sslmode=disable
+        run: |
+          output="${RUNNER_TEMP}/work-items-recovery-integration.out"
+          go test ./cmd/redrive-after-restore -v -count=1 2>&1 | tee "$output"
+          if grep -q -- '--- SKIP:' "$output"; then
+            echo "::error::Restore recovery validation skipped one or more tests."
+            exit 1
+          fi
+
       - name: Verify result migration and backup compatibility
         working-directory: .
         run: ./scripts/test-async-result-recovery.sh
@@ -400,6 +418,23 @@ jobs:
 
           echo "Worker image: ${image} (user ${configured_user})"
 
+      - name: Scan release images and produce SBOMs
+        working-directory: .
+        run: |
+          tools/delivery-image-gate "zero-to-prod-work-items-api:${GITHUB_SHA}" /tmp/ztp-api-scan
+          tools/delivery-image-gate "zero-to-prod-work-items-worker:${GITHUB_SHA}" /tmp/ztp-worker-scan
+
+      - name: Retain release security reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-security-reports
+          path: |
+            /tmp/ztp-api-scan
+            /tmp/ztp-worker-scan
+          if-no-files-found: warn
+          retention-days: 14
+
   frontend-validation:
     name: Validate Work Items frontend
     needs: changes
@@ -472,11 +507,38 @@ jobs:
           bash -n tools/postgres-local
           bash -n scripts/test-async-result-recovery.sh
           bash -n tools/postgres-backup-local
+          bash -n tools/work-items-recovery-local
           bash -n tools/work-items-worker-local
           bash -n tools/rabbitmq-local
           bash -n tools/security-lab-rotate-app-db
           bash -n scripts/test-security-lab-secret-rotation.sh
           bash -n tools/security-lab-local
+          bash -n tools/observability-lab-local
+          bash -n tools/capacity-lab-local
+          bash -n tools/operations-lab-local
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/operations-lab-experiments", "tools/operations-lab-report", "infra/operations-lab/receiver.py")]'
+          OPERATIONS_ROOT="$PWD" OPERATIONS_STATE=/nonexistent OPERATIONS_API_IMAGE=sha256:unavailable OPERATIONS_WORKER_IMAGE=sha256:unavailable ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml -f infra/operations-lab/compose.yaml --profile tools config --quiet
+          bash -n tools/delivery-lab-local
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/delivery-lab-experiments", "tools/delivery-image-gate")]'
+          DELIVERY_STATE=/nonexistent DELIVERY_BLUE_IMAGE=sha256:unavailable DELIVERY_GREEN_IMAGE=sha256:unavailable ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml -f infra/delivery-lab/compose.yaml --profile tools config --quiet
+          bash -n tools/availability-lab-local
+          for script in infra/availability-lab/postgres/*.sh infra/availability-lab/rabbitmq/*.sh; do sh -n "$script"; done
+          python3 -c 'import ast, pathlib; ast.parse(pathlib.Path("tools/availability-lab-experiments").read_text())'
+          HA_ROOT="$PWD" HA_STATE=/nonexistent ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml -f infra/availability-lab/compose.yaml --profile tools --profile recovery config --quiet
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/capacity-lab-experiments", "tools/capacity-lab-report")]'
+          CAPACITY_ROOT="$PWD" ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml -f infra/capacity-lab/compose.yaml --profile tools config --quiet
+          bash -n infra/observability-lab/postgres/init/002-monitoring.sh
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/observability-lab-experiments", "tools/observability-lab-dashboard")]'
+          ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml --profile tools config --quiet
+          docker run --rm --network none --entrypoint /bin/promtool \
+            -v "$PWD/infra/observability-lab/prometheus:/rules:ro" -w /rules \
+            prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e \
+            test rules slo-tests.yml
           bash -n infra/local/postgres/init/001-roles.sh
           bash -n infra/security-lab/postgres/init/001-security-lab-roles.sh
           sh -n infra/security-lab/postgres/tls.sh

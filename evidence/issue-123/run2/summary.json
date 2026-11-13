@@ -1,0 +1,122 @@
+[
+  {
+    "stage": "baseline",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "ramp-60",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "ramp-120",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "saturated-api",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "two-apis",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "pool-one",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "pool-sixteen",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "one-worker-backlog",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "three-workers-backlog",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "overload-unlimited",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "overload-limited",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  },
+  {
+    "stage": "sustained",
+    "invariants": {
+      "results_without_success": 0,
+      "done_without_result": 0,
+      "multiple_results_per_job": 0,
+      "multiple_active_jobs": 0,
+      "missing_outbox": 0
+    }
+  }
+]

@@ -1,0 +1,40 @@
+# Run with promtool test rules slo-tests.yml from this directory.
+rule_files:
+  - rules/slo.yml
+evaluation_interval: 10s
+tests:
+  - name: healthy traffic before any 5xx series exists
+    interval: 10s
+    input_series:
+      - series: 'work_items_http_requests_total{route="/items",method="POST",code="201"}'
+        values: '0+100x40'
+    promql_expr_test:
+      - expr: work_items:availability_bad:ratio_rate5m
+        eval_time: 5m
+        exp_samples:
+          - labels: work_items:availability_bad:ratio_rate5m
+            value: 0
+      - expr: work_items:availability_bad:ratio_rate1h
+        eval_time: 5m
+        exp_samples:
+          - labels: work_items:availability_bad:ratio_rate1h
+            value: 0
+  - name: failed requests still spend availability budget
+    interval: 10s
+    input_series:
+      - series: 'work_items_http_requests_total{route="/items",method="POST",code="201"}'
+        values: '0+90x40'
+      - series: 'work_items_http_requests_total{route="/items",method="POST",code="503"}'
+        values: '0+10x40'
+    promql_expr_test:
+      - expr: work_items:availability_bad:ratio_rate5m
+        eval_time: 5m
+        exp_samples:
+          - labels: work_items:availability_bad:ratio_rate5m
+            value: 0.1
+  - name: absent traffic stays absent rather than claiming success
+    interval: 10s
+    promql_expr_test:
+      - expr: work_items:availability_bad:ratio_rate5m
+        eval_time: 5m
+        exp_samples: []

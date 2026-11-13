@@ -1,0 +1,26 @@
+# Overlay on observability-lab/compose.yaml; invoke tools/capacity-lab-local.
+# Isolated, authentication-disabled local experiment, not a deployment profile.
+services:
+  postgres:
+    cpus: 1.0
+  rabbitmq:
+    cpus: ${CAPACITY_BROKER_CPUS:-0.5}
+  api:
+    image: zero-to-prod-capacity-lab-api:local
+    ports: !reset []
+    cpus: ${CAPACITY_API_CPUS:-0.25}
+  worker:
+    image: zero-to-prod-capacity-lab-worker:local
+    cpus: ${CAPACITY_WORKER_CPUS:-0.25}
+  gateway:
+    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    volumes:
+      - ${CAPACITY_ROOT}/infra/capacity-lab/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - '127.0.0.1:18081:8080'
+      - '127.0.0.1:18082:8081'
+    networks: [lab]
+    depends_on: [api]
+  prometheus:
+    volumes:
+      - ${CAPACITY_ROOT}/infra/capacity-lab/prometheus.yml:/etc/prometheus/prometheus.yml:ro

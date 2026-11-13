@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""Scan an immutable local image without exposing the Docker socket to Trivy."""
+import json, subprocess, sys, tempfile
+from pathlib import Path
+image=sys.argv[1]; output=Path(sys.argv[2]).resolve();output.mkdir(parents=True,exist_ok=False)
+scanner='aquasec/trivy@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222'
+image_id=subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',image],text=True).strip()
+cache=Path.home()/'.cache/zero-to-prod-trivy';cache.mkdir(parents=True,exist_ok=True)
+with tempfile.TemporaryDirectory(prefix='ztp-image-gate-') as tmp:
+    subprocess.run(['docker','save','-o',tmp+'/image.tar',image_id],check=True)
+    command=['docker','run','--rm','-v',tmp+':/input:ro','-v',str(output)+':/output','-v',str(cache)+':/cache',scanner]
+    def scan(*args):
+        with (output/'scanner.log').open('a') as f:
+            return subprocess.run(command+list(args),stdout=f,stderr=subprocess.STDOUT).returncode
+    sbom=scan('image','--cache-dir','/cache','--input','/input/image.tar','--format','cyclonedx','--output','/output/sbom.cdx.json')
+    gate=scan('image','--cache-dir','/cache','--input','/input/image.tar','--scanners','vuln','--severity','HIGH,CRITICAL','--format','json','--output','/output/vulnerabilities.json','--exit-code','1')
+    metadata=cache/'db/metadata.json'
+    if metadata.exists():(output/'database.json').write_text(metadata.read_text())
+    (output/'provenance.json').write_text(json.dumps({'image_id':image_id,'scanner':scanner,'sbom_exit':sbom,'gate_exit':gate},indent=2)+'\n')
+    # Both report creation and scanner exit status matter: tool errors fail closed.
+    if sbom or gate or not (output/'sbom.cdx.json').exists() or not (output/'vulnerabilities.json').exists():sys.exit(1)

@@ -1973,7 +1973,11 @@ tls_flow() {
 
 # The Go TLS verification error in a service's log since $2.
 go_tls_reason() {
+  # The API and worker log JSON (ADR 0012), which escapes the quotes in
+  # "DNS name ... is excluded by constraint ..." as \"; unescape before
+  # matching so plain-text and JSON logs give the same reason.
   { compose logs --no-log-prefix --since "$2" "$1" 2>/dev/null \
+      | sed 's/\\"/"/g' \
       | grep -oE 'x509: (certificate (signed by unknown authority|is valid for [a-z0-9.-]+, not [a-z0-9.-]+|has expired or is not yet valid)|a root or intermediate certificate is not authorized to sign for this name: DNS name "[a-z0-9.-]+" is excluded by constraint "[a-z0-9.-]+")' \
       || true; } | sort -u | paste -sd ';' -
 }
@@ -6069,13 +6073,20 @@ authorization_rows() {
   local mode="$1" area="authorization matrix (${1} API)"
   local editor="$2" viewer="$3" outsider="$4" machine="$5"
   local p1 p2 p3 p4 q job before after
+  # Final state of a job the API accepted. The pinned baseline predates the
+  # version-2 messages with delivery identity (ADR 0009); the current worker
+  # rejects its version-1 deliveries by design, so baseline jobs stay
+  # accepted. The control tests authorization (the call is accepted), not
+  # processing, so that is its expected outcome.
+  local processed=succeeded
+  [[ "$mode" == baseline ]] && processed=accepted
   p1="$(editor_create "$editor" "${mode} P1")"
   p2="$(editor_create "$editor" "${mode} P2")"
   p3="$(editor_create "$editor" "${mode} P3")"
   p4="$(editor_create "$editor" "${mode} P4")"
   q="$(editor_create "$editor" "${mode} Q")"
   job="$(start_processing session "$editor" POST "/items/${q}/process")"
-  [[ "$(wait_job_state session "$editor" "$job")" == succeeded ]] || die "fixture job did not succeed"
+  [[ "$(wait_job_state session "$editor" "$job")" == "$processed" ]] || die "fixture job did not reach ${processed}"
 
   deny() {
     # $1 label, $2 baseline status, rest: api_call arguments
@@ -6112,11 +6123,11 @@ authorization_rows() {
   expect "$area" "allowed: lab-user POST /items" "201" "$(call_summary session "$editor" POST /items '{"title":"editor create"}')"
   local editor_job machine_job
   editor_job="$(start_processing session "$editor" POST "/items/${p3}/process")"
-  expect "$area" "allowed: lab-user processes and polls" "succeeded" "$(wait_job_state session "$editor" "$editor_job")"
+  expect "$area" "allowed: lab-user processes and polls" "$processed" "$(wait_job_state session "$editor" "$editor_job")"
   expect "$area" "allowed: lab-viewer GET /items" "200" "$(call_summary session "$viewer" GET /items)"
   expect "$area" "allowed: lab-viewer GET /processing-jobs/{existing}" "200" "$(call_summary session "$viewer" GET "/processing-jobs/${job}")"
   machine_job="$(start_processing bearer "$machine" POST "/items/${p4}/process")"
-  expect "$area" "allowed: work-items-automation processes and polls" "succeeded" "$(wait_job_state bearer "$machine" "$machine_job")"
+  expect "$area" "allowed: work-items-automation processes and polls" "$processed" "$(wait_job_state bearer "$machine" "$machine_job")"
   expect "$area" "allowed: work-items-automation GET /processing-jobs/{existing}" "200" "$(call_summary bearer "$machine" GET "/processing-jobs/${job}")"
 }
 

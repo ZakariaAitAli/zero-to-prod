@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Dedicated issue-123 project. Keeps its state, volumes, and network on stop.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export CAPACITY_ROOT="$ROOT"
+export ZTP_OBSERVABILITY_LAB_STATE="${HOME}/.local/state/zero-to-prod/capacity-lab"
+export ZTP_OBSERVABILITY_LAB_SECRETS_DIR="${ZTP_OBSERVABILITY_LAB_STATE}/secrets"
+export ZTP_OBSERVABILITY_LAB_SUBNET=10.213.21.0/24
+export ZTP_OBSERVABILITY_LAB_PROMETHEUS_PORT=19091
+export ZTP_OBSERVABILITY_LAB_GRAFANA_PORT=13001
+export ZTP_OBSERVABILITY_LAB_JAEGER_PORT=16687
+export ZTP_OBSERVABILITY_LAB_VERSION="$(git -C "$ROOT" rev-parse --short=12 HEAD)"
+compose() {
+  docker compose -p zero-to-prod-capacity-lab \
+    -f "$ROOT/infra/observability-lab/compose.yaml" \
+    -f "$ROOT/infra/capacity-lab/compose.yaml" "$@"
+}
+case "${1:-}" in
+  up)
+    # Check overlaps before any container starts. Existing owned network is OK.
+    python3 - <<'PY'
+import ipaddress,json,subprocess
+ids=subprocess.check_output(['docker','network','ls','-q'],text=True).split()
+for n in json.loads(subprocess.check_output(['docker','network','inspect',*ids])):
+    if n['Name']=='zero-to-prod-capacity-lab_lab':continue
+    for c in n['IPAM']['Config'] or []:
+        if c.get('Subnet') and ipaddress.ip_network(c['Subnet']).overlaps(ipaddress.ip_network('10.213.21.0/24')):
+            raise SystemExit('Capacity subnet overlaps '+n['Name'])
+PY
+    bash "$ROOT/tools/observability-lab-local" init
+    compose build api
+    compose build worker
+    compose --profile tools build migrate
+    compose up -d --wait postgres rabbitmq
+    compose --profile tools run --rm migrate up
+    compose up -d --wait
+    ;;
+  stop) compose stop ;;
+  compose) shift; compose "$@" ;;
+  *) echo 'Usage: tools/capacity-lab-local up|stop|compose ARGS' >&2; exit 2 ;;
+esac

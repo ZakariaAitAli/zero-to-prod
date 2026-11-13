@@ -49,7 +49,7 @@ func TestHandleWorkerMessageRetryExhaustionPostgresIntegration(
 
 	payload := []byte(
 		fmt.Sprintf(
-			`{"type":"work_item.process","version":1,"job_id":%d,"work_item_id":%d}`,
+			`{"type":"work_item.process","version":2,"delivery_id":"11111111-1111-4111-8111-111111111111","job_id":%d,"work_item_id":%d}`,
 			jobID,
 			workItemID,
 		),
@@ -315,7 +315,7 @@ func TestHandleWorkerMessageTransientFailureEventuallySucceedsPostgresIntegratio
 
 	payload := []byte(
 		fmt.Sprintf(
-			`{"type":"work_item.process","version":1,"job_id":%d,"work_item_id":%d}`,
+			`{"type":"work_item.process","version":2,"delivery_id":"11111111-1111-4111-8111-111111111111","job_id":%d,"work_item_id":%d}`,
 			jobID,
 			workItemID,
 		),

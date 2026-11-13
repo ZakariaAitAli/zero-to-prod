@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Operator-only offline recovery. No automatic timeout or job abandonment.
+set -euo pipefail
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+case "${1:-}" in
+  inspect) args=() ;;
+  redrive-after-restore) args=(--after-restore) ;;
+  *) echo 'Usage: tools/work-items-recovery-local <inspect|redrive-after-restore>' >&2; exit 2 ;;
+esac
+[[ "$#" == 1 ]] || { echo 'error: expected one command' >&2; exit 2; }
+# Defaults belong to the local development lab. Use a mounted credential file
+# with RECOVERY_DATABASE_URL_FILE for any other database.
+if [[ -z "${RECOVERY_DATABASE_URL:-}" && -z "${RECOVERY_DATABASE_URL_FILE:-}" ]]; then
+  export RECOVERY_DATABASE_URL="postgres://${ZTP_POSTGRES_MIGRATOR_USER:-zero_to_prod_migrator}:${ZTP_POSTGRES_MIGRATOR_PASSWORD:-zero-to-prod-local-migrator}@127.0.0.1:${ZTP_POSTGRES_PORT:-55432}/${ZTP_POSTGRES_DB:-zero_to_prod}?sslmode=disable"
+fi
+exec "${GO:-go}" -C "${root}/apps/work-items" run ./cmd/redrive-after-restore --database "${ZTP_POSTGRES_DB:-zero_to_prod}" "${args[@]}"

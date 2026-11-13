@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -42,6 +43,34 @@ func waitForPublisherDelay(
 	}
 }
 
+type publisherState string
+
+const (
+	publisherHealthy           publisherState = "healthy"
+	publisherBrokerUnavailable publisherState = "broker_unavailable"
+	publisherStoreUnavailable  publisherState = "store_unavailable"
+)
+
+// publisherCondition logs the outbox publisher's state when it changes. The
+// zero value logs nothing until the first failure, so a healthy start is quiet.
+type publisherCondition struct {
+	state publisherState
+}
+
+func (c *publisherCondition) set(ctx context.Context, state publisherState, err error) {
+	if c.state == state || (c.state == "" && state == publisherHealthy) {
+		c.state = state
+		return
+	}
+	c.state = state
+
+	if state == publisherHealthy {
+		slog.InfoContext(ctx, "outbox publisher recovered", "state", state)
+		return
+	}
+	slog.WarnContext(ctx, "outbox publisher degraded", "state", state, "error", err)
+}
+
 func runOutboxPublisher(
 	ctx context.Context,
 	store outboxPublisherStore,
@@ -70,6 +99,10 @@ func runOutboxPublisher(
 		return nil
 	}
 
+	// Failures repeat every retry delay while a dependency is down, so only
+	// state changes are logged; the counters carry the rate.
+	var condition publisherCondition
+
 	for {
 		if ctx.Err() != nil {
 			return closePublisher()
@@ -81,6 +114,8 @@ func runOutboxPublisher(
 			publisher, err = newPublisher()
 			if err != nil {
 				publisher = nil
+				outboxBrokerConnectFailures.Inc()
+				condition.set(ctx, publisherBrokerUnavailable, err)
 
 				if !waitForPublisherDelay(
 					ctx,
@@ -100,6 +135,8 @@ func runOutboxPublisher(
 		)
 		if err != nil {
 			if errors.Is(err, errBrokerPublish) {
+				condition.set(ctx, publisherBrokerUnavailable, err)
+
 				// The current AMQP connection/channel can no longer be
 				// trusted. Close it and establish a fresh publisher before
 				// attempting any more durable outbox work.
@@ -115,6 +152,8 @@ func runOutboxPublisher(
 				continue
 			}
 
+			condition.set(ctx, publisherStoreUnavailable, err)
+
 			// Store-side failures do not imply that RabbitMQ is broken.
 			// Keep the active publisher and retry the durable outbox later.
 			if !waitForPublisherDelay(
@@ -126,6 +165,8 @@ func runOutboxPublisher(
 
 			continue
 		}
+
+		condition.set(ctx, publisherHealthy, nil)
 
 		if processed {
 			// Drain already-accepted work without an artificial sleep.

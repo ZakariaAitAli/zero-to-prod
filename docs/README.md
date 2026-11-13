@@ -46,13 +46,17 @@ Architecture documents describe the current or retained Zero-to-Prod system boun
 
 - [Local Work Items development](guides/local-work-items.md)
 - [Local PostgreSQL and schema migrations](guides/local-postgresql.md)
+- [Offline delivery recovery after restore](guides/restore-delivery-recovery.md) — inspect and redrive accepted jobs without creating new jobs.
 - [Local security lab](guides/local-security-lab.md) — opt-in HTTPS ingress with private backends for Issue #121 (intermediate)
+- [Local observability lab](guides/local-observability-lab.md) — metrics, traces, logs, dashboards, and SLO alerts for Issue #122 (intermediate)
 
 Guides are procedural: they answer **how do I perform this workflow?**
 
 ## Runbooks
 
 Current recovery: [Work Items result recovery](runbooks/work-items-recovery.md).
+
+Alerts: [Work Items alerts](runbooks/work-items-observability.md) — investigation steps for each SLO and symptom alert.
 
 Historical recovery procedures and experiments remain in the Sprint runbooks:
 
@@ -77,6 +81,8 @@ ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
 - [ADR 0010 — ingress admission control](adr/0010-security-lab-rate-limiting.md) — **Proposed:** per-peer and aggregate budgets with 429 shedding.
 
 - [ADR 0011 — secret distribution and rotation](adr/0011-security-lab-secret-distribution-rotation.md) — **Proposed:** local protected-file boundary and resumable API database password rotation.
+- [ADR 0009 — restore delivery recovery](adr/0009-restore-delivery-recovery.md) — **Proposed:** durable random delivery identity and explicit offline redrive.
+- [ADR 0012 — Work Items observability](adr/0012-work-items-observability.md) — **Proposed:** Prometheus metrics, OpenTelemetry traces and logs, trace context persisted in the outbox and carried in AMQP headers, bounded labels, and the SLOs.
 
 ## Experiments
 
@@ -84,6 +90,8 @@ Experiment records answer **what did we test and what happened?** Focused experi
 
 - [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
 - [Issue #117 — result implementation validation](experiments/issue-117-result-validation.md) — title-analysis results, atomic business completion, migration refusal, and result backup compatibility.
+- [Issues #130/#131 — restore delivery recovery](experiments/issue-130-131-restore-recovery.md) — stale delivery rejection after ID reuse, offline redrive, and legitimate duplicate delivery.
+- [Issue #122 — observability](experiments/issue-122-observability.md) — one trace across the asynchronous boundary, and lock contention, CPU pressure, PostgreSQL, API, RabbitMQ, and worker failures each detected by its alert and investigated through metrics, logs, and traces.
 - [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
 - [Issue #121 — TLS to the API and oauth2-proxy](experiments/issue-121-app-tls.md) — both `app` hops in a separate lab: passive captures before and after, scripted flows over the encrypted hops, untrusted, lab-CA, wrong-name, and expired certificates per service with new versus kept-alive connections, the API's last-good-certificate behavior, renewal (API without restart, oauth2-proxy by restart), regression runs, and a browser check in headless Chromium trusting only the lab CA (no desktop browser).
 - [Issue #121 — secret rotation](experiments/issue-121-secret-rotation.md) — real role/session revocation, failed consumer recreation, recovery, browser flow and image/source audit.
@@ -150,3 +158,12 @@ Sprint experiment for the full implementation and failure details
 ```
 
 The goal is not to hide the detailed experiments. It is to make them optional when all you need is to understand or recall the engineering idea.
+
+- [Local capacity lab](guides/local-capacity-lab.md) and [capacity experiment](experiments/issue-123-capacity.md).
+- [ADR 0013: local capacity measurement](adr/0013-local-capacity-measurement.md).
+
+- [Local availability lab](guides/local-availability-lab.md), [recovery runbook](runbooks/local-availability-recovery.md), [experiment](experiments/issue-124-availability-recovery.md), and [ADR 0014](adr/0014-local-availability-recovery.md).
+
+- [Local delivery lab](guides/local-delivery-lab.md), [delivery experiment](experiments/issue-125-safe-delivery.md), and [ADR 0015](adr/0015-safe-local-delivery.md).
+
+- [Local operations lab](guides/local-operations-lab.md), [local operations runbook](runbooks/local-operations.md), [readiness review](experiments/issue-126-readiness-review.md), and [capacity incident postmortem](experiments/issue-126-postmortem.md).
