@@ -1,0 +1,21 @@
+# Dedicated blue/green experiment; overlay on observability-lab.
+services:
+  api:
+    image: ${DELIVERY_BLUE_IMAGE:?immutable blue image required}
+    ports: !reset []
+  green:
+    extends:
+      file: ../observability-lab/compose.yaml
+      service: api
+    ports: !reset []
+    image: ${DELIVERY_GREEN_IMAGE:?immutable green image required}
+    environment:
+      PORT: ${DELIVERY_GREEN_PORT:-8080}
+  worker:
+    image: zero-to-prod-delivery-worker:local
+  gateway:
+    image: nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    volumes:
+      - ${DELIVERY_STATE}/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports: ['127.0.0.1:18084:8080']
+    networks: [lab]
