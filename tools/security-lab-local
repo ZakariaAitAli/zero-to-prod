@@ -4314,10 +4314,20 @@ verify_lab() {
     expect "wsl" "127.0.0.1:${port}" "refused connects=0 exit=7" "$(probe_tcp_host_detail "127.0.0.1:${port}")"
   done
 
-  local wsl_address
-  wsl_address="$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+  # The host's own non-loopback address must not reach the ingress. WSL has an
+  # eth0; native Linux has no interface of that name, so fall back to the
+  # source address of the default route. Without either (no network), skip.
+  # A missing interface is not an error: under pipefail it would end the run.
+  local wsl_address="" host_interface_label=""
+  wsl_address="$({ ip -4 -o addr show eth0 2>/dev/null || true; } | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
   if [[ -n "$wsl_address" ]]; then
-    expect_unreachable "wsl" "WSL eth0 ${wsl_address}:${HTTPS_PORT}" "$(probe_tcp_host_detail "${wsl_address}:${HTTPS_PORT}")"
+    host_interface_label="WSL eth0"
+  else
+    wsl_address="$({ ip -4 -o route get 192.0.2.1 2>/dev/null || true; } | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}' || true)"
+    host_interface_label="host default-route address"
+  fi
+  if [[ -n "$wsl_address" ]]; then
+    expect_unreachable "wsl" "${host_interface_label} ${wsl_address}:${HTTPS_PORT}" "$(probe_tcp_host_detail "${wsl_address}:${HTTPS_PORT}")"
   fi
 
   local api_ip postgres_ip rabbitmq_ip ingress_edge_ip keycloak_ip keycloak_postgres_ip valkey_ip oauth2_proxy_ip
