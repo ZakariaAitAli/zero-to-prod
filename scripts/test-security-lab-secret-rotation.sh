@@ -20,8 +20,14 @@ old=(s/'secrets/postgres-app-password').read_text().strip()
 def pgpass(name,password):
  p=f/name;p.write_text(f'postgres:5432:zero_to_prod:zero_to_prod_app:{password}\n');p.chmod(0o600)
 pgpass('old.pgpass',old)
+# The probe reads host-owned 0600 files. With rootful Docker that needs the
+# caller's own uid. Rootless Docker maps container root to the caller and any
+# other uid to an unrelated subordinate id that cannot read them, so use root
+# there; the container is still read-only with all capabilities dropped.
+rootless='rootless' in subprocess.check_output([docker,'info','--format','{{.SecurityOptions}}'],text=True)
+probe_user='0:0' if rootless else f'{os.getuid()}:{os.getgid()}'
 def probe(name):
- return [docker,'run','--rm','-i','--network',f'{project}_data','--user',f'{os.getuid()}:{os.getgid()}',
+ return [docker,'run','--rm','-i','--network',f'{project}_data','--user',probe_user,
  '--read-only','--cap-drop','ALL','--security-opt','no-new-privileges:true',
  '-v',f'{f}:/probe:ro','-v',f'{s}/pki/internal-ca.crt:/ca.crt:ro',
  '-e',f'PGPASSFILE=/probe/{name}','-e','PGCONNECT_TIMEOUT=5','-e','PGSSLMODE=verify-full','-e','PGSSLROOTCERT=/ca.crt',
