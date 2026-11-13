@@ -1,5 +1,7 @@
 # Local Production Readiness Review
 
+> **Update 2026-11-14:** the stacked draft PRs this review describes (#139–#146) have since been merged into `main`; see [local-production-readiness](../plans/local-production-readiness.md) for current status. The review below is otherwise unchanged and still describes its original evidence.
+
 Review date: 2026-10-18. Scope explicitly selected by the owner: local Docker
 first, with limits documented. Owner: Zakaria Ait Ali; supervised drills only,
 no 24/7 coverage and no assigned secondary responder. This is a review of
