@@ -49,6 +49,7 @@ Architecture documents describe the current or retained Zero-to-Prod system boun
 - [Offline delivery recovery after restore](guides/restore-delivery-recovery.md) — inspect and redrive accepted jobs without creating new jobs.
 - [Local security lab](guides/local-security-lab.md) — opt-in HTTPS ingress with private backends for Issue #121 (intermediate)
 - [Local observability lab](guides/local-observability-lab.md) — metrics, traces, logs, dashboards, and SLO alerts for Issue #122 (intermediate)
+- [Third-party image report](guides/third-party-image-report.md) — informational vulnerability findings for the pinned lab images.
 
 Guides are procedural: they answer **how do I perform this workflow?**
 
