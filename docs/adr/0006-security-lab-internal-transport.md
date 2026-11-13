@@ -6,7 +6,9 @@ Proposed (provisional). Builds on ADR 0004 and ADR 0005, which are also
 Proposed and unchanged by this decision. The "Ingress → Keycloak" row of the
 decision below is replaced by
 [ADR 0007](0007-security-lab-identity-provider-transport.md) (verified TLS
-from a separate identity-provider CA); the rest stands.
+from a separate identity-provider CA), and the "Ingress → API, ingress →
+oauth2-proxy" row by [ADR 0008](0008-security-lab-application-transport.md)
+(verified TLS from a separate application CA); the rest stands.
 
 ## Context
 
@@ -264,10 +266,17 @@ certificates from it, and `check-secrets` accepted it.
   The recorded runtime evidence of #136 and #137 therefore stands without
   reruns.
 
+### 2026-10-17 — Ingress → API and oauth2-proxy encrypted (ADR 0008)
+
+[ADR 0008](0008-security-lab-application-transport.md) encrypts the two
+`app` hops with a fourth, application CA; this ADR's internal CA and policy
+are unchanged
+([experiment](../experiments/issue-121-app-tls.md)).
+
 Open:
 
-- the remaining plaintext hops (ingress → API and oauth2-proxy,
-  oauth2-proxy → Valkey, Keycloak → its database);
+- the remaining plaintext hops (oauth2-proxy → Valkey, Keycloak → its
+  database);
 - mTLS: not adopted by this decision; revisited only under the
   reconsideration conditions above;
 - automated renewal and monitoring;

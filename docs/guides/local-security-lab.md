@@ -18,8 +18,12 @@ worker, and migrator verify them against a separate internal CA
 ([ADR 0006](../adr/0006-security-lab-internal-transport.md), Proposed).
 Keycloak serves only **HTTPS**, and the ingress verifies it against a third,
 identity-provider CA ([ADR 0007](../adr/0007-security-lab-identity-provider-transport.md),
-Proposed). The other internal hops stay plaintext by decision. Rate limiting
-and secret rotation are not implemented yet. It does not complete Issue #121.
+Proposed). The API and oauth2-proxy serve only **HTTPS** too, and the ingress
+verifies them against a fourth, application CA
+([ADR 0008](../adr/0008-security-lab-application-transport.md), Proposed).
+oauth2-proxy → Valkey and Keycloak → its database stay plaintext by decision.
+Rate limiting and secret rotation are not implemented yet. It does not
+complete Issue #121.
 
 The development lab ([local Work Items guide](local-work-items.md)) is
 unchanged and keeps its labelled development credentials. The security lab
@@ -37,7 +41,7 @@ Windows browser / WSL client / machine client
         │  serves the Web UI; forwards /api/items, /api/items/{id}/process,
         │  /api/processing-jobs/{id}; everything else under /api is 404
         │
-        ├── app network (internal) ── API; oauth2-proxy (auth_request)
+        ├── app network (internal, HTTPS) ── API; oauth2-proxy (auth_request)
         │                               │
         │                               └── session network ── Valkey
         └── idp network (internal, HTTPS) ─── Keycloak ── idp-data network ── Keycloak PostgreSQL
@@ -47,15 +51,15 @@ Windows browser / WSL client / machine client
 
 | Component | Networks | Published | Runtime secrets (files) |
 | --- | --- | --- | --- |
-| ingress | edge, app, idp | `127.0.0.1:9443 → 8443` | TLS key and certificate (one file in a mounted directory); identity-provider CA certificate (public) |
-| api | app, data | none | database URL, RabbitMQ publisher URL; lab CA and internal CA certificates (public) |
+| ingress | edge, app, idp | `127.0.0.1:9443 → 8443` | TLS key and certificate (one file in a mounted directory); identity-provider CA and application CA certificates (public) |
+| api | app, data | none | database URL, RabbitMQ publisher URL; lab CA and internal CA certificates (public); TLS key and certificate (one file in a mounted directory) |
 | worker | data | none | database URL, RabbitMQ worker URL; internal CA certificate (public) |
 | postgres | data | none | admin, migrator, app, worker passwords; TLS key and certificate (one file in a mounted directory) |
 | rabbitmq | data | none | definitions (users with password hashes, permissions, queue); TLS key and certificate (one file in a mounted directory) |
 | migrate (on demand) | data | none | migrator URL; internal CA certificate (public) |
 | keycloak | idp, idp-data | none | `keycloak.conf` (database password), realm file (client secrets, lab-user password); TLS key and certificate (one file in a mounted directory) |
 | keycloak-postgres | idp-data | none | Keycloak database password |
-| oauth2-proxy | app, session | none | `oauth2-proxy.cfg` (client secret, cookie secret, Valkey password); lab CA certificate |
+| oauth2-proxy | app, session | none | `oauth2-proxy.cfg` (client secret, cookie secret, Valkey password); lab CA certificate; TLS key and certificate (one file in a mounted directory) |
 | valkey | session | none | `valkey.conf` (password) |
 
 All networks except `edge` are Docker `internal` networks. The ingress has the
@@ -75,16 +79,18 @@ does not route its administration console or master realm.
 | API, oauth2-proxy → issuer (through the ingress) | TLS 1.2/1.3 | Lab CA, mounted as a public certificate file |
 | API/worker/migrator → PostgreSQL | TLS 1.2/1.3 (internal `data` network); the server rejects non-TLS clients | Internal CA and the name `postgres` (`sslmode=verify-full`); password (SCRAM) |
 | API/worker → RabbitMQ | TLS 1.2/1.3 on 5671 (internal `data` network); no plaintext listener | Internal CA and the name `rabbitmq` (`amqps`); password inside TLS |
-| Ingress → API, ingress → oauth2-proxy | none (internal `app` network) | — |
+| Ingress → API | TLS 1.2/1.3 on 8443 (internal `app` network); no plaintext listener | Application CA and the name `api` (`proxy_ssl_verify on`); kept-alive connections bounded |
+| Ingress → oauth2-proxy | TLS 1.2/1.3 on 4443 (internal `app` network); no plaintext listener | Application CA and the name `oauth2-proxy`; a new connection per request |
 | Ingress → Keycloak | TLS 1.2/1.3 on 8443 (internal `idp` network); Keycloak has no plaintext listener | Identity-provider CA and the name `keycloak` (`proxy_ssl_verify on`) |
 | oauth2-proxy → Valkey | none (internal `session` network) | Valkey password |
 | Keycloak → its PostgreSQL | none (internal `idp-data` network) | Database password |
 
-Why the data network and the Keycloak hop are encrypted and the other hops are
-not yet is in the [threat model](../architecture/security-lab-threat-model.md),
-[ADR 0006](../adr/0006-security-lab-internal-transport.md), and
-[ADR 0007](../adr/0007-security-lab-identity-provider-transport.md); the
-plaintext hops are listed under [limitations](#limitations).
+Why these hops are encrypted and the two others are not yet is in the
+[threat model](../architecture/security-lab-threat-model.md),
+[ADR 0006](../adr/0006-security-lab-internal-transport.md),
+[ADR 0007](../adr/0007-security-lab-identity-provider-transport.md), and
+[ADR 0008](../adr/0008-security-lab-application-transport.md); the plaintext
+hops are listed under [limitations](#limitations).
 
 ## Prerequisites
 
@@ -110,13 +116,16 @@ any other value.
 ```text
 ~/.local/state/zero-to-prod/zero-to-prod-security-lab/   (mode 700)
 ├── .zero-to-prod-security-lab   ownership marker
-├── pki/          lab CA, internal CA, and identity-provider CA keys (600) and certificates
+├── pki/          lab, internal, identity-provider, and application CA keys (600) and certificates
 ├── secrets/      runtime secret files (directory mode 700)
 ├── ingress-tls/  tls.pem: ingress key and certificate (directory mode 711)
 ├── internal-tls/
 │   ├── postgres/  tls.pem: PostgreSQL key and certificate (directory mode 711)
 │   └── rabbitmq/  tls.pem: RabbitMQ key and certificate (directory mode 711)
-└── idp-tls/      tls.pem: Keycloak key and certificate (directory mode 711)
+├── idp-tls/      tls.pem: Keycloak key and certificate (directory mode 711)
+└── app-tls/
+    ├── api/          tls.pem: API key and certificate (directory mode 711)
+    └── oauth2-proxy/ tls.pem: oauth2-proxy key and certificate (directory mode 711)
 ```
 
 Rerunning `init` keeps the existing lab CA and generated passwords, and leaves
@@ -130,6 +139,9 @@ remove:
   internal CA;
 - the Keycloak certificate and key, when missing, within two days of expiry,
   or not verifying for the name `keycloak` against the identity-provider CA;
+- the API and oauth2-proxy certificates and keys, when missing, within two
+  days of expiry, or not verifying for the service's name against the
+  application CA;
 - the Keycloak, oauth2-proxy, and Valkey configuration files, if their content
   would change;
 - the RabbitMQ definitions, when missing or when a RabbitMQ password was just
@@ -929,6 +941,110 @@ the realm, is kept. This path was exercised twice, on a lab created from
 `main` for this purpose (once after creating it, once after switching it
 back to `main`'s files); the existing labs were left untouched.
 
+## TLS to the API and oauth2-proxy
+
+The API serves only HTTPS on 8443 and oauth2-proxy only HTTPS on 4443, with
+certificates from the application CA, and the ingress verifies both
+([ADR 0008](../adr/0008-security-lab-application-transport.md)):
+
+- `infra/security-lab/ingress/api-upstream.conf` and
+  `oauth2-proxy-upstream.conf` set `proxy_ssl_verify on`, the application CA
+  as the only trust anchor, the service name (also SNI), TLS 1.2/1.3, and no
+  session reuse; every location that proxies to either service includes its
+  file;
+- neither server keeps a plaintext listener (`api:8080` and
+  `oauth2-proxy:4180` refuse connections); a plain HTTP request to a TLS port
+  gets a 400 and reaches no handler;
+- public URLs, cookies, CSRF checks, session refresh, authorization, and
+  machine tokens are unchanged.
+
+### Renewing the API's or oauth2-proxy's certificate
+
+```bash
+./tools/security-lab-local issue-app-certificate api
+./tools/security-lab-local issue-app-certificate oauth2-proxy
+```
+
+The API rereads its file within a second and serves the new certificate to
+new connections without a restart. oauth2-proxy reads its file only at start,
+so the command restarts it; sessions are in Valkey and survive. Either
+succeeds only when five consecutive new connections verify the new serial.
+
+Connections the ingress keeps alive to the API are not re-verified; they
+close after 30 s idle (`keepalive_timeout`) or 5 minutes in total
+(`keepalive_time`). A renewal does not need them to close, since the old
+certificate is still valid; a bad certificate reaches traffic on them only
+when they close. oauth2-proxy gets a new connection per request.
+
+### Last good certificate (API)
+
+If `app-tls/api/tls.pem` becomes unreadable or changes to something that is
+not a valid key pair (for example a partial write), the API keeps serving the
+pair it has, even after that pair expires; the ingress then refuses it (502,
+reason from `check-app-upstream`). The API logs every load with its serial and
+expiry, and reports a rejected or unreadable file once:
+
+```text
+TLS certificate file changed but holds no valid key pair, keeping the current certificate (serial …, valid until …): …
+```
+
+`check-secrets` refuses the file. To recover, write a valid file (or run
+`issue-app-certificate api`); no restart is needed.
+
+### Browser check without trusting the lab CA on Windows
+
+`evidence/issue-121/app-tls/browser/run-browser-check.sh` drives the real
+Web UI in headless Chromium (Playwright, pinned image), trusting only the
+running lab's CA. It signs in through Keycloak, creates and processes a Work
+Item, signs out, and checks `lab-viewer`'s refused create. It writes results
+and screenshots next to the script, over the recorded evidence, so run a copy
+of the directory:
+
+```bash
+cp -r evidence/issue-121/app-tls/browser /tmp/browser-check
+ZTP_SECURITY_LAB_PROJECT=zero-to-prod-security-lab /tmp/browser-check/run-browser-check.sh
+```
+
+It shares the ingress container's network namespace, because Chromium
+resolves `*.localhost` to its own loopback. It downloads the Playwright
+image, the matching npm package, and `libnss3-tools` on first use. This is
+not a check in a desktop browser.
+
+### When a certificate is wrong
+
+Measured by `verify-app-tls` (see the
+[experiment record](../experiments/issue-121-app-tls.md)):
+
+| Certificate on | Public effect | nginx's reason (`check-app-upstream`) |
+| --- | --- | --- |
+| API: unknown CA, or the lab CA | API routes 502 once kept-alive connections closed; sign-in still works | `(21:unable to verify the first certificate)` |
+| API: for the name `oauth2-proxy` | same | `upstream SSL certificate does not match "api"` |
+| API: expired | same | `(10:certificate has expired)` |
+| oauth2-proxy: any of the above | Session routes and sign-in 503 `authentication_unavailable`; bearer routes keep working | the same reasons with `"oauth2-proxy"` |
+
+### Labs created before TLS to the API and oauth2-proxy
+
+`check-secrets` refuses them: the application CA is missing and
+`oauth2-proxy.cfg` still has a plaintext listener. Run `init` (adds the CA,
+both certificates, and the new configuration), then `start`.
+
+### Docker address pools exhausted
+
+If `start` fails with `all predefined address pools have been fully
+subnetted`, the Docker engine has no automatic subnet left (each lab project
+uses six networks, and stopped projects keep theirs). Without removing other
+projects' networks or changing the daemon, a lab can use explicit subnets
+from a range no route uses: create the project's six networks first, with
+Compose's labels and the same `internal` setting as `compose.yaml` (only
+`edge` is not internal), and give the tool's own networks subnets:
+
+```bash
+export ZTP_SECURITY_LAB_TOOL_SUBNETS="unrelated-probe=10.213.250.0/24 ipcontrol=10.213.251.0/24"
+```
+
+Compose reuses networks that carry its project and network labels. The
+application TLS experiment records the exact commands.
+
 ## Stop and remove
 
 ```bash
@@ -976,6 +1092,12 @@ manually when no longer needed.
 | `identity-provider CA certificate missing` or `keycloak.conf does not restrict Keycloak to HTTPS` from `check-secrets` | State created before TLS to Keycloak | Run `init`, then `start` |
 | Keycloak exits with `Unable to read file /run/keycloak-tls/tls.pem` | The `idp-tls/` mount is empty | Run `init`, then `start` |
 | The ingress exits with `cannot load certificate "/run/idp-ca/ca.crt"` | The identity-provider CA certificate is missing | Run `init`, then `start` |
+| API routes answer 502 while the API is healthy | The ingress refuses the API's certificate | `check-app-upstream`; renew with `issue-app-certificate api` |
+| Session routes or sign-in answer 503 `authentication_unavailable` while oauth2-proxy runs | The ingress refuses oauth2-proxy's certificate | `check-app-upstream`; renew with `issue-app-certificate oauth2-proxy` |
+| `application CA certificate missing` or `oauth2-proxy.cfg does not restrict oauth2-proxy to HTTPS` from `check-secrets` | State created before TLS to the API and oauth2-proxy | Run `init`, then `start` |
+| The API exits with `read TLS_CERT_FILE` | The `app-tls/api/` mount is empty | Run `init`, then `start` |
+| The ingress exits with `cannot load certificate "/run/app-ca/ca.crt"` | The application CA certificate is missing | Run `init`, then `start` |
+| `all predefined address pools have been fully subnetted` | No automatic Docker subnet left | See [Docker address pools exhausted](#docker-address-pools-exhausted) |
 
 ## Limitations
 
@@ -1002,9 +1124,13 @@ manually when no longer needed.
 - One lab user and one machine client, defined in the realm file; no
   self-service, MFA, or Keycloak administration access.
 - The HTTPS port is fixed at 9443.
-- Ingress → API, ingress → oauth2-proxy, oauth2-proxy → Valkey, and Keycloak
-  → its database are unencrypted on internal networks (ADR 0006: provisional,
-  with reconsideration conditions).
+- oauth2-proxy → Valkey and Keycloak → its database are unencrypted on
+  internal networks (ADR 0006: provisional, with reconsideration conditions).
+- TLS to the API and oauth2-proxy authenticates the servers only (no mTLS):
+  any member of `app` can open a TLS connection to them. Kept-alive API
+  connections are not re-verified until they close. Renewing oauth2-proxy's
+  certificate restarts it. Four private CAs, consolidation deferred
+  (ADR 0008).
 - TLS to Keycloak authenticates Keycloak only; there are no client
   certificates (mTLS). OAuth clients still authenticate with client
   credentials inside TLS, but any member of `idp` can open a

@@ -1,0 +1,17 @@
+{
+  "project": "zero-to-prod-security-lab-apptls",
+  "started_at": "2026-10-17T15:46:58Z",
+  "recorded_at": "2026-10-17T15:47:26Z",
+  "description": "capture-app-hops: passive capture of the ingress-API and ingress-oauth2-proxy hops from each service's network namespace during a sign-in callback, a session request, and a machine request; counts only, no values recorded.",
+  "results": [
+    {"vantage":"metadata","check":"api: listening sockets (Docker DNS excluded)","expected":"observe","observed":":::8443","result":"info"},
+    {"vantage":"metadata","check":"oauth2-proxy: listening sockets (Docker DNS excluded)","expected":"observe","observed":":::4443","result":"info"},
+    {"vantage":"passive capture of the app hops","check":"captures started (raw sockets in the API's and oauth2-proxy's namespaces)","expected":"observe","observed":"yes","result":"info"},
+    {"vantage":"passive capture of the app hops","check":"flows during the capture: callback, session GET /api/items, machine GET /api/items","expected":"observe","observed":"callback=302 session=200 machine=200 code=obtained","result":"info"},
+    {"vantage":"passive capture of the app hops","check":"ingress-api: payload bytes captured","expected":"observe","observed":"5317","result":"info"},
+    {"vantage":"passive capture of the app hops","check":"ingress-api: occurrences per kind","expected":"observe","observed":"access-token-header=0 authorization-code=0 bearer-header=0 http-message=0 machine-access-token=0 session-cookie=0 session-cookie+encoded=0 state=0 state+encoded=0 tls-application-data=4","result":"info"},
+    {"vantage":"passive capture of the app hops","check":"ingress-oauth2-proxy: payload bytes captured","expected":"observe","observed":"17133","result":"info"},
+    {"vantage":"passive capture of the app hops","check":"ingress-oauth2-proxy: occurrences per kind","expected":"observe","observed":"access-token-header=0 authorization-code=0 bearer-header=0 http-message=0 machine-access-token=0 session-cookie=0 session-cookie+encoded=0 state=0 state+encoded=0 tls-application-data=32","result":"info"},
+    {"vantage":"metadata","check":"ingress access log: upstream addresses during the run (ports)","expected":"observe","observed":"2 :4443;9 :8443","result":"info"}
+  ]
+}

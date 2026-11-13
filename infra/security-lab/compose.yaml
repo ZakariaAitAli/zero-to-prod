@@ -22,8 +22,12 @@
 #
 # Identity-provider hop (ADR 0007, Proposed): Keycloak serves only HTTPS, with
 # a certificate from a third CA that may issue only for the name keycloak and
-# is trusted only by the ingress, which verifies the chain and the name. The
-# other internal hops stay plaintext; see the security lab architecture.
+# is trusted only by the ingress, which verifies the chain and the name.
+#
+# Application hops (ADR 0008, Proposed): the API and oauth2-proxy serve only
+# HTTPS, with certificates from a fourth CA that may issue only for the names
+# api and oauth2-proxy and is trusted only by the ingress. The other internal
+# hops stay plaintext; see the security lab architecture.
 
 name: zero-to-prod-security-lab
 
@@ -145,6 +149,10 @@ services:
       OIDC_CA_FILE: /lab-ca/ca.crt
       DATABASE_URL_FILE: /run/secrets/api-database-url
       RABBITMQ_PUBLISHER_URL_FILE: /run/secrets/api-rabbitmq-url
+      # HTTPS only (ADR 0008): key and certificate in one file, reread when
+      # it changes, so a renewal needs no restart. No plaintext listener.
+      PORT: "8443"
+      TLS_CERT_FILE: /run/api-tls/tls.pem
     secrets:
       - api-database-url
       - api-rabbitmq-url
@@ -154,6 +162,17 @@ services:
       # RabbitMQ (named in the connection-URL files).
       - ${ZTP_SECURITY_LAB_CA_FILE:?set by tools/security-lab-local}:/lab-ca/ca.crt:ro
       - ${ZTP_SECURITY_LAB_INTERNAL_CA_FILE:?set by tools/security-lab-local}:/internal-ca/ca.crt:ro
+      # A directory mount, so a renewed file (replaced by rename) is visible.
+      - ${ZTP_SECURITY_LAB_APP_TLS_DIR:?set by tools/security-lab-local}/api:/run/api-tls:ro
+    healthcheck:
+      # Liveness over the container loopback. The address cannot match the
+      # certificate's name, so this check does not verify it; the ingress
+      # does, on every new connection.
+      test: ["CMD", "wget", "-q", "--spider", "--no-check-certificate", "https://127.0.0.1:8443/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 3s
+      retries: 3
     networks:
       - app
       - data
@@ -205,6 +224,9 @@ services:
       # Public CA certificate that verifies Keycloak (ADR 0007); replaced only
       # by purge-state and init.
       - ${ZTP_SECURITY_LAB_IDP_CA_FILE:?set by tools/security-lab-local}:/run/idp-ca/ca.crt:ro
+      # Public CA certificate that verifies the API and oauth2-proxy
+      # (ADR 0008); replaced only by purge-state and init.
+      - ${ZTP_SECURITY_LAB_APP_CA_FILE:?set by tools/security-lab-local}:/run/app-ca/ca.crt:ro
     networks:
       edge: {}
       app:
@@ -306,6 +328,9 @@ services:
       - oauth2-proxy.cfg
     volumes:
       - ${ZTP_SECURITY_LAB_CA_FILE:?set by tools/security-lab-local}:/lab-ca/ca.crt:ro
+      # HTTPS only on 4443 (ADR 0008). oauth2-proxy reads the file at start,
+      # so a renewal restarts it; sessions live in Valkey and survive.
+      - ${ZTP_SECURITY_LAB_APP_TLS_DIR:?set by tools/security-lab-local}/oauth2-proxy:/run/oauth2-proxy-tls:ro
     networks:
       - app
       - session
@@ -327,7 +352,8 @@ networks:
     internal: true
   data:
     internal: true
-  # Ingress to Keycloak (TLS, ADR 0007).
+  # Ingress to Keycloak (TLS, ADR 0007). The app network (ingress, API,
+  # oauth2-proxy) carries TLS too (ADR 0008).
   idp:
     internal: true
   # Keycloak to its own database.

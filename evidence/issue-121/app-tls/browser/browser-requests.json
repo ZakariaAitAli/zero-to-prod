@@ -1,0 +1,500 @@
+[
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-Cof1GvlE.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-ChfN4mJE.js",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/geist-latin-wght-normal-BgDaEnEv.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/userinfo",
+  "status": 401
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 401
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-ChfN4mJE.js",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-Cof1GvlE.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/geist-latin-wght-normal-BgDaEnEv.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 401
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/userinfo",
+  "status": 401
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/start",
+  "status": 302
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/realms/work-items/protocol/openid-connect/auth",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/css/styles.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/patternfly-addons.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/js/passwordVisibility.js",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/patternfly.min.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/js/authChecker.js",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/img/keycloak-bg-darken.svg",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatDisplay/RedHatDisplay-Medium.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatText/RedHatText-Medium.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatText/RedHatText-Regular.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/webfonts/fa-solid-900.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "POST",
+  "path": "auth.work-items.localhost:9443/realms/work-items/login-actions/authenticate",
+  "status": 302
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/callback",
+  "status": 302
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-ChfN4mJE.js",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-Cof1GvlE.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/geist-latin-wght-normal-BgDaEnEv.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/userinfo",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "POST",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 201
+ },
+ {
+  "session": "lab-user",
+  "method": "POST",
+  "path": "work-items.localhost:9443/api/items/58/process",
+  "status": 202
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/api/processing-jobs/48",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "POST",
+  "path": "work-items.localhost:9443/oauth2/sign_out",
+  "status": 302
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-ChfN4mJE.js",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-Cof1GvlE.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/geist-latin-wght-normal-BgDaEnEv.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/userinfo",
+  "status": 401
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 401
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/start",
+  "status": 302
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/realms/work-items/protocol/openid-connect/auth",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/patternfly.min.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/patternfly-addons.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/css/styles.css",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/js/passwordVisibility.js",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/js/authChecker.js",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatDisplay/RedHatDisplay-Medium.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatText/RedHatText-Regular.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatText/RedHatText-Medium.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/webfonts/fa-solid-900.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-user",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/img/keycloak-bg-darken.svg",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-Cof1GvlE.css",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-ChfN4mJE.js",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/geist-latin-wght-normal-BgDaEnEv.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/userinfo",
+  "status": 401
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 401
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/start",
+  "status": 302
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/realms/work-items/protocol/openid-connect/auth",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/patternfly-addons.css",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/patternfly.min.css",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/css/styles.css",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/js/passwordVisibility.js",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/js/authChecker.js",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/login/keycloak.v2/img/keycloak-bg-darken.svg",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatDisplay/RedHatDisplay-Medium.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatText/RedHatText-Regular.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/RedHatText/RedHatText-Medium.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "auth.work-items.localhost:9443/resources/2taeg/common/keycloak/vendor/patternfly-v5/assets/fonts/webfonts/fa-solid-900.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "POST",
+  "path": "auth.work-items.localhost:9443/realms/work-items/login-actions/authenticate",
+  "status": 302
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/callback",
+  "status": 302
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-ChfN4mJE.js",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/index-Cof1GvlE.css",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/assets/geist-latin-wght-normal-BgDaEnEv.woff2",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/oauth2/userinfo",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "GET",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 200
+ },
+ {
+  "session": "lab-viewer",
+  "method": "POST",
+  "path": "work-items.localhost:9443/api/items",
+  "status": 403
+ }
+]
