@@ -1,0 +1,89 @@
+{
+  "scope": "local Docker only; development authentication disabled in the snapshot experiment",
+  "base_commit": "3c1104c693dc4676974bd0547d1fe3211358d87f",
+  "tested_files_sha256": {
+    "apps/work-items/api/application.go": "0fd759589ca76ffbefe872dfe375b635d87250f575e2925863e307866eee3be5",
+    "apps/work-items/api/authentication.go": "87d9499e59bb93b3a35307dc9e2d69db4e60050da6ef00fd8778a1c6a073bc26",
+    "apps/work-items/api/items.go": "c9b5a19cb02431a7a10791ee9d6c1f59a908f4235725df89c401d03878d5704b",
+    "apps/work-items/api/main.go": "be5891c023fa4f5bf07d8c09646ba500457ee35accd7dfee8a368409bbba5b48",
+    "apps/work-items/api/outbox_publisher.go": "3bd77072f926304beb44920b75a088e6e61a445c1b8f6dddc554ab015f835c46",
+    "apps/work-items/api/outbox_publisher_loop.go": "8815936912a3381e2b538b0a74ab98ac85418e3e32327a8b5e73c2f24dceadc5",
+    "apps/work-items/api/processing.go": "7136b5e83726e9c401b9c18960eb76a3c10e59b417d334ef14454434729276be",
+    "apps/work-items/api/rabbitmq_publisher.go": "4b05cadda307ad89c770cc4179ef610502c67305a05c6dec6f1633615b3653b6",
+    "apps/work-items/api/store.go": "c4c2053be52ac1edeb0eb5f39d9b244ed9e9c7938da619294b36abc51d27460c",
+    "apps/work-items/cmd/redrive-after-restore/main.go": "b3c2c6c3e73539d99ffc98a4ede6e528b4be0e242a174b7f9c1714761685d6d0",
+    "apps/work-items/go.mod": "11df726bea1735ed8407192f955e3b7ada3bff5cfb0802eaf9da2d7747ae80a1",
+    "apps/work-items/go.sum": "d25e730eb445cbe9aa49b5047ab4a51e1f7c1a8fc5f35b481f5b452b5343f4b8",
+    "apps/work-items/internal/authn/config.go": "e26a3c6bf5cc163015328b428c1f3142d570581d646c1eee1b857d10a8a0d182",
+    "apps/work-items/internal/authn/validator.go": "c5b33c12e71b36fb209c97e516f509f497134c8fac2153708d2e05eaaadb7989",
+    "apps/work-items/internal/authz/authz.go": "dc00b3cb84ba88299bf694bfb9356aff20de35f072aa7535e8b2b6957b67f897",
+    "apps/work-items/internal/runtimeconfig/value.go": "914016413efe7bc9a3113930a31644d502db642e2b6d4588f6835bac8a0a69a9",
+    "apps/work-items/internal/workitems/model.go": "ec65fdf29c6cef8e95deb48af4192b05d18e2d20a33af14c2cac4fe2a4efcd2c",
+    "apps/work-items/migrations/000001_create_work_items.down.sql": "03f6b49e8bb298a124908f257ac2a512e6d8c7a99bb6206697c5e6b1cd14b74b",
+    "apps/work-items/migrations/000001_create_work_items.up.sql": "20faf052b4d1c6d8497c270cad0a4fb4c76d0e143ec9388d4d35e55618c02192",
+    "apps/work-items/migrations/000002_grant_work_items_runtime_privileges.down.sql": "be346d7f4078c0137f93de741dd846be2ddd846debf9cd9effdb2fb54ceb7233",
+    "apps/work-items/migrations/000002_grant_work_items_runtime_privileges.up.sql": "85cf2848b2da4b7f2b4841ef06467c107e9cdbf72809a8d7492d8ae2750e228e",
+    "apps/work-items/migrations/000003_add_work_item_status.down.sql": "fb2c3254db0882464d6ccecef31bb9015fa4c78c8338c8e103f126c065d26d9b",
+    "apps/work-items/migrations/000003_add_work_item_status.up.sql": "77bc416711519ed1d76cd22f75b6744b0672c4a0013c30ffb89ddae33fbf4735",
+    "apps/work-items/migrations/000004_add_async_processing.down.sql": "1da62188e421cabf664a92bec20c303a5e708e3d950b4902e7fce2a649cb8650",
+    "apps/work-items/migrations/000004_add_async_processing.up.sql": "056f7bb2b8a0f1c7c7ab2134bcc662fa6fd5b2bf4eff8761bcec26d0750334e0",
+    "apps/work-items/migrations/000005_add_title_analysis.down.sql": "b1c8fe5b1df5ecd3e87e6c3dccfcf6a563633c0e91bd462b11e80d0868f780f1",
+    "apps/work-items/migrations/000005_add_title_analysis.up.sql": "826802f123cd6b2e57be5e3274aa4f06e4731b886c5f50acb1f7546619719546",
+    "apps/work-items/migrations/000006_add_delivery_identity.down.sql": "c6a8bf3947f2bd0467da8cc65fbde3261beeb073f7e287048ebf3b442aec0341",
+    "apps/work-items/migrations/000006_add_delivery_identity.up.sql": "3be0db529a4982cd42d4995c7124950a82a4edff362289cf2432ee3afe9422cc",
+    "apps/work-items/worker/complete.go": "584c02c2d7bb9c0606be85c5464fed4521f92291625b3809569bf6fce89b4be8",
+    "apps/work-items/worker/consumer_loop.go": "a2c804b0ea169a2f2fd837c9e0e7a1a8786d4be6ace238aad3be8228c5a96c9c",
+    "apps/work-items/worker/delivery.go": "55e813bf5800402769d6cb5bc99248dd80375b2b68dc7d588dc4c72fdfae3f89",
+    "apps/work-items/worker/main.go": "973e6eb15696d3807ea444cc6de7bb343448114fdc226f231c3941b1c9bec066",
+    "apps/work-items/worker/message.go": "a045daccab687f5fd12cd1202de74cd3fdba77a95695062f34b00c3fdc16509a",
+    "apps/work-items/worker/process_delivery.go": "6d450901819e7219d2522311bf73f49d5e1b88d3148236ec723b5ac9dd59de4c",
+    "apps/work-items/worker/processor.go": "8dd46f5ccc1ac2f2c53a280e51ab8c1edc9d4765e19709dbe33f398d51a1437b",
+    "apps/work-items/worker/rabbitmq_client.go": "b018c31357ba92b610e0ff662fc8ec75a4fd71ab2e1d7da26fd967b0226d0e70",
+    "apps/work-items/worker/rabbitmq_consumer.go": "a6838db88268199e0000893bd2d22c9a0e545f7ec5abd8929b52edb91c023c69",
+    "apps/work-items/worker/rabbitmq_session.go": "ccd9fb8f269864622e4232e506d6c07f737644545b3ce4ddc9c4b9a92d5f325c",
+    "apps/work-items/worker/snapshot_recovery_experiment_test.go": "008f9f48ae2c090469afa42b58150732a1f269b1b6b7d7c3564e95b391c4ed16",
+    "apps/work-items/worker/store.go": "5633a6027995fd1468411f4222bbf5b1833b626c41272735d4fa837f9a8d5245",
+    "apps/work-items/worker/store_runtime.go": "cee67013e4b2ec2371b4f69c56a7798dc14d0d7ae792dd10b90505ee32dd791a",
+    "apps/work-items/worker/worker_lifecycle.go": "274c054b81b090fd905e747ab575dcf5b00807fce1503220cd85fa95b2cc2a84",
+    "apps/work-items/worker/worker_session.go": "9476f32f147c53653ed6da381bfc28827877866f2ee92cd63bc7f5072da4d9b6",
+    "tools/work-items-recovery-local": "406370f3abf24f2c24b38e1acc8b9801cfa6140b7d6d940bb1262dfe6385e76a"
+  },
+  "runs": {
+    "snapshot": {
+      "file": "e12-snapshot-recovery.json",
+      "checks": 42,
+      "passed": true
+    },
+    "crash_after_commit_before_ack": {
+      "file": "regressions/e4-crash-after-commit-before-ack.json",
+      "checks": 8,
+      "passed": true
+    },
+    "concurrent_duplicate": {
+      "file": "regressions/e6-concurrent-duplicate-delivery.json",
+      "checks": 7,
+      "passed": true
+    }
+  },
+  "other_validation": [
+    "default Go tests and vet",
+    "API integration tests with database and broker",
+    "worker integration tests with database and broker",
+    "operator recovery integration: wrong target, idle runtime connection, corrupt identity, repeated redrive, preserved counts and terminal state, populated protocol downgrade and upgrade",
+    "result migration and backup compatibility script",
+    "CI workflow policy script"
+  ],
+  "isolated_resources": {
+    "postgres_project": "zero-to-prod-118-recovery-pg",
+    "rabbitmq_project": "zero-to-prod-118-recovery-mq",
+    "ports": [
+      55440,
+      5678,
+      15678
+    ],
+    "subnets": [
+      "10.213.252.0/24",
+      "10.213.253.0/24"
+    ]
+  }
+}

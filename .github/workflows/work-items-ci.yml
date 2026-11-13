@@ -311,6 +311,18 @@ jobs:
             exit 1
           fi
 
+      - name: Run offline restore recovery integration tests
+        env:
+          RECOVERY_TEST_ADMIN_URL: postgres://zero_to_prod_admin:zero-to-prod-local-admin@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          WORKER_DATABASE_URL: postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:55432/zero_to_prod?sslmode=disable
+        run: |
+          output="${RUNNER_TEMP}/work-items-recovery-integration.out"
+          go test ./cmd/redrive-after-restore -v -count=1 2>&1 | tee "$output"
+          if grep -q -- '--- SKIP:' "$output"; then
+            echo "::error::Restore recovery validation skipped one or more tests."
+            exit 1
+          fi
+
       - name: Verify result migration and backup compatibility
         working-directory: .
         run: ./scripts/test-async-result-recovery.sh
@@ -466,6 +478,7 @@ jobs:
           bash -n tools/postgres-local
           bash -n scripts/test-async-result-recovery.sh
           bash -n tools/postgres-backup-local
+          bash -n tools/work-items-recovery-local
           bash -n tools/work-items-worker-local
           bash -n tools/rabbitmq-local
           bash -n tools/security-lab-local

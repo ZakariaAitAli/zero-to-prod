@@ -96,7 +96,8 @@ publication, so assess PostgreSQL with SQL rather than through the API.
 
 3. **Stop condition.** Queue counts show how many messages exist, not which
    jobs they belong to, so they do not establish that resuming is safe.
-   Assessment mitigates neither stale messages nor lost deliveries. If a
+   Queue assessment alone mitigates neither stale messages nor lost deliveries;
+   apply the protocol-2 recovery procedure below before resuming. If a
    stale-message identity or missing-delivery discrepancy
    remains unresolved, keep the affected processing and new client requests
    stopped.
@@ -105,34 +106,29 @@ publication, so assess PostgreSQL with SQL rather than through the API.
    returns recovered results with matching done state. Pending jobs and
    unpublished outbox rows resume from the restored recovery point.
 
-### Observed limitations
+### Delivery recovery with protocol version 2
 
-The [crash-consistency experiment](../experiments/issue-118-crash-consistency.md)
-reproduced two consequences of restoring PostgreSQL without RabbitMQ:
+The historical #118 experiment reproduced lost delivery and stale messages
+acting on reused IDs. ADR 0009 adds a random delivery identity checked against
+the restored outbox before processing, and an explicit offline redrive command.
+Follow [the delivery recovery guide](../guides/restore-delivery-recovery.md)
+before resuming API publication, worker consumption, and client admission.
 
-- **Lost delivery.** A job whose outbox row was published before the backup,
-  and whose message was consumed after it, restores as `accepted` with no
-  message. It stays blocked, and new requests return
-  `409 processing_already_active`. No redrive exists
-  ([#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)).
-- **Stale message targeting a reused ID.** Restore rewinds the identity
-  sequences. A message for work accepted after the backup remained queued; new
-  work received the same job and Work Item IDs, and the worker completed that
-  new job from the stale message before the job's own outbox message was
-  published ([#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131)).
+Stop every API and worker process. Inspect accepted jobs with
+`tools/work-items-recovery-local inspect`; after confirming the restored target,
+run `tools/work-items-recovery-local redrive-after-restore` and retain its JSON
+report. It returns delivery responsibility for all accepted jobs to their
+existing outbox rows without creating jobs or resetting attempt counts.
+Duplicate delivery is expected and remains idempotent under ADR 0003.
 
-### Untested guidance
-
-No mitigation is implemented, and the following has not been exercised:
-
-- Treat a queued message whose `job_id` exceeds the restored
-  `processing_jobs_id_seq` value as lost work, not a request for future work.
-  Inspect message identities before resuming publication or consumption, for
-  example through the RabbitMQ management interface.
-- Do not accept new requests while such messages remain queued: new jobs will
-  receive the reused IDs.
-- Treat published accepted jobs with no matching queued message as blocked
-  until a redrive mechanism exists.
+The [#130/#131 experiment](../experiments/issue-130-131-restore-recovery.md)
+exercises both mitigations after destructive loss of an isolated PostgreSQL
+volume. An old message cannot complete new work with reused IDs; a blocked
+accepted job completes after offline redrive, and a subsequent duplicate leaves
+its business state unchanged. This does not recover writes missing from the
+snapshot or provide online reconciliation. Match schema and protocol versions
+before starting runtime; historical migration-5 backups need migration 6 after
+restore, as explained in the guide.
 
 ## Scope and evidence
 
