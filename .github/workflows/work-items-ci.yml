@@ -482,6 +482,15 @@ jobs:
           bash -n tools/work-items-worker-local
           bash -n tools/rabbitmq-local
           bash -n tools/security-lab-local
+          bash -n tools/observability-lab-local
+          bash -n infra/observability-lab/postgres/init/002-monitoring.sh
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/observability-lab-experiments", "tools/observability-lab-dashboard")]'
+          ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+            docker compose -f infra/observability-lab/compose.yaml --profile tools config --quiet
+          docker run --rm --network none --entrypoint /bin/promtool \
+            -v "$PWD/infra/observability-lab/prometheus:/rules:ro" -w /rules \
+            prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e \
+            test rules slo-tests.yml
           bash -n infra/local/postgres/init/001-roles.sh
           bash -n infra/security-lab/postgres/init/001-security-lab-roles.sh
           sh -n infra/security-lab/postgres/tls.sh

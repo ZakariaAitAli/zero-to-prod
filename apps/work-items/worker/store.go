@@ -35,6 +35,8 @@ type workerProcessingJob struct {
 type processingCompletion struct {
 	Disposition completionDisposition
 	Job         workerProcessingJob
+	// AcceptedAt is set only when this call completed the job.
+	AcceptedAt time.Time
 }
 
 type processingFailureDisposition string

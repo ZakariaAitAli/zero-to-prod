@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# Zero-to-Prod observability lab (issue #122, ADR 0012).
+#
+# Usage: tools/observability-lab-local <command> [args]
+#
+#   init            Create the private state directory and runtime secrets.
+#   up              init, check the subnet, build, migrate, and start the lab.
+#   stop            Stop all lab containers; volumes and secrets are kept.
+#   status          Show lab containers.
+#   urls            Print the loopback URLs of the API and the telemetry UIs.
+#   load SECONDS RATE OUTPUT
+#                   Drive RATE iterations per second for SECONDS against the
+#                   API (create item, request processing, read the job) and
+#                   append one CSV line per request to OUTPUT.
+#   compose ARGS    Run docker compose for this lab.
+#
+# Secrets live in ZTP_OBSERVABILITY_LAB_STATE (default
+# ~/.local/state/zero-to-prod/observability-lab), mode 700, never in Git.
+# Nothing here removes volumes, networks of other projects, or images.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LAB_DIR="${REPO_ROOT}/infra/observability-lab"
+PROJECT=zero-to-prod-observability-lab
+STATE_DIR="${ZTP_OBSERVABILITY_LAB_STATE:-${HOME}/.local/state/zero-to-prod/observability-lab}"
+SECRETS_DIR="${STATE_DIR}/secrets"
+SUBNET="${ZTP_OBSERVABILITY_LAB_SUBNET:-10.213.20.0/24}"
+API_PORT="${ZTP_OBSERVABILITY_LAB_API_PORT:-18080}"
+
+export ZTP_OBSERVABILITY_LAB_SECRETS_DIR="$SECRETS_DIR"
+export ZTP_OBSERVABILITY_LAB_SUBNET="$SUBNET"
+export ZTP_OBSERVABILITY_LAB_VERSION="${ZTP_OBSERVABILITY_LAB_VERSION:-$(git -C "$REPO_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo observability-lab)}"
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+compose() {
+  docker compose --project-name "$PROJECT" --project-directory "$LAB_DIR" -f "${LAB_DIR}/compose.yaml" "$@"
+}
+
+# The state directory must be a dedicated, private directory: refuse broad
+# or shared locations before writing secrets into it.
+check_state_dir() {
+  case "$STATE_DIR" in
+    "" | / | "$HOME" | /tmp | /tmp/ | /var/tmp | /var/tmp/)
+      die "refusing state directory ${STATE_DIR}: use a dedicated directory"
+      ;;
+  esac
+  if [[ -e "$STATE_DIR" ]]; then
+    [[ -d "$STATE_DIR" && -O "$STATE_DIR" ]] || die "${STATE_DIR} is not a directory owned by $(id -un)"
+  fi
+}
+
+write_file() {
+  local path="$1" mode="$2" temporary
+  temporary="${path}.tmp.$$"
+  cat > "$temporary"
+  chmod "$mode" "$temporary"
+  # Keep an unchanged file in place so running containers keep the same inode.
+  if [[ -f "$path" ]] && cmp -s "$temporary" "$path"; then
+    rm -f "$temporary"
+    return 0
+  fi
+  mv -f "$temporary" "$path"
+}
+
+secret() {
+  tr -d '\r\n' < "${SECRETS_DIR}/$1"
+}
+
+rabbitmq_password_hash() {
+  # rabbit_password_hashing_sha256: base64(salt || sha256(salt || password))
+  local password="$1" salt_file digest_file
+  salt_file="$(mktemp "${SECRETS_DIR}/.salt.XXXXXX")"
+  digest_file="$(mktemp "${SECRETS_DIR}/.digest.XXXXXX")"
+  openssl rand 4 > "$salt_file"
+  { cat "$salt_file"; printf '%s' "$password"; } | openssl dgst -sha256 -binary > "$digest_file"
+  cat "$salt_file" "$digest_file" | openssl base64 -A
+  rm -f "$salt_file" "$digest_file"
+}
+
+cmd_init() {
+  check_state_dir
+  umask 077
+  mkdir -p "$SECRETS_DIR"
+  chmod 700 "$STATE_DIR" "$SECRETS_DIR"
+
+  local generated_rabbitmq=false name
+  for name in postgres-admin-password postgres-migrator-password postgres-app-password \
+    postgres-worker-password postgres-monitor-password rabbitmq-publisher-password \
+    rabbitmq-worker-password grafana-admin-password; do
+    if [[ ! -s "${SECRETS_DIR}/${name}" ]]; then
+      openssl rand -hex 24 | write_file "${SECRETS_DIR}/${name}" 644
+      [[ "$name" == rabbitmq-* ]] && generated_rabbitmq=true
+    fi
+  done
+
+  # Files are 644 inside the 700 directory: container users differ from the
+  # host user, and the directory keeps other host users out.
+  printf 'postgres://zero_to_prod_migrator:%s@postgres:5432/zero_to_prod?sslmode=disable\n' "$(secret postgres-migrator-password)" \
+    | write_file "${SECRETS_DIR}/postgres-migrator-url" 644
+  printf 'postgres://zero_to_prod_app:%s@postgres:5432/zero_to_prod?sslmode=disable\n' "$(secret postgres-app-password)" \
+    | write_file "${SECRETS_DIR}/api-database-url" 644
+  printf 'postgres://zero_to_prod_worker:%s@postgres:5432/zero_to_prod?sslmode=disable\n' "$(secret postgres-worker-password)" \
+    | write_file "${SECRETS_DIR}/worker-database-url" 644
+  printf 'amqp://zero_to_prod_publisher:%s@rabbitmq:5672/zero_to_prod\n' "$(secret rabbitmq-publisher-password)" \
+    | write_file "${SECRETS_DIR}/api-rabbitmq-url" 644
+  printf 'amqp://zero_to_prod_worker:%s@rabbitmq:5672/zero_to_prod\n' "$(secret rabbitmq-worker-password)" \
+    | write_file "${SECRETS_DIR}/worker-rabbitmq-url" 644
+
+  # Password hashes are salted randomly; regenerate only when needed.
+  if [[ -s "${SECRETS_DIR}/rabbitmq-definitions" && "$generated_rabbitmq" == false ]]; then
+    echo "State: ${STATE_DIR}"
+    return 0
+  fi
+  cat <<EOF_DEFINITIONS | write_file "${SECRETS_DIR}/rabbitmq-definitions" 644
+{
+  "users": [
+    {"name": "zero_to_prod_publisher", "password_hash": "$(rabbitmq_password_hash "$(secret rabbitmq-publisher-password)")",
+     "hashing_algorithm": "rabbit_password_hashing_sha256", "tags": []},
+    {"name": "zero_to_prod_worker", "password_hash": "$(rabbitmq_password_hash "$(secret rabbitmq-worker-password)")",
+     "hashing_algorithm": "rabbit_password_hashing_sha256", "tags": []}
+  ],
+  "vhosts": [{"name": "zero_to_prod"}],
+  "permissions": [
+    {"user": "zero_to_prod_publisher", "vhost": "zero_to_prod", "configure": "^\$", "write": "^amq\\\\.default\$", "read": "^\$"},
+    {"user": "zero_to_prod_worker", "vhost": "zero_to_prod", "configure": "^\$", "write": "^\$", "read": "^work_item_processing\$"}
+  ],
+  "queues": [
+    {"name": "work_item_processing", "vhost": "zero_to_prod", "durable": true, "auto_delete": false, "arguments": {}}
+  ]
+}
+EOF_DEFINITIONS
+  echo "State: ${STATE_DIR}"
+}
+
+# Refuse a subnet already used by another Docker network. The lab's own
+# network (from an earlier run) is fine.
+check_subnet() {
+  local own="${PROJECT}_lab" network subnet
+  while read -r network; do
+    [[ "$network" == "$own" ]] && continue
+    for subnet in $(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$network"); do
+      [[ "$subnet" == "$SUBNET" ]] && die "subnet ${SUBNET} is used by Docker network ${network}; set ZTP_OBSERVABILITY_LAB_SUBNET"
+    done
+  done < <(docker network ls --format '{{.Name}}')
+  return 0
+}
+
+cmd_up() {
+  cmd_init
+  check_subnet
+  # One image at a time: parallel builds intermittently failed in the Docker
+  # Desktop credential helper ("error getting credentials").
+  compose build api
+  compose build worker
+  compose --profile tools build migrate
+  compose up -d --wait postgres rabbitmq
+  compose --profile tools run --rm migrate up
+  compose up -d --wait
+  cmd_urls
+}
+
+cmd_urls() {
+  cat <<EOF_URLS
+API         http://127.0.0.1:${API_PORT}
+Grafana     http://127.0.0.1:${ZTP_OBSERVABILITY_LAB_GRAFANA_PORT:-13000}  (anonymous viewer; admin password in ${SECRETS_DIR}/grafana-admin-password)
+Prometheus  http://127.0.0.1:${ZTP_OBSERVABILITY_LAB_PROMETHEUS_PORT:-19090}
+Jaeger      http://127.0.0.1:${ZTP_OBSERVABILITY_LAB_JAEGER_PORT:-16686}
+EOF_URLS
+}
+
+# One iteration: create an item, request processing, read the job. Each
+# request appends: unix_ms,operation,http_status,seconds.
+load_iteration() {
+  local output="$1" base="http://127.0.0.1:${API_PORT}" now result id job
+  now="$(date +%s%3N)"
+  result="$(curl -sS -o /tmp/.obs-lab-create.$$.$BASHPID -w '%{http_code} %{time_total}' --max-time 10 \
+    -H 'Content-Type: application/json' -d "{\"title\":\"load ${now}\"}" "${base}/items" 2>/dev/null || echo "000 10")"
+  echo "${now},create,${result% *},${result#* }" >> "$output"
+  id="$(sed -n 's/.*"id":\([0-9]*\).*/\1/p' /tmp/.obs-lab-create.$$.$BASHPID 2>/dev/null || true)"
+  rm -f /tmp/.obs-lab-create.$$.$BASHPID
+  [[ -n "$id" ]] || return 0
+
+  now="$(date +%s%3N)"
+  result="$(curl -sS -o /tmp/.obs-lab-process.$$.$BASHPID -w '%{http_code} %{time_total}' --max-time 10 \
+    -X POST "${base}/items/${id}/process" 2>/dev/null || echo "000 10")"
+  echo "${now},process,${result% *},${result#* }" >> "$output"
+  job="$(sed -n 's/^{"id":\([0-9]*\).*/\1/p' /tmp/.obs-lab-process.$$.$BASHPID 2>/dev/null || true)"
+  rm -f /tmp/.obs-lab-process.$$.$BASHPID
+  [[ -n "$job" ]] || return 0
+
+  now="$(date +%s%3N)"
+  result="$(curl -sS -o /dev/null -w '%{http_code} %{time_total}' --max-time 10 \
+    "${base}/processing-jobs/${job}" 2>/dev/null || echo "000 10")"
+  echo "${now},get_job,${result% *},${result#* }" >> "$output"
+}
+
+cmd_load() {
+  local seconds="${1:?seconds}" rate="${2:?iterations per second}" output="${3:?output CSV}"
+  [[ "$seconds" =~ ^[0-9]+$ && "$rate" =~ ^[0-9]+$ && "$rate" -gt 0 ]] || die "load SECONDS RATE OUTPUT"
+  local interval end
+  interval="$(awk -v r="$rate" 'BEGIN { printf "%.4f", 1 / r }')"
+  end=$(( $(date +%s) + seconds ))
+  while (( $(date +%s) < end )); do
+    load_iteration "$output" &
+    sleep "$interval"
+  done
+  wait
+}
+
+main() {
+  local command="${1:-}"
+  shift || true
+  case "$command" in
+    init) cmd_init ;;
+    up) cmd_up ;;
+    stop) compose stop ;;
+    status) compose ps -a ;;
+    urls) cmd_urls ;;
+    load) cmd_load "$@" ;;
+    compose) compose "$@" ;;
+    *) sed -n '2,20p' "$0"; exit 2 ;;
+  esac
+}
+
+main "$@"

@@ -62,14 +62,17 @@ func (db *workerStubDB) QueryRow(
 	return row
 }
 
+var workerJobRowAcceptedAt = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
 func workerJobRow(
 	job workerProcessingJob,
 ) pgx.Row {
 	return workerStubRow{
 		scan: func(dest ...any) error {
-			if len(dest) != 6 {
+			// Guarded completion also returns created_at (seventh column).
+			if len(dest) != 6 && len(dest) != 7 {
 				return fmt.Errorf(
-					"expected 6 scan destinations, got %d",
+					"expected 6 or 7 scan destinations, got %d",
 					len(dest),
 				)
 			}
@@ -80,6 +83,9 @@ func workerJobRow(
 			*(dest[3].(*int)) = job.AttemptCount
 			*(dest[4].(**string)) = job.LastError
 			*(dest[5].(**time.Time)) = job.FinishedAt
+			if len(dest) == 7 {
+				*(dest[6].(*time.Time)) = workerJobRowAcceptedAt
+			}
 
 			return nil
 		},

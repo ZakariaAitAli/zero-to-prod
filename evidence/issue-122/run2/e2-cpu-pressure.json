@@ -1,0 +1,441 @@
+{
+  "experiment": "e2-cpu-pressure",
+  "started": "2026-10-18T14:30:55Z",
+  "checks": {
+    "latency_alert_fired": true,
+    "cpu_saturation_visible": true,
+    "limit_removed": true
+  },
+  "fault": {
+    "action": "docker update --cpus 0.01 api",
+    "load_rate": 8.0,
+    "at": "2026-10-18T14:30:55Z"
+  },
+  "alerts": [
+    {
+      "alert": "WorkItemsLatencyFastBurn",
+      "fired": true,
+      "seconds_until_firing": 145.0,
+      "active_at": "2026-10-18T14:32:10.337643832Z",
+      "summary": "Work Items API requests are slower than 250 ms often enough to exhaust the latency budget in about two days.",
+      "description": "19.11% of business requests took longer than 250 ms over the last hour (SLO allows 1 %).",
+      "runbook": "docs/runbooks/work-items-observability.md#latency-burn"
+    }
+  ],
+  "during_fault": {
+    "availability_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:availability_bad:ratio_rate5m"
+        },
+        "value": 0.28345027328442957
+      }
+    ],
+    "availability_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:availability_bad:ratio_rate1h"
+        },
+        "value": 0.1335801414844896
+      }
+    ],
+    "latency_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate5m"
+        },
+        "value": 0.48379981944709716
+      }
+    ],
+    "latency_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:latency_bad:ratio_rate1h"
+        },
+        "value": 0.1911284072385765
+      }
+    ],
+    "freshness_bad_5m": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate5m"
+        },
+        "value": 0.014634146341463428
+      }
+    ],
+    "freshness_bad_1h": [
+      {
+        "metric": {
+          "__name__": "work_items:freshness_bad:ratio_rate1h"
+        },
+        "value": 0.0024177949709863755
+      }
+    ],
+    "requests_by_route_code_1m": [
+      {
+        "metric": {
+          "code": "200",
+          "route": "/processing-jobs/{id}"
+        },
+        "value": 0.04000320025602048
+      },
+      {
+        "metric": {
+          "code": "201",
+          "route": "/items"
+        },
+        "value": 4.640371229698376
+      },
+      {
+        "metric": {
+          "code": "202",
+          "route": "/items/{id}/process"
+        },
+        "value": 0.7600608048643891
+      },
+      {
+        "metric": {
+          "code": "503",
+          "route": "/items/{id}/process"
+        },
+        "value": 3.7202976238099046
+      },
+      {
+        "metric": {
+          "code": "503",
+          "route": "/items"
+        },
+        "value": 3.8203056244499556
+      },
+      {
+        "metric": {
+          "code": "503",
+          "route": "/processing-jobs/{id}"
+        },
+        "value": 0.1600128010240819
+      }
+    ],
+    "latency_p95_1m": [
+      {
+        "metric": {},
+        "value": 4.902634297520661
+      }
+    ],
+    "accepted_jobs": [],
+    "oldest_accepted_age_s": [],
+    "outbox_unpublished": [],
+    "oldest_unpublished_age_s": [],
+    "backlog_scrape_success": [
+      {
+        "metric": {
+          "__name__": "work_items_backlog_scrape_success",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "queue_ready": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_messages_ready",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 0.0
+      }
+    ],
+    "queue_unacked": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_messages_unacked",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 0.0
+      }
+    ],
+    "queue_consumers": [
+      {
+        "metric": {
+          "__name__": "rabbitmq_detailed_queue_consumers",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues",
+          "queue": "work_item_processing",
+          "vhost": "zero_to_prod"
+        },
+        "value": 1.0
+      }
+    ],
+    "outbox_publish_rate_1m": [
+      {
+        "metric": {
+          "result": "published"
+        },
+        "value": 0.12000960076806144
+      }
+    ],
+    "broker_connect_failures_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.0
+      }
+    ],
+    "worker_deliveries_1m": [
+      {
+        "metric": {
+          "redelivered": "false",
+          "settlement": "ack"
+        },
+        "value": 0.12000960076806144
+      }
+    ],
+    "worker_session_exits_1m": [
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "completion_latency_p95_5m": [
+      {
+        "metric": {},
+        "value": 0.4999555160142348
+      }
+    ],
+    "pool_acquired": [
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 14.0
+      },
+      {
+        "metric": {
+          "__name__": "work_items_db_pool_acquired_connections",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "pool_wait_s_per_s_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 17.962475101188097
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0
+      }
+    ],
+    "cpu_cores_1m": [
+      {
+        "metric": {
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 0.008600688055044405
+      },
+      {
+        "metric": {
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 0.0008000640051203925
+      }
+    ],
+    "rss_bytes": [
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 38379520.0
+      },
+      {
+        "metric": {
+          "__name__": "process_resident_memory_bytes",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 33464320.0
+      }
+    ],
+    "pg_up": [
+      {
+        "metric": {
+          "__name__": "pg_up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      }
+    ],
+    "targets_up": [
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "otel-collector:8888",
+          "job": "otel-collector"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "api:9464",
+          "job": "work-items-api"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "worker:9465",
+          "job": "work-items-worker"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "postgres-exporter:9187",
+          "job": "postgres"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "loki:3100",
+          "job": "loki"
+        },
+        "value": 1.0
+      },
+      {
+        "metric": {
+          "__name__": "up",
+          "instance": "rabbitmq:15692",
+          "job": "rabbitmq-queues"
+        },
+        "value": 1.0
+      }
+    ]
+  },
+  "client_during_fault": {
+    "requests": 1866,
+    "by_operation_status": {
+      "create:201": 673,
+      "create:503": 450,
+      "get_job:200": 33,
+      "get_job:503": 82,
+      "process:202": 115,
+      "process:503": 513
+    },
+    "server_errors": 1045,
+    "connection_failures": 0,
+    "latency_s": {
+      "p50": 3.6002,
+      "p95": 5.2992,
+      "p99": 6.102
+    }
+  },
+  "slow_request_logs": [
+    {
+      "service": "work-items-api",
+      "trace_id": "40eec9aba3bcabc5e94d654e5cb3a49a",
+      "level": "info",
+      "line": "http request",
+      "error": null
+    },
+    {
+      "service": "work-items-api",
+      "trace_id": "4d5df4a9de20778bbf5383e2c30795fb",
+      "level": "info",
+      "line": "http request",
+      "error": null
+    },
+    {
+      "service": "work-items-api",
+      "trace_id": "85e95b7ecf5c9543d58312c26c4812ea",
+      "level": "info",
+      "line": "http request",
+      "error": null
+    }
+  ],
+  "slow_request_trace": [
+    {
+      "service": "work-items-api",
+      "name": "POST /items",
+      "span_id": "d92f16ca272769b5",
+      "parent": [],
+      "kind": "server",
+      "duration_ms": 2399.888,
+      "error": false,
+      "status_description": null
+    },
+    {
+      "service": "work-items-api",
+      "name": "INSERT postgresql",
+      "span_id": "305fb7c781d527e3",
+      "parent": [
+        "d92f16ca272769b5"
+      ],
+      "kind": "client",
+      "duration_ms": 601.025,
+      "error": false,
+      "status_description": null
+    }
+  ],
+  "restore": {
+    "action": "docker update --cpus 20 api (all Docker VM CPUs)",
+    "nano_cpus_after": "20000000000",
+    "expected_nano_cpus": "20000000000",
+    "at": "2026-10-18T14:33:41Z"
+  },
+  "quiet": {
+    "pages_resolved": true,
+    "seconds_until_no_pages": 310.0,
+    "still_firing": [
+      "WorkItemsAvailabilitySlowBurn",
+      "WorkItemsLatencySlowBurn"
+    ]
+  },
+  "finished": "2026-10-18T14:38:51Z",
+  "passed": true
+}

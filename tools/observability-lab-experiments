@@ -1,0 +1,565 @@
+#!/usr/bin/env python3
+"""Issue #122 observability experiments against tools/observability-lab-local.
+
+Usage: tools/observability-lab-experiments OUTPUT_DIR [EXPERIMENT ...]
+
+Runs each experiment under synthetic load, injects one failure, waits for the
+alert designed to detect it, collects what an operator would use to
+investigate (Prometheus series, firing alerts, Loki logs, Jaeger traces,
+client-side results), restores the lab, and waits for alerts to resolve.
+Writes one JSON file per experiment and summary.json to OUTPUT_DIR (which
+must not exist). Standard library only; never prints or records secrets.
+"""
+
+import concurrent.futures
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+PROJECT = "zero-to-prod-observability-lab"
+API = "http://127.0.0.1:" + os.environ.get("ZTP_OBSERVABILITY_LAB_API_PORT", "18080")
+PROMETHEUS = "http://127.0.0.1:" + os.environ.get("ZTP_OBSERVABILITY_LAB_PROMETHEUS_PORT", "19090")
+JAEGER = "http://127.0.0.1:" + os.environ.get("ZTP_OBSERVABILITY_LAB_JAEGER_PORT", "16686")
+LOAD_RATE = float(os.environ.get("ZTP_OBSERVABILITY_LAB_LOAD_RATE", "4"))
+ITEM_LOCK = "SELECT pg_advisory_xact_lock(1464423501, hashint8({}::bigint))"
+
+
+def container(service):
+    return f"{PROJECT}-{service}-1"
+
+
+def now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def run(*args, check=True, timeout=120):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    if check and result.returncode != 0:
+        raise RuntimeError(f"{args[:3]} failed: {result.stderr.strip()[:300]}")
+    return result.stdout.strip()
+
+
+def psql(sql):
+    return run("docker", "exec", container("postgres"), "psql", "-U", "zero_to_prod_admin",
+               "-d", "zero_to_prod", "-Atc", sql)
+
+
+def http(method, url, body=None, timeout=10):
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json"})
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = response.read()
+            status = response.status
+    except urllib.error.HTTPError as error:
+        payload, status = error.read(), error.code
+    except (urllib.error.URLError, OSError, TimeoutError):
+        payload, status = b"", 0
+    elapsed = time.monotonic() - started
+    try:
+        parsed = json.loads(payload) if payload else None
+    except ValueError:
+        parsed = None
+    return status, parsed, elapsed
+
+
+def prom(query):
+    url = PROMETHEUS + "/api/v1/query?" + urllib.parse.urlencode({"query": query})
+    with urllib.request.urlopen(url, timeout=10) as response:
+        result = json.load(response)["data"]["result"]
+    return [{"metric": r["metric"], "value": float(r["value"][1])} for r in result]
+
+
+def prom_value(query):
+    result = prom(query)
+    return result[0]["value"] if result else None
+
+
+def firing_alerts():
+    with urllib.request.urlopen(PROMETHEUS + "/api/v1/alerts", timeout=10) as response:
+        alerts = json.load(response)["data"]["alerts"]
+    return {a["labels"]["alertname"]: a for a in alerts if a["state"] == "firing"}
+
+
+def loki(query, minutes=10, limit=20):
+    end = time.time_ns()
+    params = urllib.parse.urlencode({"query": query, "limit": limit,
+                                     "start": end - minutes * 60 * 10**9, "end": end})
+    output = run("docker", "exec", container("api"), "wget", "-qO-",
+                 f"http://loki:3100/loki/api/v1/query_range?{params}")
+    lines = []
+    for stream in json.loads(output)["data"]["result"]:
+        for _, line in stream["values"]:
+            lines.append({"service": stream["stream"].get("service_name"),
+                          "trace_id": stream["stream"].get("trace_id"),
+                          "level": stream["stream"].get("detected_level"),
+                          "line": line,
+                          # The slog bridge exports error values as exception_*.
+                          "error": stream["stream"].get("exception_message")})
+    return lines
+
+
+def jaeger_trace(trace_id):
+    try:
+        with urllib.request.urlopen(f"{JAEGER}/api/traces/{trace_id}", timeout=10) as response:
+            data = json.load(response)["data"]
+    except urllib.error.HTTPError:
+        return None
+    if not data:
+        return None
+    trace = data[0]
+    services = {key: value["serviceName"] for key, value in trace["processes"].items()}
+    spans = []
+    for span in sorted(trace["spans"], key=lambda s: s["startTime"]):
+        tags = {t["key"]: t["value"] for t in span.get("tags", [])}
+        spans.append({
+            "service": services[span["processID"]],
+            "name": span["operationName"],
+            "span_id": span["spanID"],
+            "parent": [r["spanID"] for r in span.get("references", [])],
+            "kind": tags.get("span.kind"),
+            "duration_ms": span["duration"] / 1000,
+            "error": tags.get("error", False) or tags.get("otel.status_code") == "ERROR",
+            "status_description": tags.get("otel.status_description"),
+        })
+    return spans
+
+
+def wait_for(predicate, timeout, interval=5):
+    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value, round(time.monotonic() - started, 1)
+        time.sleep(interval)
+    return None, round(time.monotonic() - started, 1)
+
+
+def wait_alert(name, timeout):
+    alert, waited = wait_for(lambda: firing_alerts().get(name), timeout)
+    return {"alert": name, "fired": alert is not None, "seconds_until_firing": waited,
+            "active_at": alert and alert.get("activeAt"),
+            "summary": alert and alert["annotations"].get("summary"),
+            "description": alert and alert["annotations"].get("description"),
+            "runbook": alert and alert["annotations"].get("runbook")}
+
+
+def paging_alerts():
+    return {name: alert for name, alert in firing_alerts().items() if alert["labels"].get("severity") == "page"}
+
+
+def wait_quiet(timeout=480):
+    # Ticket-severity slow burns use 30-minute and 6-hour windows and keep
+    # firing long after recovery (run 1); the next experiment waits only for
+    # pages to resolve and records the tickets still open.
+    _, waited = wait_for(lambda: not paging_alerts(), timeout, interval=10)
+    return {"pages_resolved": not paging_alerts(), "seconds_until_no_pages": waited,
+            "still_firing": sorted(firing_alerts())}
+
+
+def first_exported_trace(trace_ids):
+    # Spans reach Jaeger after the SDK and collector batch delays (about 7 s);
+    # the newest log lines can precede their trace.
+    for _ in range(6):
+        for trace_id in trace_ids:
+            spans = jaeger_trace(trace_id)
+            if spans:
+                return trace_id, spans
+        time.sleep(5)
+    return None, None
+
+
+def wait_healthy(service, timeout=120):
+    def healthy():
+        state = run("docker", "inspect", "-f", "{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
+                    container(service), check=False)
+        return state in ("running healthy", "running ")
+    return wait_for(healthy, timeout, interval=2)[0] is not None
+
+
+class Load:
+    """Create item, request processing, read the job, at a fixed rate."""
+
+    def __init__(self, rate=LOAD_RATE):
+        self.rate = rate
+        self.results = []
+        self.jobs = []
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=48)
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop_event.set()
+        self.thread.join()
+        self.pool.shutdown(wait=True)
+
+    def _record(self, operation, status, elapsed):
+        with self.lock:
+            self.results.append((time.time(), operation, status, elapsed))
+
+    def _iteration(self, index):
+        status, item, elapsed = http("POST", API + "/items", {"title": f"experiment load {index}"})
+        self._record("create", status, elapsed)
+        if status != 201:
+            return
+        status, job, elapsed = http("POST", f"{API}/items/{item['id']}/process")
+        self._record("process", status, elapsed)
+        if status != 202:
+            return
+        with self.lock:
+            self.jobs.append((time.time(), job["id"]))
+        status, _, elapsed = http("GET", f"{API}/processing-jobs/{job['id']}")
+        self._record("get_job", status, elapsed)
+
+    def _run(self):
+        index = 0
+        while not self.stop_event.is_set():
+            self.pool.submit(self._iteration, index)
+            index += 1
+            self.stop_event.wait(1 / self.rate)
+
+    def summary(self, since=0.0, until=None):
+        until = until or time.time()
+        with self.lock:
+            selected = [r for r in self.results if since <= r[0] <= until]
+        by_status = {}
+        for _, operation, status, _ in selected:
+            key = f"{operation}:{status}"
+            by_status[key] = by_status.get(key, 0) + 1
+        latencies = sorted(r[3] for r in selected if r[2] not in (0,))
+        def quantile(q):
+            return round(latencies[int(q * (len(latencies) - 1))], 4) if latencies else None
+        return {"requests": len(selected), "by_operation_status": dict(sorted(by_status.items())),
+                "server_errors": sum(1 for r in selected if r[2] >= 500),
+                "connection_failures": sum(1 for r in selected if r[2] == 0),
+                "latency_s": {"p50": quantile(0.5), "p95": quantile(0.95), "p99": quantile(0.99)}}
+
+    def last_job(self):
+        with self.lock:
+            return self.jobs[-1][1] if self.jobs else None
+
+
+def trace_id_of_job(job_id):
+    value = psql(f"SELECT split_part(trace_context, '-', 2) FROM public.outbox_messages WHERE processing_job_id={int(job_id)}")
+    return value or None
+
+
+def job_state(job_id):
+    status, job, _ = http("GET", f"{API}/processing-jobs/{job_id}")
+    return job["state"] if status == 200 else None
+
+
+def snapshot(queries):
+    return {name: prom(query) for name, query in queries.items()}
+
+
+DASHBOARD_QUERIES = {
+    "availability_bad_5m": "work_items:availability_bad:ratio_rate5m",
+    "availability_bad_1h": "work_items:availability_bad:ratio_rate1h",
+    "latency_bad_5m": "work_items:latency_bad:ratio_rate5m",
+    "latency_bad_1h": "work_items:latency_bad:ratio_rate1h",
+    "freshness_bad_5m": "work_items:freshness_bad:ratio_rate5m",
+    "freshness_bad_1h": "work_items:freshness_bad:ratio_rate1h",
+    "requests_by_route_code_1m": 'sum by (route, code) (rate(work_items_http_requests_total{route!~"/health|/ready|/version|unmatched"}[1m]))',
+    "latency_p95_1m": 'histogram_quantile(0.95, sum by (le) (rate(work_items_http_request_duration_seconds_bucket{route!~"/health|/ready|/version|unmatched"}[1m])))',
+    "accepted_jobs": "work_items_processing_jobs_accepted",
+    "oldest_accepted_age_s": "work_items_processing_job_oldest_accepted_age_seconds",
+    "outbox_unpublished": "work_items_outbox_unpublished_messages",
+    "oldest_unpublished_age_s": "work_items_outbox_oldest_unpublished_age_seconds",
+    "backlog_scrape_success": "work_items_backlog_scrape_success",
+    "queue_ready": 'rabbitmq_detailed_queue_messages_ready{queue="work_item_processing"}',
+    "queue_unacked": 'rabbitmq_detailed_queue_messages_unacked{queue="work_item_processing"}',
+    "queue_consumers": 'rabbitmq_detailed_queue_consumers{queue="work_item_processing"}',
+    "outbox_publish_rate_1m": "sum by (result) (rate(work_items_outbox_publish_total[1m]))",
+    "broker_connect_failures_1m": "rate(work_items_outbox_broker_connect_failures_total[1m])",
+    "worker_deliveries_1m": "sum by (settlement, redelivered) (rate(work_items_worker_deliveries_total[1m]))",
+    "worker_session_exits_1m": "rate(work_items_worker_session_exits_total[1m])",
+    "completion_latency_p95_5m": "histogram_quantile(0.95, sum by (le) (rate(work_items_worker_job_completion_latency_seconds_bucket[5m])))",
+    "pool_acquired": "work_items_db_pool_acquired_connections",
+    "pool_wait_s_per_s_1m": "rate(work_items_db_pool_empty_acquire_wait_seconds_total[1m])",
+    "cpu_cores_1m": 'rate(process_cpu_seconds_total{job=~"work-items-.*"}[1m])',
+    "rss_bytes": 'process_resident_memory_bytes{job=~"work-items-.*"}',
+    "pg_up": "pg_up",
+    "targets_up": "up",
+}
+
+
+def check(record, name, condition):
+    record["checks"][name] = bool(condition)
+
+
+def experiment_baseline(record):
+    with Load() as load:
+        start = time.time()
+        time.sleep(150)
+        job = load.last_job()
+        record["client"] = load.summary(start)
+    _, waited = wait_for(lambda: job_state(job) == "succeeded", 30, interval=1)
+    trace_id = trace_id_of_job(job)
+    time.sleep(8)
+    spans = jaeger_trace(trace_id) or []
+    logs = loki(f'{{service_name=~"work-items-.*"}} | trace_id="{trace_id}"')
+    record["sample"] = {"job_id": job, "trace_id": trace_id, "spans": spans,
+                        "logs": [{k: v for k, v in l.items() if k != "error"} for l in logs]}
+    record["telemetry"] = snapshot(DASHBOARD_QUERIES)
+    by_id = {s["span_id"]: s for s in spans}
+    server = next((s for s in spans if s["kind"] == "server"), None)
+    producer = next((s for s in spans if s["kind"] == "producer"), None)
+    consumer = next((s for s in spans if s["kind"] == "consumer"), None)
+    check(record, "no_client_errors", record["client"]["server_errors"] == 0 and record["client"]["connection_failures"] == 0)
+    check(record, "trace_has_api_and_worker", {s["service"] for s in spans} == {"work-items-api", "work-items-worker"})
+    check(record, "publish_span_child_of_request", bool(server and producer and producer["parent"] == [server["span_id"]]))
+    check(record, "process_span_child_of_publish", bool(producer and consumer and consumer["parent"] == [producer["span_id"]]))
+    check(record, "db_spans_under_both_services", sum(1 for s in spans if s["name"].endswith("postgresql") and by_id.get((s["parent"] or [""])[0])) >= 4)
+    check(record, "logs_from_both_services_share_trace", {l["service"] for l in logs} >= {"work-items-api", "work-items-worker"})
+    record["alerts_firing_at_end"] = sorted(firing_alerts())
+    check(record, "no_pages_firing", not paging_alerts())
+
+
+def experiment_slow_lock(record):
+    status, item, _ = http("POST", API + "/items", {"title": "lock contention"})
+    item_id = item["id"]
+    holder = subprocess.Popen(
+        ["docker", "exec", container("postgres"), "psql", "-U", "zero_to_prod_admin", "-d", "zero_to_prod",
+         "-c", f"BEGIN; {ITEM_LOCK.format(item_id)}; SELECT pg_sleep(8); COMMIT;"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1.5)
+    status, body, elapsed = http("POST", f"{API}/items/{item_id}/process")
+    holder.wait(timeout=30)
+    record["request"] = {"item_id": item_id, "status": status, "body": body, "elapsed_s": round(elapsed, 3)}
+    time.sleep(8)
+    logs = loki(f'{{service_name="work-items-api"}} |= "accept processing job failed" | work_item_id="{item_id}"', minutes=2)
+    trace_id, spans = first_exported_trace([l["trace_id"] for l in logs if l["trace_id"]])
+    spans = spans or []
+    record["investigation"] = {"error_logs": [{k: v for k, v in l.items()} for l in logs[:3]],
+                               "trace_id": trace_id, "spans": spans}
+    slow_span = next((s for s in spans or [] if s["name"] == "SELECT postgresql" and s["duration_ms"] > 2500), None)
+    check(record, "request_failed_with_503_after_timeout", status == 503 and 2.5 < elapsed < 4.5)
+    check(record, "error_log_carries_trace_id", trace_id is not None)
+    check(record, "trace_shows_lock_wait_span", slow_span is not None)
+    check(record, "lock_span_marked_error", bool(slow_span and slow_span["error"]))
+    retry_status, _, _ = http("POST", f"{API}/items/{item_id}/process")
+    check(record, "retry_after_lock_release_accepted", retry_status == 202)
+
+
+def experiment_postgres_outage(record):
+    with Load() as load:
+        time.sleep(60)
+        outage = time.time()
+        run("docker", "stop", container("postgres"))
+        record["fault"] = {"action": "docker stop postgres", "at": now()}
+        record["alerts"] = [wait_alert("WorkItemsAvailabilityFastBurn", 300),
+                            wait_alert("WorkItemsBacklogUnobservable", 240)]
+        record["during_outage"] = snapshot(DASHBOARD_QUERIES)
+        errors = loki('{service_name="work-items-api"} | detected_level=~"warn|error"', minutes=5, limit=10)
+        trace_id, spans = first_exported_trace([l["trace_id"] for l in errors if l["trace_id"] and "failed" in l["line"]])
+        record["investigation"] = {
+            "error_logs": [{k: v for k, v in l.items()} for l in errors[:5]],
+            "failing_request_trace_id": trace_id,
+            "failing_request_trace": spans,
+        }
+        record["client_during_outage"] = load.summary(outage)
+        run("docker", "start", container("postgres"))
+        recovered = time.time()
+        record["recovery"] = {"postgres_healthy": wait_healthy("postgres"), "at": now()}
+        time.sleep(60)
+        record["client_after_recovery"] = load.summary(recovered + 10)
+    record["after_recovery"] = snapshot(DASHBOARD_QUERIES)
+    check(record, "availability_alert_fired", record["alerts"][0]["fired"])
+    check(record, "backlog_unobservable_fired", record["alerts"][1]["fired"])
+    check(record, "client_saw_503", record["client_during_outage"]["server_errors"] > 0)
+    check(record, "error_logs_in_loki_with_trace", bool(record["investigation"]["failing_request_trace"]))
+    check(record, "pg_up_zero_during_outage", any(r["value"] == 0 for r in record["during_outage"]["pg_up"]))
+    check(record, "recovered_without_errors", record["client_after_recovery"]["server_errors"] == 0)
+
+
+def experiment_api_failure(record):
+    with Load() as load:
+        time.sleep(30)
+        outage = time.time()
+        run("docker", "kill", container("api"))
+        record["fault"] = {"action": "docker kill api", "at": now()}
+        record["alerts"] = [wait_alert("WorkItemsAPIUnavailable", 240)]
+        record["during_outage"] = snapshot({"targets_up": "up", "availability_bad_5m": "work_items:availability_bad:ratio_rate5m"})
+        record["client_during_outage"] = load.summary(outage)
+        run("docker", "start", container("api"))
+        record["recovery"] = {"api_healthy": wait_healthy("api"), "at": now()}
+        recovered = time.time()
+        time.sleep(45)
+        record["client_after_recovery"] = load.summary(recovered + 5)
+    check(record, "api_unavailable_alert_fired", record["alerts"][0]["fired"])
+    check(record, "client_saw_connection_failures", record["client_during_outage"]["connection_failures"] > 0)
+    check(record, "server_side_sli_did_not_see_failures", record["client_during_outage"]["server_errors"] == 0)
+    check(record, "recovered", record["client_after_recovery"]["connection_failures"] == 0 and record["client_after_recovery"]["server_errors"] == 0)
+
+
+def experiment_rabbitmq_outage(record):
+    with Load() as load:
+        time.sleep(30)
+        outage = time.time()
+        run("docker", "stop", container("rabbitmq"))
+        record["fault"] = {"action": "docker stop rabbitmq", "at": now()}
+        record["alerts"] = [wait_alert("WorkItemsAsyncProcessingStalled", 360)]
+        record["during_outage"] = snapshot(DASHBOARD_QUERIES)
+        record["client_during_outage"] = load.summary(outage)
+        record["publisher_logs"] = loki('{service_name="work-items-api"} |= "outbox publisher"', minutes=8)
+        accepted_during_outage = load.last_job()
+        run("docker", "start", container("rabbitmq"))
+        restart = time.time()
+        record["recovery"] = {"rabbitmq_healthy": wait_healthy("rabbitmq", 180), "at": now()}
+    drained, drain_seconds = wait_for(lambda: prom_value("work_items_processing_jobs_accepted") == 0, 300)
+    record["recovery"]["backlog_drained"] = drained is not None
+    record["recovery"]["drain_seconds_after_restart"] = round(time.time() - restart, 1) if drained else None
+    time.sleep(15)
+    trace_id = trace_id_of_job(accepted_during_outage)
+    spans = jaeger_trace(trace_id) or []
+    record["delayed_job"] = {"job_id": accepted_during_outage, "state": job_state(accepted_during_outage),
+                             "trace_id": trace_id, "spans": [s for s in spans if not s["name"].endswith("postgresql")]}
+    record["after_recovery"] = snapshot(DASHBOARD_QUERIES)
+    record["freshness_alert"] = {"WorkItemsFreshnessFastBurn": "WorkItemsFreshnessFastBurn" in firing_alerts()}
+    check(record, "stalled_alert_fired", record["alerts"][0]["fired"])
+    check(record, "api_stayed_available", record["client_during_outage"]["server_errors"] == 0)
+    check(record, "outbox_backlog_visible", any(r["value"] > 0 for r in record["during_outage"]["outbox_unpublished"]))
+    check(record, "publisher_degraded_logged", any("degraded" in l["line"] for l in record["publisher_logs"]))
+    check(record, "backlog_drained", record["recovery"]["backlog_drained"])
+    check(record, "delayed_job_trace_spans_outage",
+          {s["service"] for s in spans} == {"work-items-api", "work-items-worker"})
+
+
+def experiment_worker_stopped(record):
+    with Load() as load:
+        time.sleep(20)
+        run("docker", "stop", container("worker"))
+        record["fault"] = {"action": "docker stop worker", "at": now()}
+        record["alerts"] = [wait_alert("WorkItemsAsyncProcessingStalled", 360)]
+        record["during_outage"] = snapshot(DASHBOARD_QUERIES)
+        run("docker", "start", container("worker"))
+        restart = time.time()
+    drained, _ = wait_for(lambda: prom_value("work_items_processing_jobs_accepted") == 0, 300)
+    record["recovery"] = {"backlog_drained": drained is not None,
+                          "drain_seconds_after_restart": round(time.time() - restart, 1) if drained else None}
+    check(record, "stalled_alert_fired", record["alerts"][0]["fired"])
+    check(record, "queue_depth_visible", any(r["value"] > 0 for r in record["during_outage"]["queue_ready"]))
+    check(record, "no_consumers_visible", any(r["value"] == 0 for r in record["during_outage"]["queue_consumers"]))
+    check(record, "backlog_drained", record["recovery"]["backlog_drained"])
+
+
+def experiment_worker_cannot_complete(record):
+    psql("REVOKE INSERT ON public.work_item_results FROM zero_to_prod_worker")
+    record["fault"] = {"action": "REVOKE INSERT ON work_item_results FROM zero_to_prod_worker", "at": now()}
+    try:
+        with Load() as load:
+            first_job_wait = time.time()
+            record["alerts"] = [wait_alert("WorkItemsAsyncProcessingStalled", 360)]
+            record["during_fault"] = snapshot(DASHBOARD_QUERIES)
+            stuck = load.jobs[0][1] if load.jobs else None
+            record["stuck_job"] = {"job_id": stuck,
+                                   "attempt_count": psql(f"SELECT attempt_count FROM public.processing_jobs WHERE id={int(stuck)}"),
+                                   "state": job_state(stuck)}
+            record["worker_logs"] = loki('{service_name="work-items-worker"} | detected_level=~"warn|error"', minutes=6, limit=6)
+    finally:
+        psql("GRANT INSERT ON public.work_item_results TO zero_to_prod_worker")
+        record["restore"] = {"action": "GRANT INSERT ON work_item_results TO zero_to_prod_worker", "at": now()}
+    drained, _ = wait_for(lambda: prom_value("work_items_processing_jobs_accepted") == 0, 300)
+    record["recovery"] = {"backlog_drained": drained is not None,
+                          "stuck_job_state": job_state(stuck),
+                          "stuck_job_attempt_count": psql(f"SELECT attempt_count FROM public.processing_jobs WHERE id={int(stuck)}")}
+    requeues = sum(r["value"] for r in record["during_fault"]["worker_deliveries_1m"]
+                   if r["metric"].get("settlement") == "nack_requeue")
+    check(record, "stalled_alert_fired", record["alerts"][0]["fired"])
+    check(record, "requeue_loop_visible", requeues > 0)
+    check(record, "session_restarts_visible", any(r["value"] > 0 for r in record["during_fault"]["worker_session_exits_1m"]))
+    check(record, "error_logs_name_permission_sqlstate",
+          any("42501" in f'{l["line"]} {l["error"]}' for l in record["worker_logs"]))
+    check(record, "infrastructure_failures_do_not_consume_attempts", record["stuck_job"]["attempt_count"] == "0")
+    check(record, "backlog_drained", record["recovery"]["backlog_drained"])
+
+
+def experiment_cpu_pressure(record):
+    # Run 1 used 0.02 CPU at the default rate: the API needed only about
+    # 0.013 CPU, so it was never saturated. Demand must exceed the limit.
+    limit = os.environ.get("ZTP_OBSERVABILITY_LAB_CPU_LIMIT", "0.01")
+    rate = LOAD_RATE * 2
+    run("docker", "update", "--cpus", limit, container("api"))
+    record["fault"] = {"action": f"docker update --cpus {limit} api", "load_rate": rate, "at": now()}
+    try:
+        with Load(rate) as load:
+            start = time.time()
+            record["alerts"] = [wait_alert("WorkItemsLatencyFastBurn", 420)]
+            record["during_fault"] = snapshot(DASHBOARD_QUERIES)
+            record["client_during_fault"] = load.summary(start)
+            slow = loki('{service_name="work-items-api"} | route="/items" | duration_ms > 250', minutes=8, limit=3)
+            record["slow_request_logs"] = slow
+            _, record["slow_request_trace"] = first_exported_trace([l["trace_id"] for l in slow if l["trace_id"]])
+    finally:
+        # "docker update --cpus 0" leaves the previous limit in place (run 1);
+        # raising the limit to every CPU of the Docker VM removes the constraint.
+        cpus = run("docker", "info", "-f", "{{.NCPU}}")
+        run("docker", "update", "--cpus", cpus, container("api"))
+        record["restore"] = {"action": f"docker update --cpus {cpus} api (all Docker VM CPUs)",
+                             "nano_cpus_after": run("docker", "inspect", "-f", "{{.HostConfig.NanoCpus}}", container("api")),
+                             "expected_nano_cpus": str(int(cpus) * 10**9),
+                             "at": now()}
+    check(record, "latency_alert_fired", record["alerts"][0]["fired"])
+    check(record, "cpu_saturation_visible", any(r["metric"].get("job") == "work-items-api" and r["value"] >= 0.8 * float(limit)
+                                                 for r in record["during_fault"]["cpu_cores_1m"]))
+    check(record, "limit_removed", record["restore"]["nano_cpus_after"] == record["restore"]["expected_nano_cpus"])
+
+
+EXPERIMENTS = {
+    "e1-baseline-trace": experiment_baseline,
+    "e2-cpu-pressure": experiment_cpu_pressure,
+    "e3-slow-lock": experiment_slow_lock,
+    "e4-postgres-outage": experiment_postgres_outage,
+    "e5-api-failure": experiment_api_failure,
+    "e6-rabbitmq-outage": experiment_rabbitmq_outage,
+    "e7-worker-stopped": experiment_worker_stopped,
+    "e8-worker-cannot-complete": experiment_worker_cannot_complete,
+}
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    output = sys.argv[1]
+    names = sys.argv[2:] or list(EXPERIMENTS)
+    os.makedirs(output, exist_ok=False)
+    summary = {"started": now(), "load_rate_iterations_per_s": LOAD_RATE, "experiments": {}}
+    for name in names:
+        print(f"{now()} {name}: start", flush=True)
+        record = {"experiment": name, "started": now(), "checks": {}}
+        try:
+            EXPERIMENTS[name](record)
+        except Exception as error:  # record and continue with restoration
+            record["exception"] = f"{type(error).__name__}: {error}"
+        record["quiet"] = wait_quiet()
+        record["finished"] = now()
+        record["passed"] = bool(record["checks"]) and all(record["checks"].values()) and "exception" not in record
+        with open(os.path.join(output, f"{name}.json"), "w") as handle:
+            json.dump(record, handle, indent=2, default=str)
+        summary["experiments"][name] = {"passed": record["passed"], "checks": record["checks"],
+                                        "exception": record.get("exception")}
+        print(f"{now()} {name}: passed={record['passed']} {record['checks']} {record.get('exception', '')}", flush=True)
+    summary["finished"] = now()
+    with open(os.path.join(output, "summary.json"), "w") as handle:
+        json.dump(summary, handle, indent=2)
+    return 0 if all(e["passed"] for e in summary["experiments"].values()) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
