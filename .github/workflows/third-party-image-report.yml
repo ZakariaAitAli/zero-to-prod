@@ -1,0 +1,42 @@
+name: Third-party image report
+
+# Informational. The release gate for the images this project ships is in work-items-ci.yml;
+# this report only makes the findings of the pinned third-party lab images visible.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Scan pinned third-party images
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Self-test the report tool
+        run: tools/third-party-image-report --self-test
+
+      - name: Scan images
+        run: tools/third-party-image-report "${RUNNER_TEMP}/third-party-report"
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [ -f "${RUNNER_TEMP}/third-party-report/summary.md" ]; then
+            cat "${RUNNER_TEMP}/third-party-report/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Retain reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: third-party-image-report
+          path: ${{ runner.temp }}/third-party-report
+          if-no-files-found: warn
+          retention-days: 30
