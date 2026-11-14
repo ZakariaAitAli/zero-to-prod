@@ -2,9 +2,10 @@
 """Report vulnerability findings for the digest-pinned third-party images the labs run.
 
 Informational only: it never fails because of findings, so it cannot be mistaken for a
-release gate (tools/delivery-image-gate gates the images this project ships). It pulls each
-image by digest, scans a saved tarball with a pinned Trivy container (no Docker socket is
-mounted into the scanner) and writes per-image JSON plus summary.md / summary.json.
+release gate (tools/delivery-image-gate gates the images this project ships). A pinned Trivy
+container fetches each image by digest from its registry (linux/amd64; no Docker socket is
+mounted into the scanner, no local image store is involved) and the tool writes per-image JSON
+plus summary.md / summary.json.
 
 Usage: tools/third-party-image-report OUTPUT_DIR [COMPOSE_FILE ...]
        tools/third-party-image-report --self-test
@@ -20,7 +21,8 @@ from pathlib import Path
 
 SCANNER = "aquasec/trivy@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222"
 CACHE_VOLUME = "zero-to-prod-trivy-cache"
-IMAGE_LINE = re.compile(r"^\s+image:\s+([^\s$]+@sha256:[0-9a-f]{64})\s*$")
+PLATFORM = "linux/amd64"
+IMAGE_LINE =re.compile(r"^\s+image:\s+([^\s$]+@sha256:[0-9a-f]{64})\s*$")
 
 
 def images_from(compose_files):
@@ -81,24 +83,27 @@ def failure(label, result):
     return None, f"{label}: {detail}"
 
 
+def report_name(image):
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", image)
+
+
+def scanner_command(image, output):
+    """Trivy fetches the digest-pinned image from the registry itself (no Docker socket, no local store).
+
+    A `docker save` archive of a multi-platform image was not reliable: on a GitHub-hosted runner it
+    referenced the image config blob without containing it and Trivy could not open it."""
+    return [
+        "docker", "run", "--rm", "--memory", "2g",
+        "-v", f"{output}:/output", "-v", f"{CACHE_VOLUME}:/cache",
+        SCANNER, "image", "--cache-dir", "/cache", "--image-src", "remote", "--platform", PLATFORM,
+        "--scanners", "vuln", "--severity", "HIGH,CRITICAL", "--format", "json",
+        "--output", f"/output/{report_name(image)}.json", "--exit-code", "0", image,
+    ]
+
+
 def scan(image, output):
-    pulled = run(["docker", "pull", "--quiet", image])
-    if pulled.returncode:
-        return failure("pull failed", pulled)
-    name = re.sub(r"[^A-Za-z0-9._-]+", "_", image)
-    with tempfile.TemporaryDirectory(prefix="ztp-third-party-") as tmp:
-        saved = run(["docker", "save", "-o", f"{tmp}/image.tar", image])
-        if saved.returncode:
-            return failure("save failed", saved)
-        scanned = run(
-            [
-                "docker", "run", "--rm", "--memory", "2g",
-                "-v", f"{tmp}:/input:ro", "-v", f"{output}:/output", "-v", f"{CACHE_VOLUME}:/cache",
-                SCANNER, "image", "--cache-dir", "/cache", "--input", "/input/image.tar",
-                "--scanners", "vuln", "--severity", "HIGH,CRITICAL", "--format", "json",
-                "--output", f"/output/{name}.json", "--exit-code", "0",
-            ]
-        )
+    name = report_name(image)
+    scanned = run(scanner_command(image, output))
     report = output / f"{name}.json"
     if scanned.returncode or not report.exists():
         return failure("scan failed", scanned)
@@ -133,6 +138,11 @@ def self_test():
         {"image": "y@sha256:2", "summary": None, "error": "pull failed"},
     ])
     assert "| `x@sha256:1` | 0 | 2 | 1 | a, b, c, d, e, f … |" in table and "scan failed" in table
+    ref = "quay.io/x/y:v1@sha256:" + "d" * 64
+    command = scanner_command(ref, Path("/out"))
+    assert command[-1] == ref and "--image-src" in command and command[command.index("--image-src") + 1] == "remote"
+    assert "--input" not in command and not any("docker.sock" in part for part in command)
+    assert command[command.index("--output") + 1] == "/output/" + report_name(ref) + ".json"
     fake = subprocess.CompletedProcess([], 1, stdout="", stderr="noise\nFATAL a | b\n")
     assert failure("scan failed", fake) == (None, "scan failed: FATAL a b")
     assert failure("scan failed", subprocess.CompletedProcess([], 1, "", ""))[1] == "scan failed: no error output"

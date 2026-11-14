@@ -23,9 +23,11 @@ by `tools/delivery-image-gate`.
 tools/third-party-image-report /absolute/new/report-directory
 ```
 
-The directory must not exist. For each image the tool pulls it by digest, saves it to a temporary
-tarball and scans that with a Trivy container pinned by digest (no Docker socket is mounted into
-the scanner). The vulnerability database is cached in the named Docker volume
+The directory must not exist. Each image is fetched by digest (linux/amd64) from its registry by a
+Trivy container that is itself pinned by digest; no Docker socket is mounted into the scanner and
+Docker's local image store is not used. (An earlier version scanned a `docker save` archive; on a
+GitHub-hosted runner that archive of the multi-platform oauth2-proxy image lacked its config blob and
+could not be opened.) A failed row names the failed step and the last scanner error line. The vulnerability database is cached in the named Docker volume
 `zero-to-prod-trivy-cache`; remove it with `docker volume rm zero-to-prod-trivy-cache` when you no
 longer need it.
 
