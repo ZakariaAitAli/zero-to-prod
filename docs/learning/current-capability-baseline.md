@@ -207,12 +207,19 @@ The highest-leverage gaps remain capabilities that are still shallow or uncovere
 
 The v2 specification remains authoritative for future capability selection.
 
-## Proposed local production-engineering slices (2026-10-18)
+## Local production-engineering slices (proposed 2026-10-18, merged 2026-11-13)
 
-Draft PRs #139–#145 add application-hop TLS/admission/rotation, restore delivery
-identity/redrive, observability, capacity, local HA/PITR and immutable delivery
-with vulnerability gates. These capabilities are recorded by their experiments;
-they are not all merged into main or tested as one integrated deployment.
+PRs #139–#146 add application-hop TLS, admission control and secret rotation,
+restore delivery identity and redrive, observability, capacity, local HA/PITR,
+immutable delivery with vulnerability gates, and incident operations. All eight are
+merged into `main`, and the combined review (draft PR #149, kept open as an evidence
+artifact) found and fixed three integration defects (D1–D3). The slices were
+exercised together for the security lab, the Go tests and the recovery protocol, but
+not as one integrated deployment: gaps G1–G5 and G7 from that review (HA names versus
+the internal CA, classic versus quorum queue, ingress limits versus measured capacity,
+plaintext telemetry hops, single-API rotation tooling, alerting for the authenticated
+profile) are unresolved design decisions, and third-party lab images still carry
+vulnerability findings that no CI gate scans.
 
 The [local readiness review](../experiments/issue-126-readiness-review.md) maps
 implemented mechanisms, observed tests and unproven guarantees separately.
