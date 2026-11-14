@@ -10,6 +10,13 @@ It is **informational**. The release gate for the images this project ships (API
 fails because of findings, so an unfixed third-party finding is visible without blocking unrelated
 work. It does not analyse reachability: a finding is a candidate, not proof of exploitability.
 
+## Scope
+
+Only `image:` lines with a digest in `infra/**/compose*.y*ml` are scanned. Digest-pinned images that
+appear only in scripts (for example helper containers in the rotation and rate-limit tests) or as
+Dockerfile base images are not covered here; the Dockerfile bases of the API and worker are covered
+by `tools/delivery-image-gate`.
+
 ## Run it locally
 
 ```bash
@@ -23,7 +30,7 @@ the scanner). The vulnerability database is cached in the named Docker volume
 longer need it.
 
 Output: one JSON report per image, `summary.md` (a table of CRITICAL, HIGH and fixable counts per
-image) and `summary.json`. Exit status 0 means the report was written; 2 means a pull or scan
+image) and `summary.json`. Exit status 0 means the report was written; 1 means bad usage, no images found or an existing output directory; 2 means a pull or scan
 failed (the partial report is still written).
 
 `tools/third-party-image-report --self-test` checks the parser and renderer without Docker.

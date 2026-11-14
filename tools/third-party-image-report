@@ -8,7 +8,8 @@ mounted into the scanner) and writes per-image JSON plus summary.md / summary.js
 
 Usage: tools/third-party-image-report OUTPUT_DIR [COMPOSE_FILE ...]
        tools/third-party-image-report --self-test
-Exit status: 0 report written; 2 a pull or scan failed (partial report still written).
+Exit status: 0 report written; 1 bad usage, no images, or the output directory exists;
+2 a pull or scan failed (partial report still written).
 """
 import json
 import re
@@ -140,7 +141,10 @@ def main(argv):
     if not images:
         print("no digest-pinned images found", file=sys.stderr)
         return 1
-    output.mkdir(parents=True, exist_ok=False)
+    if output.exists():
+        print(f"output directory already exists: {output}", file=sys.stderr)
+        return 1
+    output.mkdir(parents=True)
     rows, failed = [], False
     for image in images:
         summary, error = scan(image, output)
