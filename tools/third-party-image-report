@@ -73,15 +73,23 @@ def run(cmd, **kwargs):
     return subprocess.run(cmd, text=True, capture_output=True, **kwargs)
 
 
+def failure(label, result):
+    """Name the failed step and keep the last stderr line, so a failure can be diagnosed from the report."""
+    lines = [line.strip() for line in (result.stderr or "").splitlines() if line.strip()]
+    detail = re.sub(r"[|\s]+", " ", lines[-1])[:200] if lines else "no error output"
+    print("\n".join(lines[-15:]), file=sys.stderr)
+    return None, f"{label}: {detail}"
+
+
 def scan(image, output):
     pulled = run(["docker", "pull", "--quiet", image])
     if pulled.returncode:
-        return None, "pull failed"
+        return failure("pull failed", pulled)
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", image)
     with tempfile.TemporaryDirectory(prefix="ztp-third-party-") as tmp:
         saved = run(["docker", "save", "-o", f"{tmp}/image.tar", image])
         if saved.returncode:
-            return None, "save failed"
+            return failure("save failed", saved)
         scanned = run(
             [
                 "docker", "run", "--rm", "--memory", "2g",
@@ -93,7 +101,7 @@ def scan(image, output):
         )
     report = output / f"{name}.json"
     if scanned.returncode or not report.exists():
-        return None, "scan failed"
+        return failure("scan failed", scanned)
     return summarize(json.loads(report.read_text())), ""
 
 
@@ -125,6 +133,9 @@ def self_test():
         {"image": "y@sha256:2", "summary": None, "error": "pull failed"},
     ])
     assert "| `x@sha256:1` | 0 | 2 | 1 | a, b, c, d, e, f … |" in table and "scan failed" in table
+    fake = subprocess.CompletedProcess([], 1, stdout="", stderr="noise\nFATAL a | b\n")
+    assert failure("scan failed", fake) == (None, "scan failed: FATAL a b")
+    assert failure("scan failed", subprocess.CompletedProcess([], 1, "", ""))[1] == "scan failed: no error output"
     print("self-test passed")
 
 
