@@ -161,7 +161,7 @@ Important current limitations include:
 - no sustained-operation L6 claim;
 - snapshot recovery remains limited to the captured recovery point;
 - PostgreSQL restore does not restore RabbitMQ: delivery identity rejects stale reused-ID messages and explicit offline redrive repairs lost deliveries in the tested recovery scenarios ([experiment](docs/experiments/issue-130-131-restore-recovery.md)); reviewed fencing and recovery procedures are still required;
-- no automated frontend behavioral tests.
+- automated API-client failure tests now exist; component and browser end-to-end tests remain absent.
 
 These limitations are experiment boundaries rather than hidden production-readiness assumptions.
 
@@ -278,7 +278,7 @@ Recovery is migration-first: migrations must already be applied, and all four ta
 
 The original accepted-work boundary was defined by [ADR 0001](docs/adr/0001-work-items-async-recovery-boundary.md) after the [Issue #111 recovery experiment](docs/experiments/issue-111-recovery-model.md) showed that restoring `work_items` alone lost accepted asynchronous work.
 
-PostgreSQL restore recovers persisted accepted-work and result state. It does **not** restore RabbitMQ, and a successful restore does not by itself make resuming safe: a job whose message was already delivered can remain blocked ([#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)), and a stale queued message can target IDs that new work reuses ([#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131)). No reconciliation or redrive exists yet.
+PostgreSQL restore recovers persisted accepted-work and result state. It does **not** restore RabbitMQ, and a successful restore does not by itself make resuming safe: a job whose message was already delivered can remain blocked ([#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)), and a stale queued message can target IDs that new work reuses ([#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131)). The current recovery tooling provides explicit offline redrive and delivery-identity checks for the tested scenarios; automatic reconciliation is not implemented. Follow the [recovery runbook](docs/runbooks/work-items-recovery.md) and [restore-recovery experiment](docs/experiments/issue-130-131-restore-recovery.md) before resuming.
 
 ADR 0003 adds the result to that boundary. See the [current recovery runbook](docs/runbooks/work-items-recovery.md). The original Work-Item-only design is preserved in the [Issue #99 backup/restore experiment](docs/sprint-03/postgresql-backup-restore.md).
 
@@ -297,7 +297,7 @@ GitHub Actions (`.github/workflows/work-items-ci.yml`) provides change-aware val
 
 **Validate Work Items frontend**
 
-- `pnpm install --frozen-lockfile`, lint, and production build.
+- `pnpm install --frozen-lockfile`, lint, API-client behavior tests, and production build.
 
 **Validate CI workflows**
 

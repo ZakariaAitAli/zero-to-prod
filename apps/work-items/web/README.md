@@ -53,6 +53,7 @@ The Vite proxy is development-only and does not define future production ingress
 Run:
 
 pnpm lint
+pnpm test
 pnpm build
 
 Frontend-only repository changes have their own CI validation path and do not require the PostgreSQL/RabbitMQ integration suite.
@@ -78,3 +79,14 @@ See [ADR 0003](../../../docs/adr/0003-work-items-async-success-semantics.md).
 - `docs/architecture/work-items.md`
 - `docs/guides/local-work-items.md`
 - `docs/adr/0002-work-items-web-ui-boundary.md`
+
+## Client failure tests
+
+`pnpm test` type-checks and runs the API client's behavior tests with Node's built-in test runner.
+They distinguish authenticated, signed-out, development HTML fallback and unavailable/malformed
+session responses; preserve same-origin credentials and the CSRF header; retain HTTP error codes;
+and follow an already-active job without resubmitting it. No new test dependency is needed.
+
+Gateway/network failures now show a session-service warning instead of being classified as
+“no gateway.” This does not change server-side authorization. Component rendering, browser
+interaction, real gateway integration and full end-to-end behavior are not established by these tests.

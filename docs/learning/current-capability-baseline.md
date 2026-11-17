@@ -227,3 +227,15 @@ Synthetic local traffic, even sustained with fault injection, does not establish
 independent-host resilience, a 28-day SLO, human on-call coverage or a general
 production-ready/L6 claim. Preserve historical learning levels until their
 criteria and the integrated system are reviewed.
+
+## API-client verification follow-up (2026-11-17)
+
+The Web UI now has automated API-client behavior tests, type-checked and run with Node's built-in
+test runner in the frontend CI path. They cover session outages/malformed identities versus the
+local HTML fallback, same-origin/CSRF request behavior, non-JSON upstream failures and following
+an already-active processing job. Local execution covered 19 tests on Node 22 and Node 26; two
+intentional request regressions were detected before source restoration.
+
+This adds client-boundary evidence, not browser rendering or integrated authenticated-user-flow
+coverage. No historical experiment or learning level is promoted here. Component, real-browser,
+slow-network/cancellation and end-to-end failure testing remain separate work.
