@@ -1,14 +1,14 @@
 # Local operations and incident response
 
-Owner: Zakaria Ait Ali (confirmed 2026-10-18). Scope: supervised local Docker
+Primary responder: Zakaria Ait Ali (recorded 2026-10-18). Scope: supervised local Docker
 lab drills; no 24/7 support or production on-call commitment. No secondary
-responder is assigned. If the owner cannot recover the lab, stop traffic and
+responder is assigned. If the primary responder cannot recover the lab, stop traffic and
 preserve evidence; escalation to another person must be explicitly arranged,
 not assumed. This is a production-readiness gap.
 
-During a supervised drill the owner coordinates the incident, acknowledges the
+During a supervised drill the primary responder coordinates the incident, acknowledges the
 symptom, records UTC timestamps, chooses the recovery action and confirms the
-user-visible outcome. The assistant may inject faults and collect evidence.
+user-visible outcome. A separate exercise controller may inject faults and collect evidence.
 One person filling every role is not independent incident management. Scripted
 acknowledgment times must never be described as human MTTA.
 

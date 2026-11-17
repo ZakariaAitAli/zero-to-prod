@@ -2,7 +2,7 @@
 
 > **Update 2026-11-14:** the stacked draft PRs this review describes (#139–#146) have since been merged into `main`; see [local-production-readiness](../plans/local-production-readiness.md) for current status. The review below is otherwise unchanged and still describes its original evidence.
 
-Review date: 2026-10-18. Scope explicitly selected by the owner: local Docker
+Review date: 2026-10-18. Scope: local Docker
 first, with limits documented. Owner: Zakaria Ait Ali; supervised drills only,
 no 24/7 coverage and no assigned secondary responder. This is a review of
 proposed stacked draft PRs, not a statement that main contains those changes.
@@ -102,14 +102,12 @@ Verified new-job recovery occurred in 38.73, 36.52, 36.93 and 52.16 seconds.
 The clock starts before the stop command, not at an exact process-death event.
 Script acknowledgment follows polling and is not human MTTA.
 
-During the supervised incident the owner opened the local feed and pasted its
-notifications. Local delivery took 36.02 seconds, the assistant observed a
-response about 103.47 seconds after notification and 76.71 seconds after the
-chat prompt, and a new job succeeded about 155.09 seconds after the stop action.
-Those chat timings include delivery and assistant-processing delay. The owner
-did not independently supply a diagnosis or recovery action; the assistant
-interpreted the alert and restored the API. Visibility is tested; independent
-on-call diagnosis, escalation and response coverage remain unproven.
+During the supervised incident, notification visibility was confirmed through the local feed.
+Delivery took 36.02 seconds. A response was recorded approximately 103.47 seconds after
+notification and 76.71 seconds after the exercise prompt; a new job succeeded approximately
+155.09 seconds after the stop action. Response timings include communication and processing
+delays and do not establish human MTTA. Diagnosis and API recovery followed guided steps;
+independent on-call diagnosis, escalation and response coverage remain unproven.
 
 The first attempt was interrupted before fault drills when static review found
 incorrect timestamp column names in the final report query. Its cleanup query

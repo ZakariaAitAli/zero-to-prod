@@ -59,12 +59,11 @@ the remaining failure domains and operational response.
 
 ## Alert-quality findings from the supervised operations drill
 
-The owner opened the local notification endpoint and pasted the history. This
-confirmed visibility on Windows, but the endpoint presented resolved and active
+The local notification history was inspected on Windows. This confirmed visibility, but the endpoint presented resolved and active
 incidents together as raw JSON, and generator links named internal container
 hosts. The response did not include an independent diagnosis or chosen recovery
-action; those skills remain unproven. The assistant interpreted the active API
-alert and performed recovery, with a new succeeded job as proof.
+action; those skills remain unproven. Recovery followed guided interpretation of the active API alert; a newly succeeded job
+confirmed restoration. Independent diagnosis was not demonstrated.
 
 Corrective action: provide a browser view of latest active alerts with runbook
 links, retain raw events separately, and configure loopback external URLs for
