@@ -188,7 +188,7 @@ unreviewed drafts.
 | #125 | CI preserves security and correctness gates | partly | Gates cover API and worker images only; five ungated images have HIGH/CRITICAL findings (G6) |
 | #125 | Dependency vulnerabilities automatically detected | partly | Same scope limit as above |
 | #125 | Deployment under active traffic, rollback | met (local) | Authentication off; an authenticated rollout through the TLS ingress with two colours is untested (G5) |
-| #126 | On-call expectations and escalation understood | partly | Single owner, supervised only, no secondary or escalation (owner-confirmed) |
+| #126 | On-call expectations and escalation understood | partly | One responder; supervised exercise only; no secondary or escalation path established |
 | #126 | Runbooks tested; detection and recovery measured | partly | Scripted drills measured; notification visibility shown; independent human diagnosis and chosen action not shown, so no human MTTA |
 | #126 | Reliability under sustained traffic vs SLOs | met as measured, **missed** | 89.16 % availability and 97.27 % freshness in the fault window, below 99.5 % and 99 %; recovered subset met them. A measured miss, correctly reported, not a pass |
 | #126 | Final verdict distinguishes implemented / tested / unproven | met | Verdict: controlled local experimentation only |
