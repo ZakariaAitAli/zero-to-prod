@@ -102,7 +102,8 @@ python3 tools/security-lab-capacity .local/reports/ingress-workflow/new-run --wo
 
 Read mode uses the existing automation client and schedules authenticated item
 lists at 5, 100 and 5 requests/s. Workflow mode signs in as the existing editor
-and schedules create → process → read iterations at 2, 40 and 2 iterations/s.
+and schedules create → process → read iterations at 2, 20, 40 and 2 iterations/s
+(low load, the original representative rate, overload and recovery).
 A successful iteration sends three requests; a rejected step stops it without
 retrying a POST. Workflow mode creates synthetic data and preserves it. Do not
 run it against unrelated data or alongside another security experiment.

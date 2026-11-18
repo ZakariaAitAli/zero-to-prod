@@ -341,7 +341,7 @@ def main():
     }
     try:
         stages = [('baseline', 5), ('overload', 100), ('recovery', 5)] if args.workload == 'read' else [
-            ('baseline', 2), ('overload', 40), ('recovery', 2)]
+            ('baseline', 2), ('representative', 20), ('overload', 40), ('recovery', 2)]
         for name, rate in stages:
             # Let API/auth budgets recover and get a fresh token outside the timed stage.
             time.sleep(3)
@@ -360,7 +360,8 @@ def main():
             result['stage'] = name
             report['stages'].append(result)
             print(json.dumps({key: value for key, value in result.items() if key != 'resources'}), flush=True)
-        baseline, overload, recovery = report['stages']
+        by_name = {stage['stage']: stage for stage in report['stages']}
+        baseline, overload, recovery = (by_name[name] for name in ('baseline', 'overload', 'recovery'))
         report['checks'] = {
             'baseline_all_successful': baseline['successful_valid_work_fraction'] == 1,
             'overload_rejected': overload['rejected_requests'] > 0,
@@ -382,6 +383,7 @@ def main():
                 for s in report['stages']),
         }
         if args.workload == 'workflow':
+            report['checks']['representative_admission_boundary_observed'] = by_name['representative']['rejected_requests'] > 0
             report['checks']['resource_samples_available'] = all(s['resources'] and not s['resource_errors'] for s in report['stages'])
             report['checks']['accepted_jobs_complete_within_objective'] = all(
                 s['jobs']['accepted'] > 0 and s['jobs']['accepted'] == s['observed_acceptances'] == s['jobs']['succeeded']
