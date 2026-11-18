@@ -76,7 +76,11 @@ not establish confidentiality.
 Use `./tools/security-lab-local --help` and the source for fixture prerequisites
 and full checks. Failure verifiers deliberately change certificates, principals or
 dependencies; run them only in the intended isolated lab, not against unrelated data. `--skip-slow` omits long-duration cases; do not describe that run as
-complete expiration or revocation coverage. Verification is scoped to this
+complete expiration or revocation coverage. The historical authorization control
+uses a separate temporary database and an unavailable publisher endpoint, so its
+legacy messages cannot strand jobs in the current lab. Run the control in a
+dedicated lab with no other clients; temporary fixture data is discarded when
+the control ends. Verification is scoped to this
 profile and does not establish compatibility with the HA or delivery profiles.
 
 ## Certificate renewal

@@ -198,7 +198,9 @@ Commands:
                      401/403 ordering, logs, role removal, an identity-provider
                      outage, and a control against the pinned
                      pre-authorization API. Stops and restarts services and
-                     changes role mappings temporarily.
+                     changes role mappings temporarily. Run only in a dedicated lab
+                     with no other clients; the historical control uses
+                     temporary fixture data and disables publication.
   verify-admin-permissions
                      In a throwaway *-probe project, find an
                      irreducible role set for the role-management client;
@@ -6083,11 +6085,9 @@ authorization_rows() {
   local mode="$1" area="authorization matrix (${1} API)"
   local editor="$2" viewer="$3" outsider="$4" machine="$5"
   local p1 p2 p3 p4 q job before after
-  # Final state of a job the API accepted. The pinned baseline predates the
-  # version-2 messages with delivery identity (ADR 0009); the current worker
-  # rejects its version-1 deliveries by design, so baseline jobs stay
-  # accepted. The control tests authorization (the call is accepted), not
-  # processing, so that is its expected outcome.
+  # The historical API uses an isolated temporary database and an unavailable
+  # publisher endpoint. Its version-1 jobs remain accepted in that probe only;
+  # they must never enter the current database or broker (ADR 0009).
   local processed=succeeded
   [[ "$mode" == baseline ]] && processed=accepted
   p1="$(editor_create "$editor" "${mode} P1")"
@@ -6142,16 +6142,69 @@ authorization_rows() {
 }
 
 # The pinned pre-authorization API predates ADR 0008 and serves plain HTTP
-# only. For verify-authorization's control it runs as a separate container
-# (network alias api-baseline, plain HTTP on 8080, the API's environment and
-# files), and a TLS front built from the ingress image takes the name api:
+# only. For verify-authorization's control it runs against a private temporary
+# database with publication disabled. A TLS front takes the name api:
 # it presents the API's certificate from app-tls/api and forwards to the
 # baseline. The ingress verifies the front exactly as it verifies the API.
 # The compose API is stopped meanwhile. The front-to-baseline hop is plaintext
 # on the app network, during this control only.
-BASELINE_API="${PROJECT}-baseline-api"
-BASELINE_SHIM="${PROJECT}-baseline-tls"
+BASELINE_API="${PROJECT}-baseline-api-$$"
+BASELINE_SHIM="${PROJECT}-baseline-tls-$$"
+BASELINE_POSTGRES="${PROJECT}-baseline-postgres-$$"
+BASELINE_DATA="${PROJECT}-baseline-data-$$"
 BASELINE_API_SWAPPED=false
+
+authorization_data_counts() {
+  compose exec -T postgres psql -X -At -v ON_ERROR_STOP=1 -U zero_to_prod_admin -d zero_to_prod \
+    -c "SELECT (SELECT count(*) FROM work_items)||':'||(SELECT count(*) FROM processing_jobs)||':'||(SELECT count(*) FROM outbox_messages)"
+}
+
+start_baseline_storage() {
+  local name migration _ ready=false
+  tool_network_create authz-baseline "$BASELINE_DATA" --internal >/dev/null
+  local mounts=()
+  for name in postgres-admin-password postgres-migrator-password postgres-app-password postgres-worker-password; do
+    mounts+=(-v "${SECRETS_DIR}/${name}:/run/secrets/${name}:ro")
+  done
+  docker run -d --name "$BASELINE_POSTGRES" --network "$BASELINE_DATA" --network-alias postgres \
+    --label "zero-to-prod.authz-control=${PROJECT}" --read-only --security-opt no-new-privileges:true \
+    --tmpfs /var/lib/postgresql:rw,nosuid,nodev,size=256m \
+    --tmpfs /var/run/postgresql:rw,nosuid,nodev,size=16m \
+    --tmpfs /run/postgresql-tls:rw,nosuid,nodev,size=1m --tmpfs /tmp:rw,nosuid,nodev,size=16m \
+    -e POSTGRES_DB=zero_to_prod -e POSTGRES_USER=zero_to_prod_admin \
+    -e POSTGRES_PASSWORD_FILE=/run/secrets/postgres-admin-password \
+    -e ZTP_POSTGRES_MIGRATOR_USER=zero_to_prod_migrator -e ZTP_POSTGRES_APP_USER=zero_to_prod_app \
+    -e ZTP_POSTGRES_WORKER_USER=zero_to_prod_worker "${mounts[@]}" \
+    -v "${ROOT_DIR}/infra/security-lab/postgres/init/001-security-lab-roles.sh:/docker-entrypoint-initdb.d/001-roles.sh:ro" \
+    -v "${ROOT_DIR}/infra/local/postgres/init/001-roles.sh:/opt/zero-to-prod/001-roles.sh:ro" \
+    -v "${ROOT_DIR}/infra/security-lab/postgres/tls.sh:/opt/zero-to-prod/tls.sh:ro" \
+    -v "${ROOT_DIR}/infra/security-lab/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro" \
+    -v "${INTERNAL_TLS_DIR}/postgres:/run/internal-tls:ro" \
+    --entrypoint /opt/zero-to-prod/tls.sh "$POSTGRES_IMAGE" postgres \
+    -c ssl=on -c ssl_cert_file=/run/postgresql-tls/server.pem -c ssl_key_file=/run/postgresql-tls/server.pem \
+    -c hba_file=/etc/postgresql/pg_hba.conf >/dev/null || die "cannot start the isolated baseline database"
+  # The initialization server listens only on a Unix socket. TCP readiness
+  # ensures role initialization finished before applying the empty schema.
+  for _ in $(seq 1 60); do
+    if docker exec "$BASELINE_POSTGRES" pg_isready -h 127.0.0.1 -U zero_to_prod_admin -d zero_to_prod >/dev/null 2>&1; then
+      ready=true; break
+    fi
+    sleep 1
+  done
+  [[ "$ready" == true ]] || die "the isolated baseline database did not become ready"
+  {
+    printf 'SET ROLE zero_to_prod_migrator;\n'
+    for migration in "${ROOT_DIR}"/apps/work-items/migrations/*.up.sql; do
+      cat "$migration"
+      printf '\n'
+    done
+  } | docker exec -i "$BASELINE_POSTGRES" psql -X -q -v ON_ERROR_STOP=1 \
+    -U zero_to_prod_admin -d zero_to_prod >/dev/null || die "cannot initialize the isolated baseline schema"
+  # This control checks acceptance, not delivery. Never give the historical
+  # publisher access to the live broker or weaken the version-2 worker.
+  printf '%s\n' 'amqps://unavailable:unavailable@127.0.0.1:1/baseline?cacertfile=/internal-ca/ca.crt' > "${AUTH_WORK}/baseline-broker-url"
+  chmod 644 "${AUTH_WORK}/baseline-broker-url"
+}
 
 start_baseline_api() {
   local image="$1" conf="${AUTH_WORK}/baseline-tls.conf" _
@@ -6159,16 +6212,17 @@ start_baseline_api() {
   # Set before stopping: any failure from this point needs recovery, even
   # when neither baseline container could be created.
   BASELINE_API_SWAPPED=true
+  start_baseline_storage
   compose stop api >/dev/null 2>&1 || die "cannot stop the API for the baseline control"
 
-  docker create --name "$BASELINE_API" --network "${PROJECT}_data" \
+  docker create --name "$BASELINE_API" --network "$BASELINE_DATA" \
     --read-only --cap-drop ALL --security-opt no-new-privileges:true \
     -e AUTHENTICATION=oidc -e OIDC_ISSUER_URL="$ISSUER" -e OIDC_AUDIENCE="$API_AUDIENCE" \
     -e OIDC_JWKS_URL="${ISSUER}/protocol/openid-connect/certs" -e OIDC_CA_FILE=/lab-ca/ca.crt \
     -e DATABASE_URL_FILE=/run/secrets/api-database-url \
     -e RABBITMQ_PUBLISHER_URL_FILE=/run/secrets/api-rabbitmq-url -e PORT=8080 \
     -v "${SECRETS_DIR}/api-database-url:/run/secrets/api-database-url:ro" \
-    -v "${SECRETS_DIR}/api-rabbitmq-url:/run/secrets/api-rabbitmq-url:ro" \
+    -v "${AUTH_WORK}/baseline-broker-url:/run/secrets/api-rabbitmq-url:ro" \
     -v "${PKI_DIR}/ca.crt:/lab-ca/ca.crt:ro" \
     -v "${PKI_DIR}/internal-ca.crt:${INTERNAL_CA_MOUNT}:ro" \
     "$image" >/dev/null || die "cannot create the baseline API container"
@@ -6221,7 +6275,8 @@ EOF_NGINX
 }
 
 stop_baseline_api() {
-  docker rm -fv "$BASELINE_SHIM" "$BASELINE_API" >/dev/null 2>&1 || true
+  docker rm -fv "$BASELINE_SHIM" "$BASELINE_API" "$BASELINE_POSTGRES" >/dev/null 2>&1 || true
+  docker network rm "$BASELINE_DATA" >/dev/null 2>&1 || true
 }
 
 restore_baseline_api() {
@@ -6515,11 +6570,12 @@ verify_authorization() {
   # API's authorization behavior, reached through the same verified TLS hop;
   # it does not test, or claim, TLS support in the old API itself.
   area="baseline control (pre-authorization API behind a test-only TLS front)"
-  local baseline_image
+  local baseline_image baseline_counts
+  baseline_counts="$(authorization_data_counts)"
   baseline_image="$(build_baseline_api_image)"
   start_baseline_api "$baseline_image"
   record "$area" "what this control tests" "observe" \
-    "authorization behavior of the API built from ${AUTHORIZATION_BASELINE_COMMIT:0:7} (plain HTTP) behind a test-only TLS front presenting the API's certificate; not native TLS in that API" info
+    "authorization behavior of the API built from ${AUTHORIZATION_BASELINE_COMMIT:0:7} (plain HTTP) behind a test-only TLS front presenting the API's certificate; not native TLS in that API; isolated temporary database, publication disabled" info
   expect "$area" "API version is the pinned baseline" "baseline-${AUTHORIZATION_BASELINE_COMMIT:0:7}" "$(api_version)"
   local base_editor="${AUTH_WORK}/base-editor" base_viewer="${AUTH_WORK}/base-viewer" base_outsider="${AUTH_WORK}/base-outsider"
   browser_login "$base_editor" lab-user >/dev/null
@@ -6535,11 +6591,14 @@ verify_authorization() {
   sleep 11  # the upstream pool's resolver entry for api (valid=10s)
   area="baseline control (pre-authorization API behind a test-only TLS front)"
   expect "$area" "current API restored" "no" "$([[ "$(api_version)" == baseline-* ]] && echo yes || echo no)"
+  expect "$area" "current database item/job/outbox counts unchanged" "$baseline_counts" "$(authorization_data_counts)"
+  expect "$area" "isolated datastore and network removed" "no" \
+    "$(if docker container inspect "$BASELINE_POSTGRES" >/dev/null 2>&1 || docker network inspect "$BASELINE_DATA" >/dev/null 2>&1; then echo yes; else echo no; fi)"
   expect "$area" "after restore: lab-viewer POST /items" "403 insufficient_permissions" \
     "$(call_summary session "$base_viewer" POST /items '{"title":"x"}')"
 
   [[ -n "$evidence_file" ]] && write_auth_evidence "$evidence_file" "$started" \
-    "Authorization: realm readiness, the principal x action matrix on the browser and machine paths with side-effect checks, claims and 401/403 ordering, logs, role removal (existing versus newly issued tokens), identity-provider outage, and a control against the API built from ${AUTHORIZATION_BASELINE_COMMIT} (which serves plain HTTP; since ADR 0008 it runs behind a test-only TLS front, so the control tests its authorization behavior, not TLS in that API). Scripted clients (curl with cookie jars); no browser."
+    "Authorization: realm readiness, the principal x action matrix on the browser and machine paths with side-effect checks, claims and 401/403 ordering, logs, role removal (existing versus newly issued tokens), identity-provider outage, and a control against the API built from ${AUTHORIZATION_BASELINE_COMMIT} (which serves plain HTTP; since ADR 0008 it runs behind a test-only TLS front, so the control tests its authorization behavior, not TLS in that API; its database is temporary and isolated, with publication disabled). Scripted clients (curl with cookie jars); no browser."
   finish_checks "Authorization verification"
 }
 
