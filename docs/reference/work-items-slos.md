@@ -63,6 +63,12 @@ denominator. Its latency ratio requires success within 250 ms. Keep both ratios
 and status counts visible; do not silently change the API error budget or label
 an overload run healthy merely because it returned no 5xx.
 
+The workflow comparison additionally divides completed create/process/read
+iterations by scheduled iterations, including client drops and rejected steps.
+It reports HTTP success separately, so a successful create cannot hide a failed
+processing request. Accepted-job freshness is checked from database timestamps;
+rejected submissions never enter that denominator.
+
 Continuous ingress collection and synthetic monitoring remain necessary before
 making an integrated deployment SLO claim. This bounded experiment fills the
 comparison gap, not the continuous-monitoring gap.
