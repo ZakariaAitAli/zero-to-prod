@@ -121,26 +121,15 @@ report. It returns delivery responsibility for all accepted jobs to their
 existing outbox rows without creating jobs or resetting attempt counts.
 Duplicate delivery is expected and remains idempotent under ADR 0003.
 
-The [#130/#131 experiment](../experiments/issue-130-131-restore-recovery.md)
-exercises both mitigations after destructive loss of an isolated PostgreSQL
-volume. An old message cannot complete new work with reused IDs; a blocked
-accepted job completes after offline redrive, and a subsequent duplicate leaves
-its business state unchanged. This does not recover writes missing from the
-snapshot or provide online reconciliation. Match schema and protocol versions
-before starting runtime; historical migration-5 backups need migration 6 after
-restore, as explained in the guide.
+This does not recover writes missing from the snapshot or provide online reconciliation.
+Match schema and protocol versions before starting runtime; migration-5 backups need migration 6
+after restore, as explained in [ADR 0009](../adr/0009-restore-delivery-recovery.md).
 
-## Scope and evidence
+## Checks and recovery limits
 
 `scripts/test-async-result-recovery.sh` uses temporary databases to check legacy
 migration refusal without mutation, old-archive rejection, and restoration of
 all four tables with a completed result. CI runs it after integration tests.
-Historical recovery evidence remains in Sprint 03 and ADR 0001.
-
-The crash-consistency experiment exercises destructive restore with live API and
-worker processes in an isolated lab; its evidence is in
-[`evidence/issue-118/`](../../evidence/issue-118/).
-
 This is snapshot recovery. Writes after the backup point may be lost. No PITR,
 production RPO/RTO, broker disaster recovery, or sustained-operation claim is
 made.

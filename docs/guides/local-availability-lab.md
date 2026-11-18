@@ -1,7 +1,6 @@
 # Local availability and recovery lab
 
 Issue #124, [ADR 0014](../adr/0014-local-availability-recovery.md),
-[experiment](../experiments/issue-124-availability-recovery.md),
 [recovery runbook](../runbooks/local-availability-recovery.md).
 
 This is a **one-shot, isolated learning lab**, not a production deployment.
@@ -17,7 +16,7 @@ export HA_BACKUP_INTERVAL_SECONDS=30
 bash tools/availability-lab-local up
 # Wait for at least two verified backup generations (default production-like
 # lab interval is 300 seconds; 30 seconds accelerates only this experiment).
-python3 tools/availability-lab-experiments evidence/issue-124/new-run
+python3 tools/availability-lab-experiments .local/reports/availability/new-run
 bash tools/availability-lab-local stop
 ```
 

@@ -2,8 +2,7 @@
 
 Issue #123. This is a single-host Docker experiment, with authentication off
 and synthetic titles only. It extends the observability lab from #122; it
-is not a production deployment profile. See the [experiment](../experiments/issue-123-capacity.md)
-for measured results and their limits.
+is not a production deployment profile. Measure each run under its actual resource and workload constraints.
 
 ## Before running
 
@@ -14,7 +13,7 @@ Check host/VPN routes separately if the host networking changes.
 
 ```sh
 bash tools/capacity-lab-local up
-python3 tools/capacity-lab-experiments evidence/issue-123/new-run
+python3 tools/capacity-lab-experiments .local/reports/capacity/new-run
 bash tools/capacity-lab-local stop
 ```
 
@@ -103,7 +102,7 @@ prove day/week/month stability, memory-leak absence or production capacity.
 To regenerate the sampled-resource summary without rerunning load:
 
 ```sh
-python3 tools/capacity-lab-report evidence/issue-123/run2 > evidence/issue-123/run2/analysis.json
+python3 tools/capacity-lab-report .local/reports/capacity/new-run > .local/reports/capacity/new-run/analysis.json
 ```
 
 The helper excludes its own `analysis.json` output from stage inputs.
