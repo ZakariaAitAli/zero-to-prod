@@ -62,7 +62,7 @@ broker CPU limit can dominate despite idle workers.
 - Credentials: identify service/role without logging values; follow protected
   rotation/rollback procedure. Restarting with the same invalid secret is not
   recovery.
-- Saturation: [capacity experiment](../experiments/issue-123-capacity.md), check
+- Saturation: [capacity guide](../guides/local-capacity-lab.md), check
   CPU quota, confirms, queue and outbox before adding replicas.
 - Backup recovery: [availability runbook](local-availability-recovery.md), fence
   writers and select one authoritative timeline before activation.

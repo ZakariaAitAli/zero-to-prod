@@ -1,7 +1,7 @@
 # ADR 0014: local availability and recovery objectives
 
 - Date: 2026-10-18
-- Status: accepted for the local experiment; guarantees require recorded tests
+- Status: accepted for the local lab; guarantees require recorded tests
 - Issue: #124
 
 ## Requirements before topology
@@ -12,7 +12,7 @@ application process should not lose accepted work. For this learning lab:
 | Event | Objective | Boundary |
 | --- | --- | --- |
 | One API process lost | requests recover within 10 s; accepted work preserved | in-flight HTTP errors permitted and measured |
-| PostgreSQL primary lost | manual fenced promotion within 120 s; observed RPO <=5 s | async replication cannot guarantee a bound under arbitrary partition |
+| PostgreSQL primary lost | manual fenced promotion within 120 s; target RPO <=5 s | async replication cannot guarantee a bound under arbitrary partition |
 | One broker node lost | confirmed work preserved, progress resumes within 60 s | requires a live majority of a three-member quorum |
 | Local primary data destroyed | verified restore within 10 min; explicit marker-based RPO | archive/base backup remain available on this same host |
 | Backup scheduling | successful verified backup within two intervals; retain three successful generations | failed/stale backups remain visible; do not discard the last good backup |

@@ -20,15 +20,8 @@ Proposed) exist. Every ingress upstream is now verified TLS; oauth2-proxy →
 Valkey and Keycloak → its database stay plaintext by decision. Ingress admission control (ADR 0010) and API database password rotation
 (ADR 0011) exist; other secret rotation remains unfinished. The lab must stay on host loopback.
 
-Operating procedures are in the [security lab guide](../guides/local-security-lab.md);
-the transport threats are in the [threat model](security-lab-threat-model.md);
-measurements are in the [first-slice experiment record](../experiments/issue-121-local-https-ingress.md),
-the [authentication comparison](../experiments/issue-121-authentication-comparison.md),
-the [authentication integration record](../experiments/issue-121-authentication-integration.md),
-the [authorization record](../experiments/issue-121-authorization.md), the
-[internal TLS record](../experiments/issue-121-internal-tls.md), the
-[Keycloak TLS record](../experiments/issue-121-keycloak-tls.md), and the
-[application TLS record](../experiments/issue-121-app-tls.md).
+Operating procedures are in the [security lab guide](../guides/local-security-lab.md).
+The [security model](security-lab-security-model.md) describes transport controls and remaining trust boundaries.
 
 ## Structure
 
@@ -87,11 +80,11 @@ lab's projects and volumes.
 | Lab tool admin probe → Keycloak admin API | idp (while a check runs) | TLS 1.2/1.3 (ADR 0007) | As for the ingress; role-management client credentials inside TLS |
 | oauth2-proxy → Valkey | session | None (ADR 0006: two-member network) | Valkey password |
 | Keycloak → keycloak-postgres | idp-data | None (ADR 0006: two-member network) | Database password |
-| API, worker, migrate → PostgreSQL | data | TLS 1.2/1.3 (1.3 observed); non-TLS clients rejected by `pg_hba.conf` | Server certificate and name `postgres` verified against the internal CA (`sslmode=verify-full`); clients by per-identity passwords (SCRAM) |
-| API publisher, worker → RabbitMQ | data | TLS 1.2/1.3 (1.3 observed) on 5671; no plaintext listener | Server certificate and name `rabbitmq` verified against the internal CA (`amqps`, `cacertfile`); clients by per-identity passwords (`PLAIN` inside TLS) and vhost permissions |
+| API, worker, migrate → PostgreSQL | data | TLS 1.2/1.3; non-TLS clients rejected by `pg_hba.conf` | Server certificate and name `postgres` verified against the internal CA (`sslmode=verify-full`); clients by per-identity passwords (SCRAM) |
+| API publisher, worker → RabbitMQ | data | TLS 1.2/1.3 on 5671; no plaintext listener | Server certificate and name `rabbitmq` verified against the internal CA (`amqps`, `cacertfile`); clients by per-identity passwords (`PLAIN` inside TLS) and vhost permissions |
 | Operator → containers | Docker socket | — | Docker access is root-equivalent and outside the model |
 
-The [threat model](security-lab-threat-model.md) explains, per network, why
+The [threat model](security-lab-security-model.md) explains, per network, why
 these hops are encrypted and the others are not yet.
 
 The ingress routes only `/api/items`, `/api/items/{id}/process`, and
@@ -166,21 +159,15 @@ browser.
 
 ## Lifecycle
 
-| Operation | Effect |
-| --- | --- |
-| `init` | Create or complete the state directory, CA, certificate, and secrets |
-| `start` | Check secret files, build images, recreate containers, apply identities and migrations, wait for health |
-| `verify`, `verify-failures`, `verify-renewal` | Reachability, missing-secret, and renewal checks with optional JSON evidence |
-| `verify-authentication` | Sign-in, both API paths, token rejection, CSRF, sign-out, replay, and dependency outages; stops and restarts services |
-| `verify-log-hygiene` | Search ingress and gateway logs for the codes, state, cookies, tokens, and secrets of a sign-in, failed callbacks, and a session refresh, with positive controls |
-| `verify-realm`, `verify-authorization` | Realm readiness through the admin API; the permission matrix, claims, ordering, logs, role removal, outage, and a control against the pinned pre-authorization API |
-| `verify-admin-permissions` | Minimum role set of the role-management client, in a throwaway `*-probe` project |
-| `issue-internal-certificate`, `verify-internal-tls` | Renew a PostgreSQL or RabbitMQ certificate; exercise plaintext refusal, untrusted issuer, hostname mismatch, expiry, recovery, and renewal; restarts the API and worker |
-| `issue-keycloak-certificate`, `check-keycloak-upstream`, `capture-idp-hop`, `verify-keycloak-tls` | Renew Keycloak's certificate; show nginx's TLS verdict for Keycloak; capture the ingress → Keycloak hop passively (counts only); exercise the hop's baseline, failure cases, session reuse, established connections, recovery, and renewal without restarts |
-| `issue-app-certificate`, `check-app-upstream`, `capture-app-hops`, `verify-app-tls` | Renew the API's or oauth2-proxy's certificate; show nginx's TLS verdict for both; capture both hops passively (counts only); exercise trust separation, closed plaintext ports, the public flows, failure cases with new versus kept-alive connections, the last-good-certificate behavior, recovery, and renewal; restarts oauth2-proxy |
-| `stop` | Stop containers, keep volumes and state |
-| `destroy` | Remove this project's containers, networks, and volumes |
-| `purge-state --yes` | Delete the marked state directory |
+The wrapper owns private state, preflight validation and service startup ordering.
+Initialization creates or renews required files. Startup revalidates them, recreates
+consumers so bind mounts see current files, applies migrations explicitly and checks
+readiness. Renewal and credential rotation require service-specific reload/recreation
+and verification of new connections.
+
+Stop preserves volumes and state. Destruction and state purging are separate,
+target-checked actions. Use the [security guide](../guides/local-security-lab.md) and
+`tools/security-lab-local --help` for command details.
 
 ## Relationship to Work Items
 
@@ -206,7 +193,6 @@ in the development lab. See the [Work Items architecture](work-items.md).
   on `idp`.
 - Four parallel private CAs with separate manual lifecycles; consolidation
   into one root with constrained intermediates is deferred (ADR 0008).
-- Access from other containers on the same Docker engine: in the measured
-  environment the published ingress port was reachable from them.
-- Secret rotation, revocation, CSP, and HSTS.
+- Access from other containers on the same Docker engine: host-loopback publishing is not a general Docker-network isolation guarantee.
+- Complete secret rotation beyond the API database credential, general revocation, CSP and HSTS.
 - Production deployment, public certificates, and multi-host networking.

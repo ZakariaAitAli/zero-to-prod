@@ -1,6 +1,6 @@
 # ADR 0015: immutable blue/green releases in the local delivery lab
 
-Status: accepted for the local lab; see issue-125 experiment evidence. Refs #125.
+Status: Accepted for the local lab.
 
 Use two application slots behind a stable gateway, with the same database and
 broker. Build each release once, record its source and Docker image ID, and run

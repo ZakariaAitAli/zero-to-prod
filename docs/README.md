@@ -1,170 +1,44 @@
-# Zero-to-Prod documentation
+# Documentation
 
-This is the documentation entry point for Zero-to-Prod.
+Start with the [local setup guide](guides/local-work-items.md). Read the
+[architecture](architecture/work-items.md) when you need to understand the design.
+Everything else is organized by the task you want to perform.
 
-The repository keeps two complementary kinds of documentation:
+## Run and change the system
 
-1. **Reusable engineering knowledge** — concepts, current architecture, guides, runbooks, learning state, and reference material.
-2. **Sprint records** — the detailed experiments, failures, corrections, and implementation history that produced that knowledge.
+| Task | Document |
+|---|---|
+| Run the API, worker and UI | [Local development](guides/local-work-items.md) |
+| Manage PostgreSQL and migrations | [PostgreSQL guide](guides/local-postgresql.md) |
+| Understand state and message processing | [Work Items architecture](architecture/work-items.md) |
+| Understand a design choice | [Decision index](adr/README.md) |
 
-The Sprint records remain valuable, but they are not the first place to look when revisiting a concept.
+## Operate and recover
 
-## Start here
+| Task | Document |
+|---|---|
+| Recover application data and accepted work | [Recovery runbook](runbooks/work-items-recovery.md) |
+| Redrive deliveries after a restore | [Restore delivery recovery](guides/restore-delivery-recovery.md) |
+| Investigate service symptoms | [Observability runbook](runbooks/work-items-observability.md) |
+| Handle an incident | [Operations runbook](runbooks/local-operations.md) |
+| Perform failover or PITR | [Availability recovery](runbooks/local-availability-recovery.md) |
+| Interpret SLIs and alert thresholds | [SLO reference](reference/work-items-slos.md) |
 
-If you want to understand an engineering idea, start with **Concepts**.
+## Optional labs
 
-If you want to understand how the current Zero-to-Prod system fits together, start with **Architecture**.
+[Security](guides/local-security-lab.md) ·
+[Observability](guides/local-observability-lab.md) ·
+[Capacity](guides/local-capacity-lab.md) ·
+[Availability](guides/local-availability-lab.md) ·
+[Delivery](guides/local-delivery-lab.md) ·
+[Operations](guides/local-operations-lab.md)
 
-If you want to perform a workflow, use **Guides**.
+The security lab has its own [architecture](architecture/security-lab.md),
+[security model](architecture/security-lab-security-model.md).
+Use the [third-party image report](guides/third-party-image-report.md) to inspect
+pinned dependency images; its findings are informational, not a release gate.
 
-If something has failed or you need to recover a system, use the relevant **Runbook**.
+## Remaining work
 
-If you want to inspect the exact experiment that established a behavior, follow the links from the reusable documentation into the Sprint records.
-
-## Concepts
-
-Concept documents explain portable engineering ideas and connect them to the way Zero-to-Prod exercised those ideas.
-
-- [Identity and access](concepts/identity-and-access.md) — authentication, authorization, workload identity, trust, permissions, and least privilege.
-- [Artifacts and delivery](concepts/artifacts-and-delivery.md) — artifact identity, build-once delivery, immutability, verified releases, and rollback.
-- [Health and deployment verification](concepts/health-and-deployment-verification.md) — liveness, readiness, control-plane stability, external verification, and diagnostics.
-- [Infrastructure state and recovery](concepts/infrastructure-state-and-recovery.md) — Terraform state, remote backends, locking, ownership, and fresh-runner recovery.
-- [Database lifecycle and recovery](concepts/database-lifecycle-and-recovery.md) — migrations, schema compatibility, backup, restore, and recovery boundaries.
-- [Reliable asynchronous processing](concepts/reliable-asynchronous-processing.md) — durable acceptance, transactional outbox, delivery ambiguity, idempotency, retries, and terminal outcomes.
-
-## Architecture
-
-Architecture documents describe the current or retained Zero-to-Prod system boundaries rather than teaching a generic technology.
-
-- [Delivery architecture](architecture/delivery.md) — the delivery and recovery model established by Sprint 01 and Sprint 02.
-- [Work Items architecture](architecture/work-items.md) — the current local-first Work Items system using PostgreSQL and RabbitMQ.
-- [Security lab architecture](architecture/security-lab.md) — the opt-in Issue #121 environment: HTTPS ingress, private networks, lab CA, runtime secrets, authentication, authorization, and verified TLS to the datastores, Keycloak, the API, and oauth2-proxy.
-- [Security lab security model](architecture/security-lab-security-model.md) — trust boundaries, identity/credential/artifact/abuse threats, and explicit residual gaps.
-- [Security lab threat model: internal transport](architecture/security-lab-threat-model.md) — assets, principals, every internal connection with its network members, transport threats, and what each mitigation leaves open.
-
-## Guides
-
-- [Local Work Items development](guides/local-work-items.md)
-- [Local PostgreSQL and schema migrations](guides/local-postgresql.md)
-- [Offline delivery recovery after restore](guides/restore-delivery-recovery.md) — inspect and redrive accepted jobs without creating new jobs.
-- [Local security lab](guides/local-security-lab.md) — opt-in HTTPS ingress with private backends for Issue #121 (intermediate)
-- [Local observability lab](guides/local-observability-lab.md) — metrics, traces, logs, dashboards, and SLO alerts for Issue #122 (intermediate)
-- [Third-party image report](guides/third-party-image-report.md) — informational vulnerability findings for the pinned lab images.
-
-Guides are procedural: they answer **how do I perform this workflow?**
-
-## Runbooks
-
-Current recovery: [Work Items result recovery](runbooks/work-items-recovery.md).
-
-Alerts: [Work Items alerts](runbooks/work-items-observability.md) — investigation steps for each SLO and symptom alert.
-
-Historical recovery procedures and experiments remain in the Sprint runbooks:
-
-- [Sprint 01 operations runbook](sprint-01/runbook.md)
-- [Sprint 03 PostgreSQL backup and recovery runbook](sprint-03/runbook.md) — the Issue #99/#111 procedure for the earlier `work_items`, `processing_jobs`, and `outbox_messages` boundary; superseded by the current runbook above
-
-These can be consolidated later when the operational boundary, rather than the Sprint boundary, makes that more useful.
-
-## Architectural decisions (ADRs)
-
-ADRs answer **why was this decision made?** They live in [`adr/`](adr/).
-
-- [ADR 0001 — Work Items async recovery boundary](adr/0001-work-items-async-recovery-boundary.md) — why the PostgreSQL backup covers `work_items`, `processing_jobs`, and `outbox_messages`.
-- [ADR 0002 — Work Items Web UI boundary](adr/0002-work-items-web-ui-boundary.md) — why the browser UI is a separate artifact and how it reaches the API locally.
-- [ADR 0003 — Work Items async success semantics](adr/0003-work-items-async-success-semantics.md) — what successful processing means, why PostgreSQL owns the result, and the required failure model.
-- [ADR 0004 — Security lab authentication](adr/0004-security-lab-authentication.md) — **Proposed:** provisional identity provider, session gateway, and session store candidates for Issue #121, pending a comparison experiment.
-- [ADR 0005 — Security lab authorization](adr/0005-security-lab-authorization.md) — **Proposed:** Keycloak client roles as the permission source, enforced in the API with deny-by-default route registration.
-- [ADR 0006 — Security lab internal transport](adr/0006-security-lab-internal-transport.md) — **Proposed:** server-verified TLS from a separate, name-constrained internal CA on the shared data network (PostgreSQL, RabbitMQ); other internal hops plaintext with explicit triggers; mTLS not adopted. Its ingress → Keycloak row is replaced by ADR 0007.
-- [ADR 0007 — Security lab identity-provider hop](adr/0007-security-lab-identity-provider-transport.md) — **Proposed:** Keycloak serves only HTTPS with a certificate from a third CA, limited to exactly `keycloak` and trusted only by the ingress, which verifies chain and name without session reuse; lab CA, extended internal CA, pinning, mTLS, and passthrough compared.
-- [ADR 0008 — Security lab application hops](adr/0008-security-lab-application-transport.md) — **Proposed:** the API (native TLS, reloads its certificate, keeps its last valid pair) and oauth2-proxy serve only HTTPS with certificates from a fourth CA, limited to exactly `api` and `oauth2-proxy` and trusted only by the ingress; ADR 0007's consolidation trigger recorded as met and deferred; mTLS and sidecars compared.
-
-- [ADR 0010 — ingress admission control](adr/0010-security-lab-rate-limiting.md) — **Proposed:** per-peer and aggregate budgets with 429 shedding.
-
-- [ADR 0011 — secret distribution and rotation](adr/0011-security-lab-secret-distribution-rotation.md) — **Proposed:** local protected-file boundary and resumable API database password rotation.
-- [ADR 0009 — restore delivery recovery](adr/0009-restore-delivery-recovery.md) — **Proposed:** durable random delivery identity and explicit offline redrive.
-- [ADR 0012 — Work Items observability](adr/0012-work-items-observability.md) — **Proposed:** Prometheus metrics, OpenTelemetry traces and logs, trace context persisted in the outbox and carried in AMQP headers, bounded labels, and the SLOs.
-
-## Experiments
-
-Experiment records answer **what did we test and what happened?** Focused experiments since the documentation reorganization live in [`experiments/`](experiments/). Earlier experiments are in the Sprint records below.
-
-- [Issue #111 — accepted async work recovery](experiments/issue-111-recovery-model.md) — destructive PostgreSQL loss and restore of accepted, unpublished processing work.
-- [Issue #117 — result implementation validation](experiments/issue-117-result-validation.md) — title-analysis results, atomic business completion, migration refusal, and result backup compatibility.
-- [Issues #130/#131 — restore delivery recovery](experiments/issue-130-131-restore-recovery.md) — stale delivery rejection after ID reuse, offline redrive, and legitimate duplicate delivery.
-- [Issue #122 — observability](experiments/issue-122-observability.md) — one trace across the asynchronous boundary, and lock contention, CPU pressure, PostgreSQL, API, RabbitMQ, and worker failures each detected by its alert and investigated through metrics, logs, and traces.
-- [Issue #118 — crash consistency and recovery](experiments/issue-118-crash-consistency.md) — real process crashes at observed points, uncertain commits, duplicate and concurrent delivery, PostgreSQL outage, and snapshot recovery with stale broker messages.
-- [Issue #121 — TLS to the API and oauth2-proxy](experiments/issue-121-app-tls.md) — both `app` hops in a separate lab: passive captures before and after, scripted flows over the encrypted hops, untrusted, lab-CA, wrong-name, and expired certificates per service with new versus kept-alive connections, the API's last-good-certificate behavior, renewal (API without restart, oauth2-proxy by restart), regression runs, and a browser check in headless Chromium trusting only the lab CA (no desktop browser).
-- [Issue #121 — secret rotation](experiments/issue-121-secret-rotation.md) — real role/session revocation, failed consumer recreation, recovery, browser flow and image/source audit.
-- [Issue #121 — rate limiting](experiments/issue-121-rate-limits.md) — both API paths, forwarding-header spoofing, authentication isolation, and controlled-upstream admission evidence.
-- [Issue #121 — TLS to Keycloak](experiments/issue-121-keycloak-tls.md) — the ingress → Keycloak hop in a separate lab: a passive capture before and after, unchanged public metadata and redirects, untrusted, lab-CA, wrong-name, expired, excluded-subdomain, and excluded-IP certificates (with an isolated unconstrained-CA control) with new versus established connections and TLS session resumption, recovery and renewal without restarts, and regression runs, rerun with the final files; browser sign-in blocked by the untrusted lab CA.
-- [Issue #121 — internal TLS](experiments/issue-121-internal-tls.md) — verified TLS to PostgreSQL and RabbitMQ in a separate lab: plaintext refusal, untrusted issuer, hostname mismatch, and expiry with new versus established connections, recovery by renewal without client restarts, and regression runs of the earlier checks.
-- [Issue #121 — authorization](experiments/issue-121-authorization.md) — role-based authorization in a separate lab: the principal × action matrix on both paths with a pinned pre-authorization control, strict claims, measured role-removal delays, an identity-provider outage, and the role-management client's minimum permissions.
-- [Issue #121 — authentication integration](experiments/issue-121-authentication-integration.md) — the security lab with Keycloak, oauth2-proxy and Valkey, and API token validation: both API paths, token rejection, CSRF, sign-out through Keycloak, cookie and captured-token replay, and dependency outages.
-- [Issue #121 — authentication comparison](experiments/issue-121-authentication-comparison.md) — issuer reachability, token audience and forwarding, gateway-session revocation, identity-provider termination, token replay, outages, store-outage signaling, and footprint for Keycloak with oauth2-proxy (cookie and server-side stores) and Pomerium.
-- [Issue #121 — local HTTPS ingress and private backends](experiments/issue-121-local-https-ingress.md) — first #121 slice: measured host and container reachability, verified HTTPS with a private lab CA, and missing-secret failures.
-
-Experiment records describe what was true when the experiment ran. They are not rewritten when the system changes later.
-
-## Evidence
-
-Evidence answers **what proves the claim?** It currently lives in three places:
-
-- [`../evidence/`](../evidence/) — durable, sanitized artifacts (for example Sprint 02 verified-deployment records, AWS retirement evidence, and the [crash-consistency experiment records](../evidence/issue-118/));
-- the **Evidence** sections of ADRs and the observations recorded in experiment and Sprint documents;
-- repository tests and CI checks, such as the Go integration tests and `scripts/test-postgres-backup-validation.sh`.
-
-The [current capability baseline](learning/current-capability-baseline.md) links each claimed level to its evidence.
-
-## Learning and project rules
-
-- [Current capability baseline](learning/current-capability-baseline.md) — what has actually been demonstrated and the current learning depth.
-- [Zero-to-Prod v2 specification](rebaseline/zero-to-prod-v2-specification.md) — authoritative mission, principles, learning model, and environment strategy.
-- [v2 engineering work contract](reference/v2-engineering-work-contract.md) — how the rebaseline is applied without turning engineering work into documentation bureaucracy.
-
-The v2 specification remains authoritative. This documentation organization does not replace or redefine it.
-
-## Detailed Sprint records
-
-### Sprint 01 — delivery foundation
-
-Sprint 01 established the GitHub-to-AWS delivery path: OIDC authentication, immutable image publication, ECS Fargate deployment, external verification, cleanup, and rollback.
-
-Browse [Sprint 01](sprint-01/).
-
-### Sprint 02 — recovery and operational depth
-
-Sprint 02 deepened the delivery system with change-aware CI, Terraform ownership, CloudWatch logging, deployment diagnostics, remote state, locking, fresh-runner recovery, verified deployment records, rollback eligibility, and runtime-configuration compatibility.
-
-Browse [Sprint 02](sprint-02/).
-
-### Sprint 03 — stateful and asynchronous systems
-
-Sprint 03 moved the active reference system local-first and introduced PostgreSQL persistence, migrations, destructive recovery, schema evolution, transactional outbox processing, RabbitMQ, idempotent consumption, durable business results, and distributed failure experiments. Its engineering work is complete; the [Sprint 03 summary](sprint-03/README.md) records the outcome, the reference-workload decision, and what remains open.
-
-## How to use the layers
-
-A useful reading path is:
-
-```text
-engineering question
-        ↓
-concept
-        ↓
-Zero-to-Prod architecture
-        ↓
-guide or runbook when needed
-        ↓
-Sprint experiment for the full implementation and failure details
-```
-
-The goal is not to hide the detailed experiments. It is to make them optional when all you need is to understand or recall the engineering idea.
-
-- [Local capacity lab](guides/local-capacity-lab.md) and [capacity experiment](experiments/issue-123-capacity.md).
-- [ADR 0013: local capacity measurement](adr/0013-local-capacity-measurement.md).
-
-- [Local availability lab](guides/local-availability-lab.md), [recovery runbook](runbooks/local-availability-recovery.md), [experiment](experiments/issue-124-availability-recovery.md), and [ADR 0014](adr/0014-local-availability-recovery.md).
-
-- [Local delivery lab](guides/local-delivery-lab.md), [delivery experiment](experiments/issue-125-safe-delivery.md), and [ADR 0015](adr/0015-safe-local-delivery.md).
-
-- [Local operations lab](guides/local-operations-lab.md), [local operations runbook](runbooks/local-operations.md), [readiness review](experiments/issue-126-readiness-review.md), and [capacity incident postmortem](experiments/issue-126-postmortem.md).
+[Current gaps and constraints](plans/local-production-readiness.md). A local lab
+configuration or passing test does not establish production readiness.

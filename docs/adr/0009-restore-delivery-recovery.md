@@ -75,14 +75,7 @@ Downgrade requires stopped runtime, migration 6 down, and both version 1
 binaries. The down migration removes identities and republishes accepted jobs;
 protection from reused IDs is then lost. Keep a backup before migration.
 
-## Evidence and limits
-
-The updated snapshot experiment destroys only its validated isolated
-PostgreSQL volume, restores the logical snapshot, deliberately reuses IDs with
-a stale broker message queued, and checks that no new work executes from that
-message. It then recovers the blocked job using explicit redrive and checks a
-legitimate duplicate leaves the completed business graph unchanged. See
-[the recovery experiment](../experiments/issue-130-131-restore-recovery.md).
+## Limits
 
 UUID collision is extremely unlikely, not mathematically impossible. The
 identity is provenance, not authorization or a secret. PostgreSQL and its

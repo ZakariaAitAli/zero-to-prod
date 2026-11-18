@@ -1,47 +1,62 @@
-# Security lab trust boundaries and residual risks
+# Security boundaries and risks
 
-Scope: local Docker reference workload, ADRs 0004–0008 and 0010–0011. The host,
-Docker administrator, GitHub repository administrators, and reviewed build
-inputs are trusted. This is a bounded security model, not a production-ready
-claim. The [transport model](security-lab-threat-model.md) details each network,
-its members, certificates, and active/passive transport threats.
+Scope: the local security lab. The Docker host, its administrators, repository
+administrators and reviewed build inputs are trusted. This model describes
+configuration and residual exposure; it is not a production security assessment.
 
-## Assets and boundaries
+## Assets and trust boundaries
 
-Assets include Work Item data/results and durable acceptance, user passwords,
-OAuth client credentials, access tokens, gateway/session cookies, database and
-broker credentials, CA/server keys, source/artifact integrity, and availability.
+Protect Work Item data/results, accepted jobs, user and client credentials,
+session cookies, access tokens, database/broker credentials, CA/server keys,
+artifacts and availability.
 
-Untrusted clients cross the loopback HTTPS ingress. The ingress separates
-allow-listed UI/API/gateway/realm routes from internal/admin paths. The session
-gateway and identity provider establish a principal; the API independently
-validates tokens and enforces route permissions. Private networks separate
-application, datastore, identity, session, and identity-database participants.
-Each service receives its own file mounts. The host state boundary protects
-source credentials and CA keys; CI and image build contexts form a separate
-artifact boundary. Database/broker recovery changes delivery responsibility
-and must preserve the business invariant, not just transport availability.
+Clients cross a loopback HTTPS ingress. The gateway manages browser sessions;
+the API independently validates tokens and enforces route permissions. Separate
+networks contain application, datastore, identity, session and identity-database
+services. Private networks do not make another attached container trustworthy.
 
-## Threats, controls, and remaining exposure
+Source credentials and CA keys live outside Git. Services receive only their
+required files. Image build contexts and CI permissions are separate boundaries.
+Recovery must preserve the database's business invariant and delivery identity.
 
-| Threat | Existing control/evidence | Remaining exposure |
-| --- | --- | --- |
-| Spoofed identity or confused credentials | Strict issuer/audience/signature validation; malformed/expired token refusals; ambiguous bearer+cookie rejected; authentication experiments | Local validation accepts a stolen token until expiry/skew; no token revocation |
-| Unauthorized action or ownership access | Deny-by-default API route permissions, principal/action matrix and side-effect checks | Route-level roles only; no per-item tenancy/ownership model |
-| CSRF and session misuse | Secure/HttpOnly/host-only/Lax cookie, same-origin proof on writes and logout, replay/logout experiments | Cookie theft before logout and compromised browser/origin remain threats; no MFA |
-| Transport observation or impersonation | Verified TLS on ingress upstreams and the data network; wrong-name/issuer/expiry controls; private networks | Valkey and identity-database hops remain plaintext by the recorded provisional transport decision; CA keys share a trusted host |
-| Credential exposure in artifacts, arguments or logs | State outside Git, per-service file mounts, sanitized logs, image/layer/history and known-value scans | Host/Docker admins can read values; unknown encodings/unknown credentials exceed known-value scanning; migrator URL argument remains documented |
-| Stale or partially propagated secret | Recoverable API database rotation, old-session termination, old/new login controls, consumer recreation | Other secret types lack equivalent procedures; rotation is disruptive and not distributed fencing |
-| Abuse and accidental overload | Per-peer and aggregate ingress budgets, immediate 429, Retry-After, forwarding-header spoof controls | Shared NAT fairness, distributed attackers, TLS/socket exhaustion, per-principal quotas, and below-threshold backlog remain |
-| Compromised image/dependency or CI writer | Pinned build inputs, CI gates, restricted build contexts | Full SBOM/vulnerability detection and exercised patching belong to #125; signatures do not prove code correctness |
-| Loss, replay or ambiguity across restore | ADR 0003 completion invariant; #130/#131 delivery recovery tracked separately | Protocol-version and offline-recovery coordination are required; no exactly-once or recovery beyond the snapshot |
-| Availability and operational failure | Explicit dependency errors and tested failure paths | Single host/dependencies, no proved capacity or SLO; #122–#126 remain necessary |
+## Transport
 
-## Reconsideration
+| Connection | Protection | Remaining boundary |
+|---|---|---|
+| Client → ingress | HTTPS with private lab CA | Browser trust and host security. |
+| Ingress → API and session gateway | Chain/name-verified TLS using the application CA | No mutual TLS; other network members can connect. |
+| Ingress → Keycloak | Chain/name-verified TLS using the identity-provider CA | No mutual TLS; administrative paths still require access control. |
+| API/worker/migrator → PostgreSQL | TLS with server verification | Runtime/migration roles and application semantics remain trusted. |
+| API/worker → RabbitMQ | Verified AMQPS; no plaintext listener | Broker permissions and message validation remain necessary. |
+| Session gateway → Valkey | Plaintext on the session network | Session data and credentials require encryption before expanding this boundary. |
+| Keycloak → its database | Plaintext on the identity-data network | Realm data and credentials require encryption before expanding this boundary. |
+| Local health and operator probes | Container-local or explicit lab networks | Probe membership and diagnostic routes must not expose public administration. |
 
-Revisit this model before internet exposure, multiple hosts/ingress replicas,
-new principals or tenants, external business effects, a fifth CA or automated
-issuance, off-host CA custody, a secret-manager integration, or new telemetry.
-New telemetry must preserve credential hygiene and bounded metric labels.
-Security acceptance follows measured controls and explicit gaps, not a claim
-that every threat has been eliminated.
+Established TLS connections are not re-verified after a certificate file changes.
+Ingress API keep-alives are bounded; other service-specific renewal behavior is
+in the [security guide](../guides/local-security-lab.md). CA keys share one trusted
+host. Name constraints limit misissuance, not host compromise. Renewal is manual;
+there is no general certificate revocation service.
+
+## Threats and controls
+
+| Threat | Implemented control | Remaining exposure |
+|---|---|---|
+| Spoofed identity | Token signature/issuer/audience/expiry validation; ambiguous cookie+bearer refusal | A stolen token remains usable until expiry/skew; no general token revocation. |
+| Unauthorized action | Deny-by-default API route permissions | Route-level roles; no per-item tenant model. |
+| CSRF/session misuse | Secure/HttpOnly/host-only cookies and same-origin write/logout checks | Browser/origin compromise, stolen live sessions and lack of MFA. |
+| Transport observation or impersonation | Verified TLS on the listed hops | Plaintext session/identity-data networks; no mutual TLS. |
+| Secrets in files, logs or artifacts | Private state, per-service mounts, restricted build contexts and sanitized logging | Host/Docker administrators can read secrets; allowlists and known-value checks are not exhaustive detection. |
+| Partially applied rotation | Journaled API database password rotation, old-session termination and consumer recreation | Other secret types lack equivalent procedures; no distributed fencing. |
+| Abuse/overload | Per-peer and aggregate ingress budgets, 429 and Retry-After | Shared-NAT fairness, distributed abuse, TLS/socket exhaustion and unbounded backlog below admission limits. |
+| Compromised build inputs | Pinned images, CI checks and release scans | Pinning/signatures do not establish correctness or exhaustive vulnerability coverage. |
+| Replay or loss during restore | Delivery identity and offline redrive | Snapshot losses, protocol coordination, external side effects and exactly-once delivery remain unresolved guarantees. |
+| Operational failure | Explicit dependency errors and diagnostic tooling | Shared host/disk, manual response, incomplete integrated alerting and unproven production capacity. |
+
+## Changes that require reassessment
+
+Review network membership, trust roots and verifier behavior before moving a
+service to another host. Reassess before internet exposure, multiple replicas,
+additional issuers or tenants, new operator paths, or combining this profile
+with capacity, availability, delivery or operations labs. Check actual running
+listeners and privileges; configuration alone is not verification.

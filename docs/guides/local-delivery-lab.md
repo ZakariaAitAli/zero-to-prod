@@ -11,7 +11,7 @@ From the repository root:
 
 ```sh
 tools/delivery-lab-local build
-tools/delivery-lab-experiments /absolute/new/evidence-directory
+tools/delivery-lab-experiments .local/reports/delivery/new-run
 ```
 
 The runner always stops the lab in its cleanup path, keeping volumes, network
@@ -77,6 +77,5 @@ severity rankings have limits. This local experiment does not scan every retaine
 lab image, frontend dependency, host package or remote service. It does not
 provide registry signatures, isolated build attestation, dependency-review
 approval, production credentials or an enforced GitHub branch-protection rule.
-The module-level unmaintained OpenPGP advisory has no fixed version; the
-application does not import that package, as recorded by the verbose source
-scan. New imports and newly published advisories require reevaluation.
+Reassess dependency reachability, available fixes and exceptions against each new
+build and vulnerability database; an earlier scan result is not a standing exception.

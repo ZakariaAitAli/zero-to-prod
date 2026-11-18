@@ -58,6 +58,4 @@ Do not automatically retry POSTs after ambiguous upstream errors. A 429
 rejected before forwarding can be retried with backoff, respecting Retry-After;
 a timed-out admitted request requires the existing business/API semantics.
 
-The [experiment](../experiments/issue-121-rate-limits.md) distinguishes
-controlled-upstream admission tests from real authentication regressions.
 Source: [nginx limit_req module](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html).
