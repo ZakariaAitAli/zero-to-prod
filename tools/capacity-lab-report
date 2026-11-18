@@ -30,6 +30,8 @@ for path in sorted(Path(sys.argv[1]).glob('*.json')):
  row={'stage':result['stage'],'requests_s':result['requests_per_second_including_tail'],
  'p99_ms':result['request_p99_s']*1000,'availability':result['availability_fraction'],
  'within_250ms':result['within_250ms_fraction'],'client_drops':result['client_dropped_iterations'],
+ 'successful_request_fraction':sum(n for code,n in result['status_counts'].items() if 200<=int(code)<300)/result['requests'] if result['requests'] else None,
+ 'accepted_iteration_fraction':result['jobs']['accepted']/result['scheduled_iterations'] if result['scheduled_iterations'] else None,
  'status_counts':result['status_counts'],'accepted':result['jobs']['accepted'],'succeeded':successes,
  'within_30s':result['jobs']['within_30_seconds']/successes if successes else None,
  'job_p99_s':result['jobs']['latency_p99'],'drain_s':result['drain_seconds'],

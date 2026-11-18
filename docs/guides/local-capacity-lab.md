@@ -84,8 +84,41 @@ HTTP gateway is a controlled comparison, not the security-lab gateway: it
 omits TLS, authentication, aggregate/authentication zones and security routing.
 Every load-generator connection shares one IP. A 429 counts as good in the
 #122 server-error availability SLI but is rejected user work; inspect status
-counts and accepted jobs, not availability alone. The client does not retry
+counts, `successful_request_fraction` (2xx/attempted requests), and
+`accepted_iteration_fraction` (accepted jobs/scheduled iterations, including
+client drops), not availability alone. The client does not retry
 429s, which makes shed work explicit.
+
+## Authenticated ingress comparison
+
+The separate security profile measures the actual HTTPS/authentication boundary:
+
+```sh
+python3 tools/security-lab-capacity .local/reports/ingress-capacity/new-run
+```
+
+Start the security lab first, following its guide. The tool uses its validated
+state directory and respects `ZTP_SECURITY_LAB_PROJECT` and
+`ZTP_SECURITY_LAB_STATE_DIR`. It never starts/stops services, changes roles,
+creates work items or disables TLS verification. It obtains short-lived tokens
+from the existing automation client without writing credentials to the report.
+
+Three 30-second stages send authenticated item-list reads at 5, 100 and 5
+requests/s from one peer, with a three-second budget-recovery pause before each.
+Every request uses a new verified TLS connection. This measures the read-path
+admission envelope, including handshake cost, not full workflow capacity or
+multi-client fairness. Run on an otherwise idle isolated security lab; item-list
+size affects latency. `--duration` permits 5–60 seconds per stage.
+
+The report preserves all statuses, client drops, request p99 and Retry-After
+checks. `server_error_availability` retains the original <500 convention;
+`successful_valid_work_fraction` counts only 2xx responses against scheduled
+valid requests, so 429s and client drops cannot disappear. The corresponding
+250 ms ratio requires both success and timely response. These client-side
+measurements include ingress rejections that API metrics never receive.
+Baseline and recovery must succeed, overload must shed requests with Retry-After,
+and authentication/transport/server failures or client drops fail verification.
+A short comparison does not establish a rolling 28-day SLO or write-path scaling.
 
 ## Cost boundary
 
