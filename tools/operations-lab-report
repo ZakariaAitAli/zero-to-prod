@@ -1,24 +1,140 @@
 #!/usr/bin/env python3
-"""Summarize recorded local incident timings, request SLIs and sampled costs."""
-import json,sys
+"""Summarize local incident evidence without treating missing data as success."""
+import argparse
+import json
+import math
 from pathlib import Path
-p=Path(sys.argv[1]);rows=json.loads((p/'requests.json').read_text());incidents=json.loads((p/'incidents.json').read_text());samples=json.loads((p/'resources.json').read_text());db=json.loads((p/'database.json').read_text())
-def mem(value):
- value=value.split('/')[0].strip()
- for suffix,factor in [('GiB',1),('MiB',1/1024),('KiB',1/1024**2),('GB',10**9/1024**3),('MB',10**6/1024**3),('kB',1000/1024**3),('B',1/1024**3)]:
-  if value.endswith(suffix):return float(value[:-len(suffix)])*factor
- raise ValueError(value)
-cpu_s=0;gib_s=0
-for a,b in zip(samples,samples[1:]):
- dt=b['unix']-a['unix']
- cpu_s+=dt*sum(float(c['CPUPerc'].rstrip('%'))/100 for c in a['containers'])
- gib_s+=dt*sum(mem(c['MemUsage']) for c in a['containers'])
-measured=sum(b['unix']-a['unix'] for a,b in zip(samples,samples[1:]))
-errors=sum(r['status']==0 or r['status']>=500 for r in rows)
-report={'request_count':len(rows),'transport_or_5xx_count':errors,'observed_request_availability':1-errors/len(rows),'under_250ms_ratio':sum(r['seconds']<=.25 for r in rows)/len(rows),'job_counts':db,'observed_completed_within_30s_ratio':db['fresh']/db['jobs'] if db['jobs'] else None,'incidents':[{**i,'notification_delay_s':i['notification_unix']-i['fault_unix'],'business_recovery_s':i['business_recovered_unix']-i['fault_unix'],'resolution_notification_s':i['resolved_notification_unix']-i['fault_unix']} for i in incidents], 'resource_estimates':{'sample_span_s':measured,'cpu_core_seconds':cpu_s,'gib_hours':gib_s/3600,'mean_cpu_cores':cpu_s/measured,'mean_memory_gib':gib_s/measured,'cpu_seconds_per_1000_succeeded':cpu_s/db['succeeded']*1000,'gib_hours_per_1000_succeeded':gib_s/3600/db['succeeded']*1000},'limits':'Left-sample resource estimate for own containers, not reserved capacity or cloud bill; excludes host/client/build/energy/storage/network/operator. Includes injected failures; request client and scrape have blind spots. Script acknowledgment is not human MTTA. Short run cannot establish a 28-day SLO.'}
-cutoff=max(i['resolved_notification_unix'] for i in incidents)+60
-human=p.parent/'human-drill/business-proof.json'
-if human.exists():cutoff=max(cutoff,json.loads(human.read_text())['verified_unix']+60)
-steady=[r for r in rows if r['start']>=cutoff]
-report['post_recovery_steady_requests']={'cutoff_unix':cutoff,'settle_seconds':60,'requests':len(steady),'transport_or_5xx':sum(r['status']==0 or r['status']>=500 for r in steady),'under_250ms_ratio':sum(r['seconds']<=.25 for r in steady)/len(steady) if steady else None,'note':'Separately labeled subset; does not replace full incident-window results.'}
-(p/'analysis.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+
+SLOS = {'request_availability': .995, 'latency': .99, 'freshness': .99}
+
+
+def ratio(numerator, denominator):
+    return numerator / denominator if denominator else None
+
+
+def memory_gib(value):
+    value = value.split('/')[0].strip()
+    for suffix, factor in [('GiB', 1), ('MiB', 1/1024), ('KiB', 1/1024**2),
+                           ('GB', 10**9/1024**3), ('MB', 10**6/1024**3),
+                           ('kB', 1000/1024**3), ('B', 1/1024**3)]:
+        if value.endswith(suffix):
+            amount = float(value[:-len(suffix)]) * factor
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError('invalid memory usage')
+            return amount
+    raise ValueError('unknown memory unit: ' + value)
+
+
+def summarize(rows, incidents, samples, db):
+    errors = []
+    completed = []
+    for incident in incidents:
+        times = [incident.get(key) for key in ('fault_unix', 'notification_unix',
+                 'script_ack_unix', 'business_recovered_unix', 'resolved_notification_unix')]
+        if any(not isinstance(t, (int, float)) or not math.isfinite(t) for t in times) or times != sorted(times):
+            errors.append('incomplete or unordered incident: ' + incident.get('service', 'unknown'))
+            continue
+        completed.append({**incident, 'notification_delay_s': times[1] - times[0],
+                          'business_recovery_s': times[3] - times[0],
+                          'resolution_notification_s': times[4] - times[0]})
+    services = [i.get("service") for i in incidents]
+    expected = {"api", "postgres", "rabbitmq", "worker"}
+    if set(services) != expected or len(services) != len(expected):
+        errors.append("expected one incident each for api, postgres, rabbitmq and worker")
+    if not rows:
+        errors.append('no requests recorded')
+    jobs, succeeded, fresh = (db.get(key, 0) for key in ('jobs', 'succeeded', 'fresh'))
+    if not 0 <= fresh <= succeeded <= jobs:
+        raise ValueError('inconsistent job counters')
+    availability = ratio(sum(0 < r['status'] < 500 for r in rows), len(rows))
+    latency = ratio(sum(r['seconds'] <= .25 for r in rows), len(rows))
+    freshness = ratio(fresh, succeeded)
+    cpu_seconds = gib_seconds = span = 0
+    intervals = 0
+    for a, b in zip(samples, samples[1:]):
+        dt = b['unix'] - a['unix']
+        # Missing samples are a coverage gap, never evidence of zero resource use.
+        if dt <= 0 or dt > 30 or not a['containers'] or not b['containers']:
+            continue
+        cpu = [float(c['CPUPerc'].rstrip('%')) / 100 for c in a['containers']]
+        if any(not math.isfinite(v) or v < 0 for v in cpu):
+            raise ValueError('invalid CPU usage')
+        cpu_seconds += dt * sum(cpu)
+        gib_seconds += dt * sum(memory_gib(c['MemUsage']) for c in a['containers'])
+        span += dt
+        intervals += 1
+    if not intervals:
+        errors.append('no usable resource sample intervals')
+    resource = {'sample_span_s': span, 'usable_intervals': intervals,
+                'sample_count': len(samples),
+                'cpu_core_seconds': cpu_seconds if intervals else None,
+                'gib_hours': gib_seconds / 3600 if intervals else None,
+                'mean_cpu_cores': ratio(cpu_seconds, span),
+                'mean_memory_gib': ratio(gib_seconds, span),
+                'cpu_seconds_per_1000_succeeded': ratio(cpu_seconds * 1000, succeeded) if intervals else None,
+                'gib_hours_per_1000_succeeded': ratio(gib_seconds / 3.6, succeeded) if intervals else None}
+    comparisons = {}
+    for name, value in [('request_availability', availability), ('latency', latency), ('freshness', freshness)]:
+        comparisons[name] = {'observed': value, 'target': SLOS[name],
+                             'meets_target_in_run': value >= SLOS[name] if value is not None else None}
+    cutoff = max((i['resolved_notification_unix'] for i in completed), default=None)
+    steady = [r for r in rows if cutoff is not None and r['start'] >= cutoff + 60]
+    return {'evidence_complete': not errors, 'evidence_errors': errors,
+            'request_count': len(rows),
+            'status_counts': {str(code): sum(r['status'] == code for r in rows) for code in sorted({r['status'] for r in rows})},
+            'observed_request_availability': availability,
+            'successful_response_ratio': ratio(sum(200 <= r['status'] < 300 for r in rows), len(rows)),
+            'under_250ms_ratio': latency, 'job_counts': db,
+            'observed_completed_within_30s_ratio': freshness,
+            'accepted_work_completed_within_30s_ratio': ratio(fresh, jobs),
+            'run_slo_comparison': comparisons, 'incidents': completed,
+            'incomplete_incidents': [i for i in incidents if i.get('service') not in {c.get('service') for c in completed}],
+            'resource_estimates': resource,
+            'post_recovery_steady_requests': {'settle_seconds': 60, 'requests': len(steady),
+                'request_availability': ratio(sum(0 < r['status'] < 500 for r in steady), len(steady)),
+                'under_250ms_ratio': ratio(sum(r['seconds'] <= .25 for r in steady), len(steady))},
+            'limits': 'Known-fault scripted drills, not human MTTA. Run ratios do not establish a 28-day SLO. '
+                      '4xx are available responses, not successful workflows. Freshness SLO counts completed jobs; '
+                      'accepted-work ratio also exposes unfinished work. Resources are left-sample estimates, not a bill; '
+                      'host, client, build, storage, network, energy and operator costs are excluded.'}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('directory', type=Path)
+    parser.add_argument('--cpu-core-hour-price', type=float)
+    parser.add_argument('--gib-hour-price', type=float)
+    parser.add_argument('--currency', default='USD')
+    args = parser.parse_args()
+    prices = (args.cpu_core_hour_price, args.gib_hour_price)
+    if any(v is not None for v in prices) and (any(v is None for v in prices) or any(not math.isfinite(v) or v < 0 for v in prices)):
+        parser.error('supply both nonnegative finite unit prices, or neither')
+    try:
+        data = [json.loads((args.directory / (name + '.json')).read_text())
+                for name in ('requests', 'incidents', 'resources', 'database')]
+        summary = json.loads((args.directory / 'summary.json').read_text())
+        original_requests = len(data[0])
+        if 'traffic_start_unix' in summary:
+            data[0] = [r for r in data[0] if r['start'] >= summary['traffic_start_unix']]
+        report = summarize(*data)
+        report['warmup_requests_excluded'] = original_requests - len(data[0])
+        if summary.get('collection_errors'):
+            report['evidence_errors'].extend(summary['collection_errors'])
+            report['evidence_complete'] = False
+        estimates = report['resource_estimates']
+        report['modeled_usage_cost'] = None
+        if all(v is not None for v in prices) and estimates['cpu_core_seconds'] is not None:
+            report['modeled_usage_cost'] = {
+                'currency': args.currency,
+                'cpu_core_hour_price': prices[0], 'gib_hour_price': prices[1],
+                'amount': estimates['cpu_core_seconds'] / 3600 * prices[0] + estimates['gib_hours'] * prices[1],
+                'basis': 'Operator-supplied illustrative unit prices applied to sampled usage, not reserved capacity or an invoice.'}
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        parser.exit(1, 'Incomplete or invalid operations evidence: ' + str(error) + '\n')
+    (args.directory / 'analysis.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
+    print(json.dumps(report, indent=2, allow_nan=False))
+    return 0 if report['evidence_complete'] else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

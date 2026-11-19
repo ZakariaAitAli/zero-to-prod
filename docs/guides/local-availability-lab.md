@@ -12,18 +12,20 @@ proxies and operator remain shared failure points.
 ## Run
 
 ```sh
-export HA_BACKUP_INTERVAL_SECONDS=30
-bash tools/availability-lab-local up
+env HA_BACKUP_INTERVAL_SECONDS=30 bash tools/availability-lab-local up
 # Wait for at least two verified backup generations (default production-like
 # lab interval is 300 seconds; 30 seconds accelerates only this experiment).
 python3 tools/availability-lab-experiments .local/reports/availability/new-run
 bash tools/availability-lab-local stop
 ```
 
-The output directory must not exist. Read the harness before running: it
-intentionally destroys **only the new project's primary database volume**
-after validating its exact name, project label, stopped container/mount and
-recorded cluster identity. It does not prune Docker or delete other projects.
+The output directory must not exist. By default the harness fences and retains
+the primary database and restores the verified copy into a fresh recovery
+volume. This is a recovery rehearsal, not a destructive DR exercise. The optional
+`--destroy-primary-volume` flag removes only the verified primary volume after
+checking its exact name, project label, stopped container/mount and recorded
+cluster identity. Use that flag only with explicit authorization to destroy
+this lab's primary data. It does not prune Docker or delete other projects.
 Other lab state is preserved for review. The stop command explicitly includes
 the recovery/tools profiles, so restored database containers are stopped too.
 
@@ -32,6 +34,7 @@ rejects Docker overlaps. Check host/VPN routes if networking changes. Loopback
 ports: API 18083, RabbitMQ management 15675–15677, Prometheus 19092, Grafana
 13002, Jaeger 16688. State/secrets live under
 `~/.local/state/zero-to-prod/availability-lab` (private directory outside Git).
+Set `HA_STATE` to an absolute dedicated private directory to relocate state.
 Do not print, copy into evidence, or commit runtime secret files or backups.
 Only generated hashes/identities/counts and synthetic markers belong in Git.
 

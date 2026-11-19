@@ -133,3 +133,49 @@ for step in "Run API integration tests" "Run worker integration tests"; do
     echo "PASS: $step / $scenario"
   done
 done
+
+# Exercise the real integration startup block without starting local services.
+extract_run "Start local integration dependencies" > "$test_dir/start-integration.sh"
+[[ -s "$test_dir/start-integration.sh" ]]
+mkdir -p "$test_dir/tools"
+for helper in postgres-local rabbitmq-local; do
+  cat > "$test_dir/tools/$helper" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$test_dir/tools/$helper"
+done
+cat > "$test_dir/bin/docker" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$DISCOVERED_ENDPOINT"
+exit "$DISCOVERY_RC"
+SH
+chmod +x "$test_dir/bin/docker"
+for scenario in valid_port missing_port malformed_port out_of_range discovery_failure; do
+  endpoint=127.0.0.1:49153 discovery_rc=0 expected=0
+  case "$scenario" in
+    missing_port) endpoint=''; expected=1 ;;
+    malformed_port) endpoint=127.0.0.1:unknown; expected=1 ;;
+    out_of_range) endpoint=127.0.0.1:70000; expected=1 ;;
+    discovery_failure) discovery_rc=17; expected=17 ;;
+  esac
+  : > "$test_dir/integration-output"
+  rc=0
+  (
+    cd "$test_dir"
+    env PATH="$test_dir/bin:$PATH" DISCOVERED_ENDPOINT="$endpoint" DISCOVERY_RC="$discovery_rc" \
+      GITHUB_OUTPUT="$test_dir/integration-output" \
+      bash --noprofile --norc -eo pipefail start-integration.sh
+  ) > "$test_dir/log" 2>&1 || rc=$?
+  if [[ "$rc" != "$expected" ]]; then
+    cat "$test_dir/log"
+    echo "FAIL: integration port discovery / $scenario (exit $rc)" >&2
+    exit 1
+  fi
+  if [[ "$expected" == 0 ]]; then
+    [[ "$(cat "$test_dir/integration-output")" == postgres_port=49153 ]]
+  else
+    [[ ! -s "$test_dir/integration-output" ]]
+  fi
+  echo "PASS: integration port discovery / $scenario"
+done

@@ -3,7 +3,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export HA_ROOT="$ROOT"
-export HA_STATE="${HOME}/.local/state/zero-to-prod/availability-lab"
+export HA_STATE="${HA_STATE:-${HOME}/.local/state/zero-to-prod/availability-lab}"
 export ZTP_OBSERVABILITY_LAB_STATE="$HA_STATE"
 export ZTP_OBSERVABILITY_LAB_SECRETS_DIR="$HA_STATE/secrets"
 export ZTP_OBSERVABILITY_LAB_SUBNET=10.213.22.0/24
