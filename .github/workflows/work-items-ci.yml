@@ -469,6 +469,9 @@ jobs:
       - name: Lint frontend
         run: pnpm lint
 
+      - name: Test frontend client behavior
+        run: pnpm test
+
       - name: Build frontend
         run: pnpm build
 

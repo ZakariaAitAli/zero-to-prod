@@ -9,37 +9,9 @@ Accepted
 Work Items have business state `pending | done`; Processing Jobs have execution
 state `accepted | succeeded | failed`.
 
-Currently the processor returns `nil` without producing a business result.
-The worker then marks the job `succeeded`, while the Work Item remains
-`pending`. Clients can also create Work Items as `done`, and multiple jobs
-can target the same Work Item.
-
-Issue #116 defines business success before Issue #117 changes implementation.
-
-### Current state machines
-
-The API creates a Work Item as `pending` by default or as client-supplied
-`done`. Processing currently makes no Work Item status transition.
-
-Acceptance creates a Processing Job as `accepted` and an outbox message in
-one transaction. The existing worker transitions are:
-
-```text
-accepted -- processor returns nil; completion update --> succeeded
-accepted -- recorded processing failure below limit --> accepted
-accepted -- recorded processing failure reaches limit --> failed
-```
-
-Completion and recorded failures increment `attempt_count`. Retryable
-failures requeue the delivery; the current limit is three recorded processing
-failures. Terminal jobs are acknowledged without invoking
-the processor again. Database inspection or completion errors requeue delivery
-without establishing success. The counter records durable outcomes, not every
-invocation or crash. There is no persisted `running` state.
-
-Thus current `succeeded` guarantees a recorded successful processor return,
-not a durable business result. Job-state guards protect terminal transitions;
-they do not establish idempotency for future business effects by themselves.
+A job marked succeeded without a durable business result leaves completion ambiguous.
+Business status and execution status must agree through an atomic database transition,
+while duplicate delivery must not create another result.
 
 ## Decision
 
@@ -213,40 +185,3 @@ External effects such as payments, email, third-party API calls, and object
 storage writes require a separate consistency decision. Reconsider this
 boundary if results become large artifacts or processing requires external
 effects.
-
-## Current-state evidence
-
-- `apps/work-items/worker/processor.go`: the default processor returns `nil`.
-- `apps/work-items/worker/store.go`: `CompleteProcessingJob` updates job state
-  without persisting a result or updating the Work Item.
-- `apps/work-items/worker/message.go`: processing, retry, and terminal-job
-  settlement behavior.
-- `apps/work-items/api/items.go`: the Work Item model permits `done`.
-- `apps/work-items/api/store.go`: `AcceptProcessingJob` creates a job and
-  outbox message without enforcing the proposed per-item cardinality.
-
-## Later evidence
-
-The decision above is unchanged. Entries record evidence gathered after it was
-accepted.
-
-### 2026-10-10 — Stale broker messages after PostgreSQL restore
-
-The [crash-consistency experiment](../experiments/issue-118-crash-consistency.md)
-exercised the failure ordering above with real process crashes; the success
-invariant held in every case. Its snapshot-recovery run
-([evidence](../../evidence/issue-118/e12-snapshot-recovery.json)) also
-demonstrated a risk this decision did not name. Restoring PostgreSQL rewinds
-identity sequences while RabbitMQ keeps its messages, so a message for work
-accepted after the restore point targeted new work that received the same job
-and Work Item IDs, and completed it before that job's own message was
-published. This differs from the missing-delivery limitation under
-[Refused requests and stalled acceptance](#refused-requests-and-stalled-acceptance):
-it is an extra, misattributed delivery. The experiment also reproduced that
-missing-delivery limitation.
-
-Follow-ups: [#130](https://github.com/ZakariaAitAli/zero-to-prod/issues/130)
-(redrive of blocked accepted jobs) and
-[#131](https://github.com/ZakariaAitAli/zero-to-prod/issues/131) (stale messages
-targeting reused IDs). Either may require revisiting this decision's recovery
-section.

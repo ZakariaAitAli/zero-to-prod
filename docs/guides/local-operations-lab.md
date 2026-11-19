@@ -1,9 +1,6 @@
 # Supervised local operations lab
 
-Owner and response boundaries: [runbook](../runbooks/local-operations.md).
-[Readiness review](../experiments/issue-126-readiness-review.md) and
-[postmortem](../experiments/issue-126-postmortem.md) distinguish observed and
-unproven outcomes.
+Response roles and procedures: [operations runbook](../runbooks/local-operations.md).
 
 This lab is separate from retained security, recovery, observability, capacity,
 availability and delivery projects. It uses `zero-to-prod-operations-lab`, subnet
@@ -19,8 +16,8 @@ tools/delivery-lab-local build
 tools/delivery-image-gate zero-to-prod-delivery-api:green /absolute/new/api-scan
 tools/delivery-image-gate zero-to-prod-delivery-worker:local /absolute/new/worker-scan
 tools/operations-lab-local up
-tools/operations-lab-experiments /absolute/new/operations-evidence 1200
-tools/operations-lab-report /absolute/new/operations-evidence
+tools/operations-lab-experiments .local/reports/operations/new-run 1200
+tools/operations-lab-report .local/reports/operations/new-run
 ```
 
 The application images come from the delivery build; the operations lab does not
@@ -56,7 +53,7 @@ revealing the injected component. Record the alert, operator acknowledgment,
 diagnosis and chosen action, then verify actual business recovery and resolution.
 Use a bounded automatic recovery deadline for an unattended drill; expiry is
 not operator acknowledgment. Reopening and pasting the alert feed establishes
-visibility, not independent diagnosis. No production on-call or L6 claim follows.
+visibility, not independent diagnosis. This does not establish production on-call coverage.
 
 Always stop with `tools/operations-lab-local stop` after a manually managed drill.
 If a runner is killed or its cleanup fails, inspect this project's state and

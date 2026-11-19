@@ -85,13 +85,9 @@ Why these numbers are credible for this workload:
   one planned migration; 99.5 % leaves room for a few such events and still
   detects a real regression. The target should rise only after #124 provides
   failover.
-- **Latency 0.25 s at 99 %.** The baseline experiment measured a client p99
-  of a few milliseconds for create, process, and read at 12 requests per
-  second ([experiment](../experiments/issue-122-observability.md)). 0.25 s is
-  far above normal behavior, so crossing it means a real problem (lock waits,
-  CPU starvation, pool exhaustion), and it is well below the 3 s database
-  timeout, so it catches slowness before requests fail. It is also below the
-  roughly 1 s at which an interactive user notices delay.
+- **Latency 0.25 s at 99 %.** This is an initial diagnostic threshold, below the
+  database statement timeout. It must be assessed against the workload and
+  observed successful-request latency; it is not a measured production baseline.
 - **Freshness 30 s at 99 %.** Normal acceptance-to-completion is tens of
   milliseconds. The worker retries a failed session after 1 s and a processor
   failure up to three attempts, so a few retries still finish well within

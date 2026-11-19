@@ -56,34 +56,3 @@ old password. There is no automatic rollback to old credentials. A missing or
 corrupt journal after a server change requires operator recovery, not guessing.
 This is process-interruption recovery; host/disk loss still requires protected
 state backup and a separate recovery procedure.
-
-## Observed behavior and limits
-
-The experiment holds a real connection using the old password, injects failure
-before API recreation, checks that the old backend was terminated and the old
-password is refused on a new verified-TLS connection, and checks the new one
-works. Resume preserves the planned value, recovers API readiness, and removes
-the journal. A post-rotation Chromium run signs in, creates/processes work,
-signs out, and exercises viewer denial. Source values and old/new passwords are
-searched in command output and all nine service logs with a positive control.
-
-The image audit streams every saved image layer, metadata and history without
-extracting archive paths; it also scans source files and Git objects for known
-configured values and private-key PEMs, raw/base64. An export failure or an
-unsupported compressed layer makes the audit incomplete, never clean. This is
-known-value detection, not a universal credential classifier.
-
-This rotation can interrupt requests and roll back in-flight database
-transactions. It does not promise zero downtime or rotate machine/client
-secrets, user passwords, Valkey credentials, cookie keys, or CA roots. Those
-need distinct propagation and revocation procedures; changing Keycloak's import
-file does not update an existing realm. Certificate renewal is a separate
-lifecycle, and a Valkey restart signs users out. The migrator's documented
-credential-bearing URL argument remains a gap.
-
-See the [experiment record](../experiments/issue-121-secret-rotation.md) and
-[security lab guide](../guides/local-security-lab.md).
-
-Sources: [PostgreSQL ALTER ROLE and password logging](https://www.postgresql.org/docs/18/sql-alterrole.html),
-[backend termination](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL),
-and [Docker image save](https://docs.docker.com/reference/cli/docker/image/save/).

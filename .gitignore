@@ -145,3 +145,7 @@ crash.*.log
 
 # Local PostgreSQL backup artifacts
 .local/postgres-backups/
+
+# Generated lab records stay local, not in repository history.
+/evidence/
+/.local/reports/

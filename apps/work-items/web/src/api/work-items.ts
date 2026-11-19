@@ -85,9 +85,10 @@ export type Session =
   | { kind: 'signed-in'; email: string }
   | { kind: 'signed-out' }
   | { kind: 'no-gateway' }
+  | { kind: 'unavailable' }
 
-// The gateway answers JSON for a session and 401 without one. Anything else,
-// such as the development server's HTML fallback, means there is no gateway.
+// Only a successful HTML fallback identifies development without a gateway.
+// Network errors, gateway errors and malformed identities are outages.
 export async function getSession(): Promise<Session> {
   try {
     const response = await fetch('/oauth2/userinfo', {
@@ -99,16 +100,29 @@ export async function getSession(): Promise<Session> {
       return { kind: 'signed-out' }
     }
 
+    if (!response.ok) return { kind: 'unavailable' }
+
     if (response.ok &&
         response.headers.get('Content-Type')?.includes('application/json')) {
-      const body = (await response.json()) as { email?: string; user?: string }
-      return { kind: 'signed-in', email: body.email ?? body.user ?? '' }
+      const body: unknown = await response.json()
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        const identity = body as { email?: unknown; user?: unknown }
+        const email = typeof identity.email === 'string' && identity.email.trim()
+          ? identity.email : identity.user
+        if (typeof email === 'string' && email.trim()) {
+          return { kind: 'signed-in', email }
+        }
+      }
+      return { kind: 'unavailable' }
+    }
+    if (response.headers.get('Content-Type')?.includes('text/html')) {
+      return { kind: 'no-gateway' }
     }
   } catch {
-    // Treated as no gateway.
+    return { kind: 'unavailable' }
   }
 
-  return { kind: 'no-gateway' }
+  return { kind: 'unavailable' }
 }
 
 export function listWorkItems(): Promise<WorkItem[]> {

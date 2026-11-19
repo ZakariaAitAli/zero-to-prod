@@ -273,6 +273,11 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {session.kind === 'unavailable' && (
+              <p role="status" className="text-sm text-destructive">
+                Session service unavailable. Reload to try again.
+              </p>
+            )}
             {session.kind === 'signed-in' && (
               <div className="flex items-center gap-3">
                 <span className="text-sm text-muted-foreground">
