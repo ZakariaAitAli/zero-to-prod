@@ -52,6 +52,27 @@ A PostgreSQL lock-wait regression fails with the earlier transaction-start
 the small interval between that update and commit acknowledgement; it is a
 near-completion database timestamp, not a separately observed commit clock.
 
+### Admission at the user boundary
+
+The API availability SLI measures server errors, not fulfillment of all valid
+user work. Ingress 429s never reach that counter and must not be interpreted as
+successful work. The [authenticated capacity comparison](../guides/local-capacity-lab.md#authenticated-ingress-comparison)
+reports a separate client-side ratio: successful 2xx responses divided by
+scheduled authenticated requests, including shed work and client drops in the
+denominator. Its latency ratio requires success within 250 ms. Keep both ratios
+and status counts visible; do not silently change the API error budget or label
+an overload run healthy merely because it returned no 5xx.
+
+The workflow comparison additionally divides completed create/process/read
+iterations by scheduled iterations, including client drops and rejected steps.
+It reports HTTP success separately, so a successful create cannot hide a failed
+processing request. Accepted-job freshness is checked from database timestamps;
+rejected submissions never enter that denominator.
+
+Continuous ingress collection and synthetic monitoring remain necessary before
+making an integrated deployment SLO claim. This bounded experiment fills the
+comparison gap, not the continuous-monitoring gap.
+
 Known measurement gaps:
 
 - Server-side metrics cannot see requests that never reach the API (API down,

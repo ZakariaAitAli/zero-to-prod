@@ -1,9 +1,7 @@
 name: Work Items CI
 
 on:
-  pull_request:
-    branches:
-      - main
+  pull_request: {}
 
   push:
     branches:
@@ -564,6 +562,9 @@ jobs:
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
           bash scripts/test-ci-workflow.sh
+          python3 scripts/test-security-lab-capacity.py
+          python3 scripts/test-security-lab-authorization-isolation.py
+          python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/security-lab-capacity", "tools/capacity-lab-experiments", "tools/capacity-lab-report")]'
           bash scripts/test-postgres-backup-validation.sh
           bash scripts/test-security-lab-state-safety.sh
           bash scripts/test-security-lab-startup-warning.sh

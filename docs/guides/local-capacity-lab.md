@@ -84,8 +84,57 @@ HTTP gateway is a controlled comparison, not the security-lab gateway: it
 omits TLS, authentication, aggregate/authentication zones and security routing.
 Every load-generator connection shares one IP. A 429 counts as good in the
 #122 server-error availability SLI but is rejected user work; inspect status
-counts and accepted jobs, not availability alone. The client does not retry
+counts, `successful_request_fraction` (2xx/attempted requests), and
+`accepted_iteration_fraction` (accepted jobs/scheduled iterations, including
+client drops), not availability alone. The client does not retry
 429s, which makes shed work explicit.
+
+## Authenticated ingress comparison
+
+Start the [security lab](local-security-lab.md) first, using an isolated project
+and private state. The harness respects `ZTP_SECURITY_LAB_PROJECT` and
+`ZTP_SECURITY_LAB_STATE_DIR`; it never starts/stops services or changes roles.
+
+```sh
+python3 tools/security-lab-capacity .local/reports/ingress-reads/new-run
+python3 tools/security-lab-capacity .local/reports/ingress-workflow/new-run --workload workflow
+```
+
+Read mode uses the existing automation client and schedules authenticated item
+lists at 5, 100 and 5 requests/s. Workflow mode signs in as the existing editor
+and schedules create → process → read iterations at 2, 20, 40 and 2 iterations/s
+(low load, the original representative rate, overload and recovery).
+A successful iteration sends three requests; a rejected step stops it without
+retrying a POST. Workflow mode creates synthetic data and preserves it. Do not
+run it against unrelated data or alongside another security experiment.
+
+Each stage lasts 30 seconds by default (`--duration` permits 5–60), with a
+three-second quota-recovery pause before it. Requests share one peer address
+and use fresh, verified TLS connections. Passwords, codes and cookies stay in
+memory; authentication redirects cannot leave the two HTTPS lab origins.
+Read latency depends on item-list size. This is not a browser rendering test.
+
+The JSON separates server-error availability from useful work. In read mode,
+`successful_valid_work_fraction` is 2xx responses/scheduled requests; in workflow
+mode it is completed three-request workflows/scheduled iterations. Both include
+client drops. Workflow HTTP success is reported separately, so a successful
+create cannot hide a rejected processing request. Latency includes failures;
+`timely_workflow_fraction` requires every request in a completed workflow to
+finish within 250 ms. See the [SLI definitions](../reference/work-items-slos.md).
+
+Verification requires baseline/recovery success, overload rejection with
+Retry-After, and no unexpected statuses, client drops or missing outcomes.
+Workflow database checks require every observed acceptance to match a stored
+job, all accepted jobs to succeed, at least 99% to finish within 30 seconds,
+and outbox/result invariants to hold. Pending work after 120 seconds fails.
+
+Workflow reports include container CPU/memory samples and running-image/source
+identities; missing snapshots fail verification. Summarize resources with
+`python3 tools/capacity-lab-report .local/reports/ingress-workflow/new-run`.
+The security profile includes identity/session services; the capacity profile
+includes telemetry, so whole-stack costs cover different components. These
+bounded comparisons do not establish continuous ingress SLIs, secure multi-replica
+scaling, or a sustained deployment SLO.
 
 ## Cost boundary
 
@@ -105,4 +154,14 @@ To regenerate the sampled-resource summary without rerunning load:
 python3 tools/capacity-lab-report .local/reports/capacity/new-run > .local/reports/capacity/new-run/analysis.json
 ```
 
-The helper excludes its own `analysis.json` output from stage inputs.
+The helper excludes its own `analysis.json` output from stage inputs. It reports
+completion and freshness against accepted jobs as well as the completion-window
+SLI, so failures or unfinished accepted work remain visible.
+
+For an explicit resource-cost estimate, supply both `--cpu-hour-price` and
+`--gib-hour-price`, in the same currency, and optionally `--currency`. The model
+is `(sampled CPU cores × CPU hourly price + sampled GiB × GiB hourly price) ×
+(stage plus drain seconds / 3600)`. No prices are inferred or fetched. The output
+keeps the supplied assumptions and reports stage cost and cost per 1,000
+successful jobs. This usage-based illustration excludes reserved idle capacity,
+storage, I/O, egress, redundancy and operations; it is not a deployment quote.

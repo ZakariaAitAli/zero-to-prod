@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""Bounded authenticated ingress load; workflow mode creates synthetic work, never changes infrastructure."""
+import argparse
+import base64
+import concurrent.futures
+import hashlib
+import datetime
+import os
+import http.client
+import http.cookiejar
+from html.parser import HTMLParser
+import json
+import math
+from pathlib import Path
+import socket
+import ssl
+import subprocess
+import threading
+import time
+import urllib.parse
+import urllib.request
+import uuid
+from collections import Counter
+
+ROOT = Path(__file__).resolve().parent.parent
+APP_URL = 'https://work-items.localhost:9443'
+
+
+def validate_state(state, project):
+    if (state.stat().st_uid != os.getuid() or state.stat().st_mode & 0o077 or
+            (state / '.zero-to-prod-security-lab').read_text().strip() != 'project=' + project):
+        raise ValueError('Refusing unowned, nonprivate or mismatched lab state')
+
+
+def require_lab_url(url):
+    parsed = urllib.parse.urlsplit(url)
+    if (parsed.scheme != 'https' or parsed.hostname not in
+            {'work-items.localhost', 'auth.work-items.localhost'} or
+            parsed.port != 9443 or parsed.username is not None or parsed.password is not None):
+        raise ValueError('Authentication URL escaped the local lab')
+
+
+class LabRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        require_lab_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+class LabHTTPS(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        require_lab_url(req.full_url)
+        return self.do_open(LoopbackHTTPS, req, context=self._context)
+
+
+class LoginForm(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.action = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'form' and attrs.get('id') == 'kc-form-login':
+            self.action = attrs.get('action')
+
+
+def browser_cookie(context, state):
+    """Use the existing editor's sign-in flow; keep all cookies/passwords in memory."""
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), LabHTTPS(context=context),
+        LabRedirect(), urllib.request.HTTPCookieProcessor(jar))
+    try:
+        with opener.open(APP_URL + '/oauth2/start?rd=%2F', timeout=10) as response:
+            page = response.read().decode('utf-8')
+            form_url = response.url
+        parser = LoginForm()
+        parser.feed(page)
+        if not parser.action:
+            raise ValueError('No login form')
+        action = urllib.parse.urljoin(form_url, parser.action)
+        require_lab_url(action)
+        body = urllib.parse.urlencode({
+            'username': 'lab-user',
+            'password': (state / 'secrets/lab-user-password').read_text().strip(),
+            'credentialId': '',
+        }).encode()
+        with opener.open(urllib.request.Request(action, data=body), timeout=10) as response:
+            response.read()
+        request = urllib.request.Request(APP_URL + '/api/items')
+        jar.add_cookie_header(request)
+        cookie = request.get_header('Cookie')
+        if not cookie or '__Host-wi-session' not in cookie:
+            raise ValueError('No authenticated session')
+        return cookie
+    except Exception:
+        # HTTP errors can carry callback URLs containing authorization codes.
+        raise RuntimeError('Browser sign-in failed; no authentication material recorded') from None
+
+
+class LoopbackHTTPS(http.client.HTTPSConnection):
+    """Connect only to loopback while verifying the intended TLS name and sending SNI."""
+    def connect(self):
+        raw = socket.create_connection(('127.0.0.1', self.port), self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+        except Exception:
+            raw.close()
+            raise
+
+
+def request(context, host, path, headers=None, body=None):
+    connection = LoopbackHTTPS(host, 9443, context=context, timeout=10)
+    started = time.monotonic()
+    try:
+        connection.request('POST' if body is not None else 'GET', path, body, headers or {})
+        response = connection.getresponse()
+        data = response.read()
+        return response.status, time.monotonic() - started, response.getheader('Retry-After'), data
+    finally:
+        connection.close()
+
+
+def summarize(records, scheduled, dropped):
+    counts = Counter(str(r[0]) for r in records)
+    total = len(records)
+    good = sum(200 <= r[0] < 300 for r in records)
+    errors = sum(r[0] == 0 or r[0] >= 500 for r in records)
+    ordered = sorted(r[1] for r in records)
+    return {
+        'scheduled_requests': scheduled, 'attempted_requests': total,
+        'client_dropped_requests': dropped, 'status_counts': dict(counts),
+        # Keep the server-error SLI separate from rejected valid work.
+        'server_error_availability': (total - errors) / total if total else None,
+        'successful_valid_work_fraction': good / scheduled if scheduled else None,
+        'successful_within_250ms_fraction': sum(200 <= r[0] < 300 and r[1] <= .25 for r in records) / scheduled if scheduled else None,
+        'rejected_requests': counts['429'],
+        'rejections_with_retry_after': sum(r[0] == 429 and r[2] == '1' for r in records),
+        'request_p99_s': ordered[math.ceil(.99 * total) - 1] if total else None,
+    }
+
+
+def safe_request(context, path, headers, body=None):
+    started = time.monotonic()
+    try:
+        return request(context, 'work-items.localhost', path, headers, body)
+    except (OSError, http.client.HTTPException):
+        return 0, time.monotonic() - started, None, b''
+
+
+def response_id(body):
+    try:
+        value = json.loads(body)['id']
+    except (ValueError, KeyError, TypeError):
+        return None
+    return value if type(value) is int and value > 0 else None
+
+
+def workflow_iteration(context, cookie, prefix, index):
+    headers = {'Cookie': cookie, 'Content-Type': 'application/json',
+               'Origin': APP_URL, 'Sec-Fetch-Site': 'same-origin',
+               'X-Requested-With': 'work-items-web'}
+    rows = []
+    code, latency, retry, body = safe_request(context, '/api/items', headers,
+        json.dumps({'title': prefix + str(index)}).encode())
+    rows.append((code, latency, retry))
+    item_id = response_id(body) if code == 201 else None
+    if item_id is None:
+        return {'records': rows, 'accepted': False, 'complete': False, 'protocol_error': code == 201}
+    code, latency, retry, body = safe_request(context, f'/api/items/{item_id}/process', headers, b'')
+    rows.append((code, latency, retry))
+    job_id = response_id(body) if code == 202 else None
+    if job_id is None:
+        return {'records': rows, 'accepted': code == 202, 'complete': False, 'protocol_error': code == 202}
+    code, latency, retry, body = safe_request(context, f'/api/processing-jobs/{job_id}', headers)
+    rows.append((code, latency, retry))
+    valid_read = code == 200 and response_id(body) == job_id
+    return {'records': rows, 'accepted': True, 'complete': valid_read, 'protocol_error': code == 200 and not valid_read}
+
+
+def bounded_arrivals(operation, rate, duration, workers=64):
+    """Schedule bounded arrivals and surface worker exceptions rather than losing outcomes."""
+    slots = threading.BoundedSemaphore(workers)
+    handles = []
+    scheduled = dropped = 0
+    started = time.monotonic()
+
+    def invoke(index):
+        try:
+            return operation(index)
+        finally:
+            slots.release()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        while scheduled < rate * duration:
+            delay = started + scheduled / rate - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            if time.monotonic() - started >= duration:
+                break
+            if slots.acquire(blocking=False):
+                handles.append(executor.submit(invoke, scheduled))
+            else:
+                dropped += 1
+            scheduled += 1
+    missed = rate * duration - scheduled
+    return [h.result() for h in handles], dropped + missed, missed, time.monotonic() - started
+
+
+def security_sql(query):
+    project = os.environ.get('ZTP_SECURITY_LAB_PROJECT', 'zero-to-prod-security-lab')
+    return subprocess.check_output(['docker', 'exec', '-i', project + '-postgres-1',
+        'psql', '-X', '-At', '-v', 'ON_ERROR_STOP=1', '-U', 'zero_to_prod_admin',
+        '-d', 'zero_to_prod'], input=query, text=True, stderr=subprocess.PIPE).strip()
+
+
+def workflow_jobs(prefix):
+    # Prefixes are generated here, never accepted from a caller or response.
+    if not prefix.startswith('ingress-capacity-') or not all(c in '0123456789abcdef-' for c in prefix[17:]):
+        raise ValueError('Invalid generated workload prefix')
+    return json.loads(security_sql(f"""
+SELECT json_build_object(
+ 'accepted', count(*),
+ 'pending', count(*) FILTER (WHERE j.state='accepted'),
+ 'succeeded', count(*) FILTER (WHERE j.state='succeeded'),
+ 'failed', count(*) FILTER (WHERE j.state='failed'),
+ 'within_30_seconds', count(*) FILTER (WHERE j.state='succeeded' AND j.finished_at-j.created_at <= interval '30 seconds'),
+ 'latency_p99_s', percentile_cont(.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM j.finished_at-j.created_at)),
+ 'missing_outbox', count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM outbox_messages o WHERE o.processing_job_id=j.id)),
+ 'succeeded_without_result', count(*) FILTER (WHERE j.state='succeeded' AND NOT EXISTS (SELECT 1 FROM work_item_results r WHERE r.processing_job_id=j.id)),
+ 'result_without_success', count(*) FILTER (WHERE j.state<>'succeeded' AND EXISTS (SELECT 1 FROM work_item_results r WHERE r.processing_job_id=j.id)))
+FROM processing_jobs j JOIN work_items i ON i.id=j.work_item_id WHERE i.title LIKE '{prefix}%';
+"""))
+
+
+def resource_samples(container_ids, stop, samples, errors):
+    while not stop.is_set():
+        try:
+            raw = subprocess.check_output(['docker', 'stats', '--no-stream', '--format', '{{json .}}',
+                *container_ids], text=True, stderr=subprocess.PIPE, timeout=10)
+            containers = [json.loads(line) for line in raw.splitlines() if line]
+            if len(containers) != len(container_ids) or not all(
+                    {'Name', 'CPUPerc', 'MemUsage'} <= c.keys() for c in containers):
+                raise ValueError('Incomplete resource snapshot')
+            for container in containers:
+                float(container['CPUPerc'].rstrip('%'))
+            samples.append({'time': time.time(), 'containers': containers})
+        except (subprocess.SubprocessError, ValueError, OSError) as error:
+            errors.append(type(error).__name__)
+            return
+        stop.wait(8)
+
+
+def run_workflow_stage(context, cookie, rate, duration, container_ids):
+    stop = threading.Event()
+    samples, errors = [], []
+    sampler = threading.Thread(target=resource_samples, args=(container_ids, stop, samples, errors), daemon=True)
+    sampler.start()
+    try:
+        prefix = 'ingress-capacity-' + uuid.uuid4().hex + '-'
+        outcomes, dropped, missed, elapsed = bounded_arrivals(
+            lambda index: workflow_iteration(context, cookie, prefix, index), rate, duration)
+        rows = [row for outcome in outcomes for row in outcome['records']]
+        result = summarize(rows, len(rows), 0)
+        result.update(
+            scheduled_iterations=rate * duration, attempted_iterations=len(outcomes),
+            client_dropped_iterations=dropped, scheduler_missed_iterations=missed,
+            completed_workflows=sum(outcome['complete'] for outcome in outcomes),
+            timely_workflow_fraction=sum(outcome['complete'] and all(row[1] <= .25 for row in outcome['records'])
+                                         for outcome in outcomes) / (rate * duration),
+            observed_acceptances=sum(outcome['accepted'] for outcome in outcomes),
+            protocol_errors=sum(outcome['protocol_error'] for outcome in outcomes),
+            successful_http_request_fraction=result['successful_valid_work_fraction'],
+            successful_valid_work_fraction=sum(outcome['complete'] for outcome in outcomes) / (rate * duration),
+            rate_iterations_s=rate, duration_s=duration, including_tail_s=elapsed)
+        started = time.monotonic()
+        jobs = workflow_jobs(prefix)
+        while jobs['pending'] and time.monotonic() - started < 120:
+            time.sleep(1)
+            jobs = workflow_jobs(prefix)
+        result['jobs'] = jobs
+        result['drain_s'] = time.monotonic() - started
+    finally:
+        stop.set()
+        sampler.join(timeout=15)
+    result['resources'] = samples
+    result['resource_sample_count'] = len(samples)
+    result['resource_errors'] = errors
+    return result
+
+
+def run_stage(context, token, rate, duration, workers=64):
+    def attempt(_):
+        code, latency, retry, _ = safe_request(context, '/api/items', {'Authorization': 'Bearer ' + token})
+        return code, latency, retry
+    records, dropped, missed, elapsed = bounded_arrivals(attempt, rate, duration, workers)
+    result = summarize(records, rate * duration, dropped)
+    result['scheduler_missed_requests'] = missed
+    result.update(rate_requests_s=rate, duration_s=duration, including_tail_s=elapsed)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('output', type=Path, help='new private report directory')
+    parser.add_argument('--duration', type=int, default=30, choices=range(5, 61), metavar='5..60')
+    parser.add_argument('--workload', choices=('read', 'workflow'), default='read',
+                        help='workflow creates synthetic items and requests processing as the lab editor')
+    args = parser.parse_args()
+    driver = ROOT / 'tools/security-lab-local'
+    state = Path(subprocess.check_output(['bash', str(driver), 'state-dir'], text=True).strip())
+    project = os.environ.get('ZTP_SECURITY_LAB_PROJECT', 'zero-to-prod-security-lab')
+    validate_state(state, project)
+    context = ssl.create_default_context(cafile=str(state / 'pki/ca.crt'))
+    # Read credentials only from validated private state; never log request bodies/headers.
+    if args.workload == 'read':
+        secret = (state / 'secrets/automation-client-secret').read_text().strip()
+        auth = base64.b64encode(('work-items-automation:' + secret).encode()).decode()
+    args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    ids = subprocess.check_output(['docker', 'ps', '-q', '--filter',
+        'label=com.docker.compose.project=' + project], text=True).split()
+    if not ids:
+        raise RuntimeError('The selected security lab is not running')
+    report = {
+        'project': project,
+        'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+        'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=ROOT)),
+        'running_images': sorted(subprocess.check_output(['docker', 'inspect', '--format', '{{.Name}} {{.Image}}', *ids], text=True).splitlines()),
+        'harness_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        'ca_file_sha256': hashlib.sha256((state / 'pki/ca.crt').read_bytes()).hexdigest(),
+        'configuration_sha256': {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in (
+            'infra/security-lab/compose.yaml', 'infra/security-lab/ingress/nginx.conf')},
+        'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        'host_cpus': os.cpu_count(),
+        'max_client_workers': 64,
+        'workload_kind': args.workload,
+        'workload': ('authenticated GET /api/items' if args.workload == 'read' else
+                     'browser-authenticated create item, request processing, read accepted job'),
+        'connection_policy': 'one peer, fresh verified TLS connection per request',
+        'passed': False,
+        'stages': [],
+    }
+    try:
+        stages = [('baseline', 5), ('overload', 100), ('recovery', 5)] if args.workload == 'read' else [
+            ('baseline', 2), ('representative', 20), ('overload', 40), ('recovery', 2)]
+        for name, rate in stages:
+            # Let API/auth budgets recover and get a fresh token outside the timed stage.
+            time.sleep(3)
+            if args.workload == 'workflow':
+                result = run_workflow_stage(context, browser_cookie(context, state), rate, args.duration, ids)
+            else:
+                code, _, _, body = request(context, 'auth.work-items.localhost', '/realms/work-items/protocol/openid-connect/token',
+                    {'Authorization': 'Basic ' + auth, 'Content-Type': 'application/x-www-form-urlencoded'},
+                    urllib.parse.urlencode({'grant_type': 'client_credentials'}))
+                if code != 200:
+                    raise RuntimeError('Token endpoint refused authentication (status %s)' % code)
+                grant = json.loads(body)
+                if grant.get('expires_in', 0) < args.duration + 15:
+                    raise RuntimeError('Token lifetime is too short for a complete stage')
+                result = run_stage(context, grant['access_token'], rate, args.duration)
+            result['stage'] = name
+            report['stages'].append(result)
+            print(json.dumps({key: value for key, value in result.items() if key != 'resources'}), flush=True)
+        by_name = {stage['stage']: stage for stage in report['stages']}
+        baseline, overload, recovery = (by_name[name] for name in ('baseline', 'overload', 'recovery'))
+        report['checks'] = {
+            'baseline_all_successful': baseline['successful_valid_work_fraction'] == 1,
+            'overload_rejected': overload['rejected_requests'] > 0,
+            'retry_after_present': overload['rejected_requests'] == overload['rejections_with_retry_after'],
+            'recovery_all_successful': recovery['successful_valid_work_fraction'] == 1,
+            'no_auth_or_transport_or_server_errors': all(not any(int(k) == 0 or int(k) >= 500 or int(k) in (401, 403) for k in s['status_counts']) for s in report['stages']),
+            'only_expected_statuses': all(set(s['status_counts']) <= (
+                {'200', '429'} if args.workload == 'read' else {'200', '201', '202', '429'})
+                for s in report['stages']),
+            'baseline_and_recovery_latency_objective': all(
+                s['successful_within_250ms_fraction'] is not None and
+                s['successful_within_250ms_fraction'] >= .99 for s in (baseline, recovery)),
+            'valid_response_contracts': all(s.get('protocol_errors', 0) == 0 for s in report['stages']),
+            'no_client_drops': all(s.get('client_dropped_iterations', s['client_dropped_requests']) == 0 for s in report['stages']),
+            'all_arrivals_accounted': all(
+                s['scheduled_iterations'] == s['attempted_iterations'] + s['client_dropped_iterations']
+                if args.workload == 'workflow' else
+                s['scheduled_requests'] == s['attempted_requests'] + s['client_dropped_requests']
+                for s in report['stages']),
+        }
+        if args.workload == 'workflow':
+            report['checks']['representative_admission_boundary_observed'] = by_name['representative']['rejected_requests'] > 0
+            report['checks']['resource_samples_available'] = all(s['resources'] and not s['resource_errors'] for s in report['stages'])
+            report['checks']['accepted_jobs_complete_within_objective'] = all(
+                s['jobs']['accepted'] > 0 and s['jobs']['accepted'] == s['observed_acceptances'] == s['jobs']['succeeded']
+                and s['jobs']['within_30_seconds'] / s['jobs']['accepted'] >= .99
+                for s in report['stages'])
+            report['checks']['job_invariants_preserved'] = all(
+                not any(s['jobs'][key] for key in ('pending', 'failed', 'missing_outbox',
+                    'succeeded_without_result', 'result_without_success')) for s in report['stages'])
+        report['passed'] = all(report['checks'].values())
+        if not report['passed']:
+            raise RuntimeError('Capacity verification failed; inspect report checks')
+    finally:
+        (args.output / 'summary.json').write_text(json.dumps(report, indent=2) + '\n')
+
+
+if __name__ == '__main__':
+    main()

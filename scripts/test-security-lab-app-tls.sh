@@ -274,6 +274,7 @@ set -euo pipefail
 AUTH_WORK="${CASE_DIR}/auth"
 mkdir "$AUTH_WORK"
 BASELINE_API=fixture-api; BASELINE_SHIM=fixture-shim; BASELINE_API_SWAPPED=false
+BASELINE_POSTGRES=fixture-postgres; BASELINE_DATA=fixture-data
 PROJECT=fixture; ISSUER=https://issuer; API_AUDIENCE=fixture
 SECRETS_DIR="$CASE_DIR"; PKI_DIR="$CASE_DIR"; APP_TLS_DIR="$CASE_DIR"
 INTERNAL_CA_MOUNT=/fixture-ca; API_TLS_PORT=8443; INGRESS_IMAGE=fixture-image
@@ -290,6 +291,8 @@ docker() {
 die() { echo "$*" >&2; exit 1; }
 sleep() { :; }
 api_version() { [[ "$FAIL_AT" != timeout ]] && echo baseline-fixture; }
+# Storage/network isolation has its own executable regression suite.
+start_baseline_storage() { :; }
 source "$FUNCTIONS_FILE"
 if [[ "$FAIL_AT" == before ]]; then exit 1; fi
 start_baseline_api fixture-image

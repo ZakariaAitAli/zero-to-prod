@@ -53,6 +53,29 @@ there is no general certificate revocation service.
 | Replay or loss during restore | Delivery identity and offline redrive | Snapshot losses, protocol coordination, external side effects and exactly-once delivery remain unresolved guarantees. |
 | Operational failure | Explicit dependency errors and diagnostic tooling | Shared host/disk, manual response, incomplete integrated alerting and unproven production capacity. |
 
+## Optional profiles and telemetry
+
+The security, observability, capacity, availability and delivery profiles are
+separate experiments. Do not merge their Compose files and inherit a security
+claim from one profile. The current integration decision is to keep them isolated
+until the following boundaries are explicitly configured and tested:
+
+| Boundary | Current exposure and integration requirement |
+|---|---|
+| API/worker → collector → Jaeger/Loki | Observability uses unauthenticated plaintext OTLP/HTTP, collector-to-Jaeger gRPC and collector-to-Loki HTTP on its lab network. Logs/traces contain identifiers and business timing; a network member can observe, forge or exhaust telemetry. Restrict network membership; authenticated encrypted transport and ingestion quotas are required before expanding trust. |
+| Prometheus → metrics/exporters | Plaintext unauthenticated scrapes expose resource, database and workload metadata. The database exporter has a dedicated monitor credential. Never publish metrics/exporters alongside the public ingress; scope exporter privileges and scrape identities when integrating. |
+| Operator → dashboards/query APIs | Grafana permits anonymous read-only viewing; Grafana, Prometheus and Jaeger publish on loopback. A local process/browser can read telemetry, and Prometheus enables lifecycle reload. Host-local access is trusted here, not an authorization boundary for a shared host. Require authenticated operator access before sharing. |
+| Multiple APIs and failover database names | Capacity uses dynamic discovery without authentication; availability adds replicas and database failover. A security integration must reconcile certificate SANs/name constraints, issuer reachability, verified failover endpoints and credential rotation for every consumer. Never use skipped hostname verification to bridge these profiles. |
+| Broker topology | Security uses a classic queue; availability uses quorum queues. Queue declaration, publisher/consumer permissions, verified AMQPS node names and failure behavior must agree before combining them. Clustering alone does not secure or replicate a classic queue. |
+| Immutable release/rollback | Delivery identity does not distribute trust or secrets. Candidate and rollback images need compatible TLS/authentication configuration, least-privilege runtime files and a tested renewal/rotation path. Never place runtime credentials in an image to simplify rollout. |
+
+The local capacity harness and authenticated ingress comparison have different
+workloads and boundaries; neither establishes their combined behavior. Telemetry
+retention limits bound some storage use, not disclosure or authenticity. A
+collector compromise can falsify observations; independent client checks remain
+necessary. Third-party image findings are reported by the delivery tooling;
+report generation is not a clean-image gate or vulnerability exception approval.
+
 ## Changes that require reassessment
 
 Review network membership, trust roots and verifier behavior before moving a

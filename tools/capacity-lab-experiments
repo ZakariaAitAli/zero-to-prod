@@ -206,6 +206,8 @@ def run(stage,output):
  'config':dict(zip(('rate_jobs_s','duration_s','api_replicas','worker_replicas','api_cpu_each','worker_cpu_each','pool_max_each','limited','worker_stopped_during_load'),stage[1:])),
  'load_elapsed_s':load_stopped-started,'including_tail_s':elapsed,'scheduled_iterations':submitted,'client_dropped_iterations':skipped,
  'requests':len(records),'requests_per_second_including_tail':len(records)/elapsed,'status_counts':dict(counts),
+ 'successful_request_fraction':sum(200<=code<300 for _,code,_ in records)/len(records) if records else None,
+ 'accepted_iteration_fraction':jobs['accepted']/submitted if submitted else None,
  'availability_fraction':1-bad/len(records) if records else None,'within_250ms_fraction':sum(v<=.25 for v in latencies)/len(records) if records else None,
  'request_p50_s':percentile(latencies,.5),'request_p95_s':percentile(latencies,.95),'request_p99_s':percentile(latencies,.99),
  'drain_seconds':drain_seconds,'jobs':jobs,'metrics_end':snapshot,'resources':resource_samples,'invariants':json.loads(sql(INVARIANTS))}
