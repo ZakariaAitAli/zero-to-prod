@@ -152,6 +152,9 @@ jobs:
 
   backend-validation:
     name: Validate Work Items backend
+    env:
+      # Docker chooses an available loopback port; all Compose calls reuse it.
+      ZTP_POSTGRES_PORT: "0"
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
@@ -225,12 +228,22 @@ jobs:
         run: bash scripts/test-security-lab-rate-limits.sh
 
       - name: Start local integration dependencies
+        id: integration
+        shell: bash
         working-directory: .
         run: |
           ./tools/postgres-local start
           ./tools/postgres-local build-migrate
           ./tools/postgres-local migrate-up
           ./tools/rabbitmq-local start
+
+          endpoint="$(docker compose --project-name zero-to-prod-local --file infra/local/compose.yaml port postgres 5432)"
+          port="${endpoint##*:}"
+          if [[ ! "$port" =~ ^[0-9]+$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+            echo "::error::Could not discover the integration database port."
+            exit 1
+          fi
+          echo "postgres_port=$port" >> "$GITHUB_OUTPUT"
 
       - name: Validate PostgreSQL backup payloads
         working-directory: .
@@ -239,8 +252,8 @@ jobs:
       - name: Run API integration tests
         shell: bash
         env:
-          OUTBOX_INTEGRATION_DATABASE_URL: postgres://zero_to_prod_app:zero-to-prod-local-app@127.0.0.1:55432/zero_to_prod?sslmode=disable
-          ACCEPTANCE_FAILURE_MIGRATOR_DATABASE_URL: postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          OUTBOX_INTEGRATION_DATABASE_URL: postgres://zero_to_prod_app:zero-to-prod-local-app@127.0.0.1:${{ steps.integration.outputs.postgres_port }}/zero_to_prod?sslmode=disable
+          ACCEPTANCE_FAILURE_MIGRATOR_DATABASE_URL: postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@127.0.0.1:${{ steps.integration.outputs.postgres_port }}/zero_to_prod?sslmode=disable
           RABBITMQ_PUBLISHER_URL: amqp://zero_to_prod_publisher:zero-to-prod-local-rabbitmq-publisher@127.0.0.1:5672/zero_to_prod
           RABBITMQ_QUEUE: work_item_processing
         run: |
@@ -300,8 +313,8 @@ jobs:
       - name: Run worker integration tests
         shell: bash
         env:
-          WORKER_DATABASE_URL: postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:55432/zero_to_prod?sslmode=disable
-          WORKER_FIXTURE_DATABASE_URL: postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          WORKER_DATABASE_URL: postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:${{ steps.integration.outputs.postgres_port }}/zero_to_prod?sslmode=disable
+          WORKER_FIXTURE_DATABASE_URL: postgres://zero_to_prod_migrator:zero-to-prod-local-migrator@127.0.0.1:${{ steps.integration.outputs.postgres_port }}/zero_to_prod?sslmode=disable
           RABBITMQ_WORKER_URL: amqp://zero_to_prod_worker:zero-to-prod-local-rabbitmq-worker@127.0.0.1:5672/zero_to_prod
           RABBITMQ_FIXTURE_URL: amqp://zero_to_prod:zero-to-prod-local-rabbitmq@127.0.0.1:5672/zero_to_prod
           RABBITMQ_QUEUE: work_item_processing
@@ -321,8 +334,8 @@ jobs:
 
       - name: Run offline restore recovery integration tests
         env:
-          RECOVERY_TEST_ADMIN_URL: postgres://zero_to_prod_admin:zero-to-prod-local-admin@127.0.0.1:55432/zero_to_prod?sslmode=disable
-          WORKER_DATABASE_URL: postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:55432/zero_to_prod?sslmode=disable
+          RECOVERY_TEST_ADMIN_URL: postgres://zero_to_prod_admin:zero-to-prod-local-admin@127.0.0.1:${{ steps.integration.outputs.postgres_port }}/zero_to_prod?sslmode=disable
+          WORKER_DATABASE_URL: postgres://zero_to_prod_worker:zero-to-prod-local-worker@127.0.0.1:${{ steps.integration.outputs.postgres_port }}/zero_to_prod?sslmode=disable
         run: |
           output="${RUNNER_TEMP}/work-items-recovery-integration.out"
           go test ./cmd/redrive-after-restore -v -count=1 2>&1 | tee "$output"
