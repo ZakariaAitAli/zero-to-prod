@@ -35,9 +35,27 @@ services:
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
     command: ['python','-B','/app/receiver.py']
+    healthcheck:
+      test: [CMD, python, -c, "from pathlib import Path; p=Path('/data/.write-check'); p.write_text('ok'); p.unlink()"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
     volumes:
       - ${OPERATIONS_ROOT}/infra/operations-lab/receiver.py:/app/receiver.py:ro
       - ${OPERATIONS_ROOT}/docs/runbooks/local-operations.md:/app/runbook.md:ro
-      - ${OPERATIONS_STATE}/notifications:/data
+      - notifications:/data
     ports: ['127.0.0.1:18086:8080']
     networks: [lab]
+  receiver-init:
+    profiles: [tools]
+    image: python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
+    user: '0:0'
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: ['no-new-privileges:true']
+    command: ['sh', '-ec', 'chmod 700 /data && chown 1000:1000 /data']
+    volumes: [notifications:/data]
+    network_mode: none
+volumes:
+  notifications:

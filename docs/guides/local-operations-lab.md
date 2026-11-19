@@ -20,6 +20,9 @@ tools/operations-lab-experiments .local/reports/operations/new-run 1200
 tools/operations-lab-report .local/reports/operations/new-run
 ```
 
+Set `OPERATIONS_STATE` to an absolute dedicated private directory to relocate
+state.
+
 The application images come from the delivery build; the operations lab does not
 silently compile another application. Record the exact IDs, source and scans.
 The first start persists selected IDs in private `images.env`; subsequent
@@ -42,7 +45,10 @@ telemetry, whose scrape cannot see every failed user request.
 Existing SLO burn-rate rules retain their original thresholds. `LocalDrill*`
 rules use short windows solely to exercise the notification path in bounded
 local runs. Prometheus sends to Alertmanager, which posts to an isolated local
-receiver. It sends no email, chat, phone notification or third-party message.
+receiver. Receipts persist in this project's `notifications` named volume; a
+network-isolated setup container assigns it to the non-root receiver. This
+avoids relying on host UID translation for private bind mounts. Existing host
+notification files are retained but are not imported into the volume. It sends no email, chat, phone notification or third-party message.
 A browser gets an active-alert page; `/events` retains raw notification history.
 Neither a blank page nor absence of alerts proves the monitoring pipeline is
 healthy. The receiver and monitoring share the host and are not independently
@@ -58,3 +64,17 @@ visibility, not independent diagnosis. This does not establish production on-cal
 Always stop with `tools/operations-lab-local stop` after a manually managed drill.
 If a runner is killed or its cleanup fails, inspect this project's state and
 stop it explicitly. Never prune unrelated projects or remove retained volumes.
+
+The report exits unsuccessfully for incomplete incident/request/resource
+evidence and records the reason when the inputs can be read. Missing resource
+intervals are unknown rather than zero usage. It compares the observed run
+ratios with the documented targets, exposes all response status counts, and
+reports accepted-work freshness separately from completed-job freshness.
+These short-window comparisons do not establish the 28-day SLO.
+
+For an explicit usage-cost scenario, supply both `--cpu-core-hour-price` and
+`--gib-hour-price` to the report, with optional `--currency`. The report records
+those inputs alongside its modeled amount. Prices must be finite and
+nonnegative; neither a current cloud price nor an actual bill is assumed.
+Without prices the monetary estimate is unknown. Storage, network, reserved
+capacity, other host workloads and responder time need separate accounting.

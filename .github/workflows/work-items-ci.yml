@@ -522,7 +522,7 @@ jobs:
             docker compose -f infra/observability-lab/compose.yaml -f infra/operations-lab/compose.yaml --profile tools config --quiet
           bash -n tools/delivery-lab-local
           python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/delivery-lab-experiments", "tools/delivery-image-gate")]'
-          DELIVERY_STATE=/nonexistent DELIVERY_BLUE_IMAGE=sha256:unavailable DELIVERY_GREEN_IMAGE=sha256:unavailable ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
+          DELIVERY_STATE=/nonexistent DELIVERY_BLUE_IMAGE=sha256:unavailable DELIVERY_GREEN_IMAGE=sha256:unavailable DELIVERY_WORKER_IMAGE=sha256:unavailable ZTP_OBSERVABILITY_LAB_SECRETS_DIR=/nonexistent \
             docker compose -f infra/observability-lab/compose.yaml -f infra/delivery-lab/compose.yaml --profile tools config --quiet
           bash -n tools/availability-lab-local
           for script in infra/availability-lab/postgres/*.sh infra/availability-lab/rabbitmq/*.sh; do sh -n "$script"; done
@@ -562,6 +562,10 @@ jobs:
           ./scripts/test-ci-change-classifier.sh
           ./scripts/test-ci-required-gate.sh
           bash scripts/test-ci-workflow.sh
+          python3 scripts/test-delivery-lab-switch.py
+          python3 scripts/test-availability-lab-safety.py
+          python3 scripts/test-operations-lab-report.py
+          python3 scripts/test-operations-lab-receiver.py
           python3 scripts/test-security-lab-capacity.py
           python3 scripts/test-security-lab-authorization-isolation.py
           python3 -c 'import ast, pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("tools/security-lab-capacity", "tools/capacity-lab-experiments", "tools/capacity-lab-report")]'

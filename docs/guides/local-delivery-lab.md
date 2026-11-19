@@ -14,13 +14,17 @@ tools/delivery-lab-local build
 tools/delivery-lab-experiments .local/reports/delivery/new-run
 ```
 
+Set `DELIVERY_STATE` to an absolute dedicated private directory to relocate
+state. Rebuild an older lab whose release file lacks the worker image pin
+before starting it.
+
 The runner always stops the lab in its cleanup path, keeping volumes, network
 and secrets. An interrupt that kills the runner itself may require
 `tools/delivery-lab-local stop`. No prune or daemon configuration change is used.
 
 `build blue` or `build green` builds one candidate. Each release contains the
 source commit plus the hash of its tracked application diff and slot name.
-The private `releases.env` records immutable image IDs; keep the corresponding
+The private `releases.env` records immutable API and worker image IDs; keep the corresponding
 Git patch/source and scan reports as provenance for a dirty-tree experiment.
 For a real release, require a clean signed source commit, build once in trusted
 CI, publish by registry digest and sign/verify provenance before promotion.

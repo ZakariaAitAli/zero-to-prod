@@ -3,9 +3,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export OPERATIONS_ROOT="$ROOT"
-export OPERATIONS_STATE="${HOME}/.local/state/zero-to-prod/operations-lab"
+export OPERATIONS_STATE="${OPERATIONS_STATE:-${HOME}/.local/state/zero-to-prod/operations-lab}"
 export ZTP_OBSERVABILITY_LAB_API_PORT=18085
-export ZTP_OBSERVABILITY_LAB_STATE="${HOME}/.local/state/zero-to-prod/operations-lab"
+export ZTP_OBSERVABILITY_LAB_STATE="$OPERATIONS_STATE"
 export ZTP_OBSERVABILITY_LAB_SECRETS_DIR="${ZTP_OBSERVABILITY_LAB_STATE}/secrets"
 export ZTP_OBSERVABILITY_LAB_SUBNET=10.213.24.0/24
 export ZTP_OBSERVABILITY_LAB_PROMETHEUS_PORT=19094
@@ -45,8 +45,9 @@ for n in json.loads(subprocess.check_output(['docker','network','inspect',*ids])
             raise SystemExit('Capacity subnet overlaps '+n['Name'])
 PY
     bash "$ROOT/tools/observability-lab-local" init
-    mkdir -p "$OPERATIONS_STATE/notifications"
-    chmod 700 "$OPERATIONS_STATE/notifications"
+    # A named volume avoids host bind-mount UID translation on Docker Desktop.
+    # Only this volume is initialized; the receiver itself stays unprivileged.
+    compose --profile tools run --rm --no-deps receiver-init
     compose --profile tools build migrate
     compose up -d --wait postgres rabbitmq
     compose --profile tools run --rm migrate up

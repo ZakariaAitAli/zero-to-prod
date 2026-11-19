@@ -49,11 +49,15 @@ class Handler(BaseHTTPRequestHandler):
         if self.path!='/alerts':self.send_error(404);return
         try:size=int(self.headers.get('Content-Length','0'))
         except ValueError:self.send_error(400);return
-        if size>1048576:self.send_error(413);return
+        if size<=0 or size>1048576:self.send_error(413);return
         try:payload=json.loads(self.rfile.read(size))
         except ValueError:self.send_error(400);return
         if not isinstance(payload,dict) or not isinstance(payload.get('alerts'),list):self.send_error(400);return
-        if any(not isinstance(a,dict) or not isinstance(a.get('labels'),dict) or a.get('status') not in ('firing','resolved') for a in payload['alerts']):self.send_error(400);return
-        with DATA.open('a') as f:f.write(json.dumps({'received_unix':time.time(),'payload':payload})+'\n')
+        if any(not isinstance(a,dict) or not isinstance(a.get('labels'),dict) or not isinstance(a.get('labels',{}).get('alertname'),str) or not a.get('labels',{}).get('alertname') or a.get('status') not in ('firing','resolved') for a in payload['alerts']):self.send_error(400);return
+        try:
+            with DATA.open('a') as f:f.write(json.dumps({'received_unix':time.time(),'payload':payload})+'\n')
+        except OSError:
+            self.send_error(503, 'Receipt persistence unavailable');return
         self.send_response(200);self.end_headers()
-HTTPServer(('0.0.0.0',8080),Handler).serve_forever()
+if __name__ == '__main__':
+    HTTPServer(('0.0.0.0',8080),Handler).serve_forever()

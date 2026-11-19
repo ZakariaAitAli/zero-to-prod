@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Scripted operations drills under sustained traffic; not human MTTA."""
-import concurrent.futures,json,subprocess,sys,threading,time,urllib.request,urllib.error
+import json,subprocess,sys,threading,time,urllib.request,urllib.error
 from pathlib import Path
 root=Path(__file__).resolve().parents[1];helper=str(root/'tools/operations-lab-local')
 out=Path(sys.argv[1]);out.mkdir(parents=True,exist_ok=False)
 duration=int(sys.argv[2]) if len(sys.argv)>2 else 1200
+if duration <= 0:raise SystemExit("duration must be positive")
+failures=[]
 rows=[];incidents=[];samples=[];stop=threading.Event();epoch=time.time()
 def command(*args):
- p=subprocess.run([helper,*args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+ p=subprocess.run([helper,*args],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180)
  with (out/'commands.log').open('a') as f:f.write(' '.join(args)+'\n'+p.stdout+'\n')
  if p.returncode:raise RuntimeError('command failed: '+' '.join(args))
  return p.stdout
@@ -31,7 +33,7 @@ def load():
 
 def receipts():
  try:
-  with urllib.request.urlopen('http://127.0.0.1:18086',timeout=3) as r:return [json.loads(x) for x in r.read().decode().splitlines()]
+  with urllib.request.urlopen('http://127.0.0.1:18086/events',timeout=3) as r:return [json.loads(x) for x in r.read().decode().splitlines()]
  except Exception:return []
 
 def delivered(name,start,status):
@@ -71,23 +73,34 @@ def drill(service,alert):
 
 def sample():
  while not stop.is_set():
-  p=subprocess.run(['docker','stats','--no-stream','--format','{{json .}}'],capture_output=True,text=True)
-  samples.append({'unix':time.time(),'containers':[json.loads(x) for x in p.stdout.splitlines() if 'zero-to-prod-operations-lab-' in x]})
+  p=subprocess.run(['docker','ps','--filter','label=com.docker.compose.project=zero-to-prod-operations-lab','--format','{{.ID}}'],capture_output=True,text=True,timeout=15,check=True)
+  ids=p.stdout.split()
+  stats=subprocess.run(['docker','stats','--no-stream','--format','{{json .}}',*ids],capture_output=True,text=True,timeout=20,check=True) if ids else None
+  samples.append({'unix':time.time(),'containers':[json.loads(x) for x in stats.stdout.splitlines()] if stats else []})
   stop.wait(10)
 
-t=threading.Thread(target=load);s=threading.Thread(target=sample)
+def background(fn):
+ try:fn()
+ except Exception as error:
+  failures.append(type(error).__name__+": "+str(error));stop.set()
+
+t=threading.Thread(target=background,args=(load,));s=threading.Thread(target=background,args=(sample,))
 try:
  wait_for(business);epoch=time.time();t.start();s.start();time.sleep(30)
  for service,alert in [('api','LocalDrillAPIUnavailable'),('postgres','LocalDrillDatabaseUnavailable'),('rabbitmq','LocalDrillBrokerUnavailable'),('worker','LocalDrillBacklog')]:
   drill(service,alert);time.sleep(20)
- while time.time()-epoch<duration:time.sleep(1)
+ while time.time()-epoch<duration:
+  if failures:raise RuntimeError("background collection failed: "+"; ".join(failures))
+  time.sleep(1)
  wait_for(business)
 finally:
  stop.set()
  if t.is_alive():t.join()
  if s.is_alive():s.join()
+ traffic_stopped=time.time()
  # Recover intentionally stopped services before final state queries or cleanup.
- command('compose','up','-d','--wait','postgres','rabbitmq','api','worker')
+ try:command('compose','up','-d','--wait','postgres','rabbitmq','api','worker')
+ except Exception as error:failures.append('cleanup recovery: '+str(error))
  (out/'requests.json').write_text(json.dumps(rows,indent=2)+'\n')
  (out/'resources.json').write_text(json.dumps(samples,indent=2)+'\n')
  (out/'notifications.json').write_text(json.dumps(receipts(),indent=2)+'\n')
@@ -95,7 +108,11 @@ finally:
  sql="SELECT json_build_object('jobs',count(*),'succeeded',count(*) FILTER(WHERE state='succeeded'),'accepted',count(*) FILTER(WHERE state='accepted'),'fresh',count(*) FILTER(WHERE state='succeeded' AND finished_at-created_at<=interval '30 seconds')) FROM processing_jobs WHERE created_at >= to_timestamp("+str(epoch)+")"
  try:
   (out/'database.json').write_text(command('compose','exec','-T','postgres','psql','-U','zero_to_prod_admin','-d','zero_to_prod','-Atc',sql)+'\n')
+ except Exception as error:failures.append('database evidence: '+str(error))
  finally:
-  command('stop')
- summary={'elapsed_s':time.time()-epoch,'requests':len(rows),'http_errors':sum(r['status']==0 or r['status']>=500 for r in rows),'incidents':len(incidents),'human_response_measured':False}
+  try:command('stop')
+  except Exception as error:failures.append('stop: '+str(error))
+ summary={'traffic_start_unix':epoch,'traffic_stopped_unix':traffic_stopped,'elapsed_s':time.time()-epoch,'requests':len(rows),'http_errors':sum(r['status']==0 or r['status']>=500 for r in rows),'incidents':len(incidents),'human_response_measured':False,'collection_errors':failures}
  (out/'summary.json').write_text(json.dumps(summary,indent=2)+'\n');print(json.dumps(summary))
+
+if failures:raise SystemExit("operations evidence incomplete: "+"; ".join(failures))
